@@ -1,0 +1,18 @@
+{
+  "version": "20261031",
+  "sources": {
+    "ip": "ipverse/rir-ip (CC0)",
+    "domains": "v2fly/domain-list-community category-ru (MIT)"
+  },
+  "stats": {
+    "ipv4": {
+      "blocks": 8671,
+      "priority": 0
+    },
+    "ipv6": {
+      "blocks": 2166,
+      "priority": 0
+    },
+    "domains": 860
+  }
+}
