@@ -1,0 +1,80 @@
+# Russian apps that go direct (outside the tunnel) by default.
+# One package per line; a trailing ".*" matches the prefix. Users can override any entry in the app.
+#
+# Catch-all: packages published under the .ru namespace. Among them: Gosuslugi (ru.rostel),
+# MAX (ru.oneme.app), Sber (ru.sberbankmobile), VTB, Alfa, Ozon, Yandex Music, Kinopoisk, Yandex Go,
+# Yandex Market, RuTube, Wink, ivi, Dzen, OK, Mail, RuStore, Mir Pay, Avito, 2GIS, RZD, Pyaterochka...
+ru.*
+# Banks and payments
+com.idamob.tinkoff.android
+com.tinkoff.*
+com.sber.*
+ru.tbank.*
+com.vtb.*
+com.bssys.vtb.*
+com.openbank
+com.openbank.*
+com.alfabank.*
+logo.com.mbanking
+com.mtsbank.*
+com.sovcombank.*
+com.raiffeisen.*
+com.rosbank.android
+com.gazprombank.*
+com.unicredit.*
+com.yoomoney.*
+com.qiwi.*
+# Yandex (Browser, Disk, Translate, Key...)
+com.yandex.*
+com.kinopoisk.*
+# VK / Mail.ru group
+com.vkontakte.android
+com.vk.*
+com.uma.musicvk
+com.my.mail
+com.mail.*
+com.my.games.*
+# Marketplaces, retail, delivery
+com.wildberries.*
+com.icemobile.lenta.prod
+com.ozon.*
+com.avito.android
+com.allgoritm.youla
+com.lamoda.lite
+com.sbermarket.*
+com.megamarket.*
+com.deliveryclub
+com.app.goldapple
+# Telecom
+com.mts.*
+com.beeline.*
+com.megafon.*
+com.tele2.*
+# Maps, transport, travel
+com.dublgis.*
+com.rzd.*
+com.aeroflot.*
+com.citymobil
+com.punicapp.whoosh
+com.utair.*
+com.tutu.*
+# Media, streaming, social
+com.okko.*
+tv.okko.*
+com.ivi.*
+com.start.*
+com.kion.*
+com.zvuk.*
+one.premier.*
+com.litres.*
+com.rbc.*
+# Government and city services
+com.octopod.russianpost.client.android
+com.mos.*
+com.gosuslugi.*
+# FNS: "Moy nalog" and other GNIVC apps
+com.gnivts.*
+# Antivirus and work tools
+com.kaspersky.*
+com.drweb.*
+com.hh.*

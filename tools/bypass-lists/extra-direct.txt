@@ -1,0 +1,35 @@
+# Domains of Russian services outside the .ru/.su/.рф zones (those are covered whole).
+# Merged into domains.txt; resolved through a Russian resolver and kept out of the tunnel.
+# Yandex: search, browser, music, Kinopoisk, maps, Go, CDN
+yandex.com
+yandex.net
+yandex.cloud
+yandexcloud.net
+yastatic.net
+yandex.az
+yango.com
+# VK, OK, Mail, Dzen, VK Video, VK Music, MAX
+vk.com
+vk.me
+vk.link
+vkuser.net
+userapi.com
+vk-cdn.net
+vkuseraudio.net
+vkuservideo.net
+vk-portal.net
+mycdn.me
+mradx.net
+# Marketplaces and banks
+ozonusercontent.com
+wbstatic.net
+wbcontent.net
+avito.st
+sberbank.com
+# Media
+okko.tv
+ivi.tv
+premier.one
+more.tv
+zvuk.com
+2gis.com

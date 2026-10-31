@@ -1,0 +1,15 @@
+# Ahead-of-time compiled on install (ProfileInstaller), so the first launch is as fast as the hundredth.
+# Compose, activity and lifecycle ship their own profiles; these cover our startup path.
+HSPLio/paramnezia/app/App;->**(**)**
+HSPLio/paramnezia/app/data/**;->**(**)**
+HSPLio/paramnezia/app/ui/MainActivity;->**(**)**
+HSPLio/paramnezia/app/ui/**;->**(**)**
+HSPLio/paramnezia/app/tunnel/**;->**(**)**
+HSPLio/paramnezia/tunnel/**;->**(**)**
+HSPLio/paramnezia/core/config/**;->**(**)**
+HSPLio/paramnezia/core/net/**;->**(**)**
+HSPLio/paramnezia/core/routing/**;->**(**)**
+HSPLkotlinx/serialization/json/**;->**(**)**
+Lio/paramnezia/app/**;
+Lio/paramnezia/tunnel/**;
+Lio/paramnezia/core/**;

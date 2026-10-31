@@ -1,0 +1,30 @@
+name: Refresh bypass lists
+
+# Russian IP blocks, domains and the tracker list change every week; refresh them and open a PR.
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python3 tools/bypass-lists/generate.py
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - name: Check the lists still cover the key services
+        run: ./gradlew -Pparamnezia.jvmOnly=true :core:test --tests '*RoutingTest*' --no-configuration-cache
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          branch: bypass-lists/refresh
+          commit-message: "Bypass lists: weekly refresh"
+          title: "Bypass lists: weekly refresh"
+          body: "Automatic refresh of Russian IP blocks (ipverse), domains and tracker lists (v2fly)."

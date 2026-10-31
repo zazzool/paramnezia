@@ -1,0 +1,529 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+package main
+
+import "C"
+
+import (
+	"encoding/binary"
+	"errors"
+	"net"
+	"net/netip"
+	"os"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
+)
+
+// Split DNS with tracker blocking, done where packets already pass: the tun device.
+//
+// The VPN announces one virtual resolver address. Queries to it never reach the network as-is:
+//   - ad, tracking and telemetry names get an empty answer right here (0.0.0.0 / ::);
+//   - Russian names go to a Russian resolver over a socket the app protected from the VPN, so
+//     Russian services see a Russian resolver and answer with Russian addresses;
+//   - everything else goes to the tunnel's own DNS server, through the tunnel.
+// Every other packet passes untouched; the only per-packet cost is a few byte compares.
+
+const (
+	ruleBlock uint8 = 1 << iota
+	ruleDirect
+	ruleAllow
+)
+
+type dnsRules struct {
+	suffix map[string]uint8
+	exact  map[string]uint8
+}
+
+var (
+	rules        atomic.Pointer[dnsRules]
+	blockedCount atomic.Int64
+)
+
+func addRules(r *dnsRules, text string, flag uint8) {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.ToLower(strings.TrimSpace(line))
+		if line == "" || line[0] == '#' {
+			continue
+		}
+		if strings.HasPrefix(line, "full:") {
+			r.exact[strings.TrimSuffix(line[5:], ".")] |= flag
+		} else {
+			r.suffix[strings.TrimSuffix(strings.TrimPrefix(line, "domain:"), ".")] |= flag
+		}
+	}
+}
+
+func parseRules(block, direct, allow string) *dnsRules {
+	r := &dnsRules{suffix: map[string]uint8{}, exact: map[string]uint8{}}
+	addRules(r, block, ruleBlock)
+	addRules(r, direct, ruleDirect)
+	addRules(r, allow, ruleAllow)
+	return r
+}
+
+// classify returns the combined rule bits for name: exact rules plus every suffix of the name.
+func (r *dnsRules) classify(name string) uint8 {
+	if r == nil {
+		return 0
+	}
+	f := r.exact[name]
+	for {
+		f |= r.suffix[name]
+		i := strings.IndexByte(name, '.')
+		if i < 0 {
+			return f
+		}
+		name = name[i+1:]
+	}
+}
+
+// --- upstream forwarding ----------------------------------------------------------------------
+
+type pending struct {
+	origID uint16
+	ch     chan []byte
+}
+
+// forwarder multiplexes all queries for one route (direct or tunnel) over a single UDP socket,
+// so no socket is created per query and the radio sees as few packets as possible.
+type forwarder struct {
+	conn    *net.UDPConn
+	servers []*net.UDPAddr
+	mu      sync.Mutex
+	waiting map[uint16]*pending
+	nextID  uint16
+}
+
+func newForwarder(conn *net.UDPConn, servers []string) *forwarder {
+	f := &forwarder{conn: conn, waiting: map[uint16]*pending{}, nextID: uint16(time.Now().UnixNano())}
+	for _, s := range servers {
+		if ap, err := netip.ParseAddrPort(s); err == nil {
+			f.servers = append(f.servers, net.UDPAddrFromAddrPort(ap))
+		} else if a, err := netip.ParseAddr(s); err == nil {
+			f.servers = append(f.servers, net.UDPAddrFromAddrPort(netip.AddrPortFrom(a, 53)))
+		}
+	}
+	go f.readLoop()
+	return f
+}
+
+func (f *forwarder) readLoop() {
+	buf := make([]byte, 4096)
+	for {
+		n, _, err := f.conn.ReadFromUDP(buf)
+		if err != nil {
+			return
+		}
+		if n < 12 {
+			continue
+		}
+		id := binary.BigEndian.Uint16(buf)
+		f.mu.Lock()
+		p := f.waiting[id]
+		delete(f.waiting, id)
+		f.mu.Unlock()
+		if p != nil {
+			resp := append([]byte(nil), buf[:n]...)
+			binary.BigEndian.PutUint16(resp, p.origID)
+			p.ch <- resp
+		}
+	}
+}
+
+// query sends q to the first server, then to the next ones if it stays silent.
+func (f *forwarder) query(q []byte) []byte {
+	if len(f.servers) == 0 {
+		return nil
+	}
+	p := &pending{origID: binary.BigEndian.Uint16(q), ch: make(chan []byte, 1)}
+	f.mu.Lock()
+	f.nextID++
+	id := f.nextID
+	f.waiting[id] = p
+	f.mu.Unlock()
+	defer func() { f.mu.Lock(); delete(f.waiting, id); f.mu.Unlock() }()
+
+	out := append([]byte(nil), q...)
+	binary.BigEndian.PutUint16(out, id)
+	deadline := time.After(4 * time.Second)
+	for i := 0; ; i++ {
+		if i < len(f.servers) {
+			f.conn.WriteToUDP(out, f.servers[i])
+		}
+		select {
+		case r := <-p.ch:
+			return r
+		case <-deadline:
+			return nil
+		case <-time.After(1200 * time.Millisecond):
+		}
+	}
+}
+
+func (f *forwarder) close() { f.conn.Close() }
+
+// --- answer cache -----------------------------------------------------------------------------
+
+type cached struct {
+	resp    []byte
+	expires time.Time
+}
+
+// A small cache saves radio wake-ups: apps resolve the same few names over and over.
+type dnsCache struct {
+	mu sync.Mutex
+	m  map[string]cached
+}
+
+func (c *dnsCache) get(key string, id uint16) []byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.m[key]
+	if !ok || time.Now().After(e.expires) {
+		return nil
+	}
+	r := append([]byte(nil), e.resp...)
+	binary.BigEndian.PutUint16(r, id)
+	return r
+}
+
+func (c *dnsCache) put(key string, resp []byte) {
+	ttl := minTTL(resp)
+	if ttl <= 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.m) >= 1024 {
+		c.m = map[string]cached{}
+	}
+	c.m[key] = cached{resp, time.Now().Add(time.Duration(ttl) * time.Second)}
+}
+
+// --- tun wrapper ------------------------------------------------------------------------------
+
+type dnsConfig struct {
+	virtual netip.Addr
+	tunnel  []string
+	direct  []string
+}
+
+func parseDNSConfig(s string) (dnsConfig, bool) {
+	var c dnsConfig
+	for _, line := range strings.Split(s, "\n") {
+		k, v, _ := strings.Cut(strings.TrimSpace(line), "=")
+		var list []string
+		for _, x := range strings.Split(v, ",") {
+			if x = strings.TrimSpace(x); x != "" {
+				list = append(list, x)
+			}
+		}
+		switch k {
+		case "virtual":
+			c.virtual, _ = netip.ParseAddr(v)
+		case "tunnel":
+			c.tunnel = list
+		case "direct":
+			c.direct = list
+		}
+	}
+	return c, c.virtual.Is4()
+}
+
+type dnsTun struct {
+	tun.Device
+	virtual [4]byte
+	tunnel  *forwarder
+	direct  *forwarder
+	cache   dnsCache
+	slots   chan struct{}
+	writeMu sync.Mutex
+}
+
+// newDNSTun wraps dev. directFd is a UDP socket the app protected from the VPN (or -1).
+func newDNSTun(dev tun.Device, cfg dnsConfig, directFd int) (*dnsTun, error) {
+	tunnelConn, err := net.ListenUDP("udp4", nil)
+	if err != nil {
+		return nil, err
+	}
+	t := &dnsTun{
+		Device:  dev,
+		virtual: cfg.virtual.As4(),
+		tunnel:  newForwarder(tunnelConn, cfg.tunnel),
+		cache:   dnsCache{m: map[string]cached{}},
+		slots:   make(chan struct{}, 64),
+	}
+	if directFd >= 0 {
+		if c, err := udpFromFd(directFd); err == nil {
+			t.direct = newForwarder(c, cfg.direct)
+		}
+	}
+	return t, nil
+}
+
+func (t *dnsTun) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
+	for {
+		n, err := t.Device.Read(bufs, sizes, offset)
+		if n == 0 || err != nil {
+			return n, err
+		}
+		w := 0
+		for i := 0; i < n; i++ {
+			pkt := bufs[i][offset : offset+sizes[i]]
+			if t.isQuery(pkt) {
+				t.handle(append([]byte(nil), pkt...))
+				continue
+			}
+			if w != i {
+				copy(bufs[w][offset:], pkt)
+				sizes[w] = sizes[i]
+			}
+			w++
+		}
+		if w > 0 {
+			return w, nil
+		}
+	}
+}
+
+func (t *dnsTun) Close() error {
+	t.tunnel.close()
+	if t.direct != nil {
+		t.direct.close()
+	}
+	return t.Device.Close()
+}
+
+// isQuery: IPv4, UDP, to the virtual resolver on port 53, not fragmented.
+func (t *dnsTun) isQuery(p []byte) bool {
+	if len(p) < 28 || p[0]>>4 != 4 || p[9] != 17 {
+		return false
+	}
+	if p[16] != t.virtual[0] || p[17] != t.virtual[1] || p[18] != t.virtual[2] || p[19] != t.virtual[3] {
+		return false
+	}
+	if binary.BigEndian.Uint16(p[6:])&0x3fff != 0 {
+		return false
+	}
+	ihl := int(p[0]&0x0f) * 4
+	return len(p) >= ihl+8+12 && binary.BigEndian.Uint16(p[ihl+2:]) == 53
+}
+
+func (t *dnsTun) handle(pkt []byte) {
+	ihl := int(pkt[0]&0x0f) * 4
+	var client [4]byte
+	copy(client[:], pkt[12:16])
+	clientPort := binary.BigEndian.Uint16(pkt[ihl:])
+	q := pkt[ihl+8:]
+	name, qtype, qend, ok := parseQuestion(q)
+	if !ok {
+		return
+	}
+	flags := rules.Load().classify(name)
+	if flags&ruleBlock != 0 && flags&ruleAllow == 0 {
+		blockedCount.Add(1)
+		t.reply(client, clientPort, blockedAnswer(q, qtype, qend))
+		return
+	}
+	fw, route := t.tunnel, "t"
+	if flags&ruleDirect != 0 && t.direct != nil {
+		fw, route = t.direct, "d"
+	}
+	key := route + name + "/" + string(rune(qtype))
+	id := binary.BigEndian.Uint16(q)
+	if r := t.cache.get(key, id); r != nil {
+		t.reply(client, clientPort, r)
+		return
+	}
+	select {
+	case t.slots <- struct{}{}:
+	default:
+		return // overloaded: drop, the app retries
+	}
+	go func() {
+		defer func() { <-t.slots }()
+		r := fw.query(q)
+		if r == nil && fw == t.direct {
+			r = t.tunnel.query(q) // Russian resolver unreachable: still answer
+		}
+		if r != nil {
+			t.cache.put(key, r)
+			t.reply(client, clientPort, r)
+		}
+	}()
+}
+
+// reply writes a DNS answer back to the app as an IPv4/UDP packet from the virtual resolver.
+func (t *dnsTun) reply(client [4]byte, port uint16, payload []byte) {
+	const off = 16 // headroom some tun implementations need for their own headers
+	buf := make([]byte, off+28+len(payload))
+	p := buf[off:]
+	p[0] = 0x45
+	binary.BigEndian.PutUint16(p[2:], uint16(len(p)))
+	p[8] = 64
+	p[9] = 17
+	copy(p[12:16], t.virtual[:])
+	copy(p[16:20], client[:])
+	binary.BigEndian.PutUint16(p[10:], ipChecksum(p[:20]))
+	binary.BigEndian.PutUint16(p[20:], 53)
+	binary.BigEndian.PutUint16(p[22:], port)
+	binary.BigEndian.PutUint16(p[24:], uint16(8+len(payload)))
+	// UDP checksum 0 = none, which IPv4 allows.
+	copy(p[28:], payload)
+	t.writeMu.Lock()
+	t.Device.Write([][]byte{buf}, off)
+	t.writeMu.Unlock()
+}
+
+func ipChecksum(h []byte) uint16 {
+	var s uint32
+	for i := 0; i+1 < len(h); i += 2 {
+		s += uint32(binary.BigEndian.Uint16(h[i:]))
+	}
+	for s > 0xffff {
+		s = s>>16 + s&0xffff
+	}
+	return ^uint16(s)
+}
+
+// --- DNS message helpers ------------------------------------------------------------------------
+
+// parseQuestion returns the lowercase first question name, its type and where the question ends.
+func parseQuestion(m []byte) (string, uint16, int, bool) {
+	if len(m) < 12 || m[2]&0x80 != 0 || binary.BigEndian.Uint16(m[4:]) == 0 {
+		return "", 0, 0, false
+	}
+	var b strings.Builder
+	i := 12
+	for {
+		if i >= len(m) {
+			return "", 0, 0, false
+		}
+		l := int(m[i])
+		if l == 0 {
+			i++
+			break
+		}
+		if l&0xc0 != 0 || i+1+l > len(m) {
+			return "", 0, 0, false
+		}
+		if b.Len() > 0 {
+			b.WriteByte('.')
+		}
+		for _, c := range m[i+1 : i+1+l] {
+			if c >= 'A' && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			b.WriteByte(c)
+		}
+		i += 1 + l
+	}
+	if i+4 > len(m) {
+		return "", 0, 0, false
+	}
+	return b.String(), binary.BigEndian.Uint16(m[i:]), i + 4, true
+}
+
+// blockedAnswer: 0.0.0.0 / :: for A / AAAA, an empty NOERROR answer for anything else. Apps give up
+// at once instead of retrying, which an NXDOMAIN or a timeout would not guarantee.
+func blockedAnswer(q []byte, qtype uint16, qend int) []byte {
+	r := append([]byte(nil), q[:qend]...)
+	r[2] = 0x80 | (q[2] & 0x01) // QR, keep RD
+	r[3] = 0x80                 // RA, NOERROR
+	binary.BigEndian.PutUint16(r[4:], 1)
+	binary.BigEndian.PutUint16(r[6:], 0)
+	binary.BigEndian.PutUint16(r[8:], 0)
+	binary.BigEndian.PutUint16(r[10:], 0)
+	var rdata []byte
+	switch qtype {
+	case 1:
+		rdata = make([]byte, 4)
+	case 28:
+		rdata = make([]byte, 16)
+	default:
+		return r
+	}
+	binary.BigEndian.PutUint16(r[6:], 1)
+	rr := []byte{0xc0, 0x0c, byte(qtype >> 8), byte(qtype), 0, 1, 0, 0, 0x0e, 0x10, 0, byte(len(rdata))}
+	return append(append(r, rr...), rdata...)
+}
+
+// minTTL of the answer records, clamped to [10s, 10min]; 0 means "do not cache".
+func minTTL(m []byte) int {
+	if len(m) < 12 || m[3]&0x0f != 0 || m[2]&0x02 != 0 {
+		return 0 // error or truncated
+	}
+	qd := int(binary.BigEndian.Uint16(m[4:]))
+	an := int(binary.BigEndian.Uint16(m[6:]))
+	if an == 0 {
+		return 0
+	}
+	i := 12
+	for ; qd > 0; qd-- {
+		if i = skipName(m, i); i < 0 || i+4 > len(m) {
+			return 0
+		}
+		i += 4
+	}
+	ttl := 600
+	for ; an > 0; an-- {
+		if i = skipName(m, i); i < 0 || i+10 > len(m) {
+			return 0
+		}
+		if t := int(binary.BigEndian.Uint32(m[i+4:])); t < ttl {
+			ttl = t
+		}
+		i += 10 + int(binary.BigEndian.Uint16(m[i+8:]))
+	}
+	if ttl < 10 {
+		return 0
+	}
+	return ttl
+}
+
+func skipName(m []byte, i int) int {
+	for i < len(m) {
+		l := int(m[i])
+		switch {
+		case l == 0:
+			return i + 1
+		case l&0xc0 == 0xc0:
+			return i + 2
+		default:
+			i += 1 + l
+		}
+	}
+	return -1
+}
+
+func udpFromFd(fd int) (*net.UDPConn, error) {
+	f := os.NewFile(uintptr(fd), "pn-dns-direct")
+	defer f.Close() // FileConn dups the descriptor
+	c, err := net.FileConn(f)
+	if err != nil {
+		return nil, err
+	}
+	u, ok := c.(*net.UDPConn)
+	if !ok {
+		c.Close()
+		return nil, errors.New("not a UDP socket")
+	}
+	return u, nil
+}
+
+// pnSetDnsRules replaces the block / direct / allow lists (one rule per line, `full:` for exact
+// names) for all tunnels, effective for the next query.
+//
+//export pnSetDnsRules
+func pnSetDnsRules(block, direct, allow string) {
+	rules.Store(parseRules(block, direct, allow))
+}
+
+// pnDnsBlocked returns how many queries were blocked since the library was loaded.
+//
+//export pnDnsBlocked
+func pnDnsBlocked() int64 { return blockedCount.Load() }
