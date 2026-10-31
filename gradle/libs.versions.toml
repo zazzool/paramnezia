@@ -7,6 +7,8 @@ jsch = "2.28.8"
 zxing = "3.5.4"
 zxingEmbedded = "4.3.0"
 junit = "4.13.2"
+sshd = "2.20.1"
+slf4j = "2.0.17"
 composeBom = "2025.09.01"
 activity = "1.9.3"
 lifecycle = "2.10.0"
@@ -26,6 +28,8 @@ jsch = { module = "com.github.mwiede:jsch", version.ref = "jsch" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 zxing-android-embedded = { module = "com.journeyapps:zxing-android-embedded", version.ref = "zxingEmbedded" }
 junit = { module = "junit:junit", version.ref = "junit" }
+sshd-core = { module = "org.apache.sshd:sshd-core", version.ref = "sshd" }
+slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 
 androidx-compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 androidx-compose-ui = { module = "androidx.compose.ui:ui" }
