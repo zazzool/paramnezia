@@ -2,54 +2,39 @@ package io.paramnezia.deploy
 
 import io.paramnezia.core.amnezia.AmneziaFormat
 import io.paramnezia.core.amnezia.AmneziaKey
-import io.paramnezia.core.apk.ApkSlot
 import io.paramnezia.core.config.WgQuick
 import io.paramnezia.core.fleet.Invite
 import io.paramnezia.core.profile.SshCredentials
-import java.io.File
-import java.security.MessageDigest
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.security.SecureRandom
 import java.util.Base64
 
 /**
  * One-time invite links served by the VPS itself: `http://<server>/#<token>`.
  *
- * The page looks at the device that opened it. Android gets Paramnezia with the invite already
- * inside the APK (see [ApkSlot]), so the app is set up the moment it starts; iPhone gets the plain
- * key and config for the original AmneziaVPN; anything else is offered a choice. The first download
- * claims the link (see `invite/get.cgi`).
+ * The page looks at the device that opened it:
+ *  - Android: step 1 downloads the official, unmodified release APK (the same bytes for everyone,
+ *    from public HTTPS mirrors or this server's copy); step 2 opens the invite in the installed app.
+ *    Nothing is personalised inside the APK and nothing downloads by itself: per-user APKs and
+ *    drive-by downloads are exactly what Play Protect treats as malware distribution.
+ *  - iPhone: the plain key and config for the original AmneziaVPN.
+ *  - anything else: a choice.
+ * The first fetch of the invite claims the link (see `invite/get.cgi`).
  */
 class InviteLinks(private val hostKeys: HostKeyStore) {
 
-    /**
-     * An APK with a settings slot at [slotOffset] (CI adds an empty one to every release build): the
-     * template the server personalizes per download. Whatever the slot holds now (the invite this
-     * device was installed from) is blanked on the way out; the file itself is never changed.
-     */
-    class ApkTemplate(val file: File, val slotOffset: Long) {
-        val sha256: String by lazy { open().use(::sha256) }
+    /** Where people without the app get it: the signed release the admin itself runs. */
+    data class AppDownload(val versionName: String, val sha256: String, val urls: List<String>) {
+        init { require(sha256.matches(HEX64)) { "bad sha256" } }
 
-        fun open(): java.io.InputStream = BlankRange(file.inputStream().buffered(1 shl 16), slotOffset, ApkSlot.SIZE.toLong())
-    }
-
-    /** Passes a stream through with bytes [from, from + length) read as zeros. */
-    private class BlankRange(private val src: java.io.InputStream, private val from: Long, length: Long) : java.io.InputStream() {
-        private val to = from + length
-        private var pos = 0L
-        override fun read(): Int {
-            val b = src.read()
-            if (b < 0) return b
-            return if (pos++ in from until to) 0 else b
-        }
-        override fun read(b: ByteArray, off: Int, len: Int): Int {
-            val n = src.read(b, off, len)
-            if (n <= 0) return n
-            val start = maxOf(pos, from); val end = minOf(pos + n, to)
-            if (start < end) java.util.Arrays.fill(b, off + (start - pos).toInt(), off + (end - pos).toInt(), 0)
-            pos += n
-            return n
-        }
-        override fun close() = src.close()
+        internal fun json(): String = buildJsonObject {
+            put("version", versionName)
+            put("sha256", sha256)
+            putJsonArray("urls") { urls.filter { it.startsWith("https://") }.forEach { add(it) } }
+        }.toString()
     }
 
     data class Link(val url: String, val token: String, val expiresAt: Long)
@@ -62,7 +47,7 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
         creds: SshCredentials,
         invite: String,
         name: String,
-        apk: ApkTemplate?,
+        app: AppDownload?,
         ttlMs: Long = 7 * DAY_MS,
         preferredPort: Int = 80,
         now: Long = System.currentTimeMillis(),
@@ -72,20 +57,13 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
         val conf = AmneziaFormat.import(AmneziaKey.decode(key)).firstNotNullOfOrNull { it.tunnel }?.let(WgQuick::write).orEmpty()
         val expiresAt = now + ttlMs
         SshConnection.open(creds, hostKeys).use { ssh ->
-            val port = ensurePage(ssh, preferredPort)
-            if (apk != null) uploadTemplate(ssh, apk)
-            // One round trip: the slot comes in on stdin, the texts in the environment.
-            val slot = if (apk != null && invite.toByteArray().size <= ApkSlot.MAX_PAYLOAD) ApkSlot.encode(invite) else ByteArray(0)
-            val env = mapOf("PN_APP" to invite, "PN_KEY" to key, "PN_CONF" to conf, "PN_NAME" to name, "PN_EXPIRES" to (expiresAt / 1000).toString())
-            val r = ssh.pipe(
-                env.entries.joinToString("") { (k, v) -> "export $k=${SshConnection.shellQuote(v)}; " } +
+            val port = ensurePage(ssh, preferredPort, app)
+            val r = ssh.run(
                 """
                 set -eu
                 $SUDO
                 T=$token; D=$DATA; tmp=${'$'}D/t/.new-${'$'}T
                 ${'$'}S mkdir -p "${'$'}tmp"
-                ${'$'}S sh -c "cat > ${'$'}tmp/slot"
-                [ -s "${'$'}tmp/slot" ] || ${'$'}S rm -f "${'$'}tmp/slot"
                 printf '%s' "${'$'}PN_APP" | ${'$'}S tee "${'$'}tmp/app" >/dev/null
                 printf '%s' "${'$'}PN_KEY" | ${'$'}S tee "${'$'}tmp/key" >/dev/null
                 printf '%s' "${'$'}PN_CONF" | ${'$'}S tee "${'$'}tmp/conf" >/dev/null
@@ -93,44 +71,41 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
                 printf '%s' "${'$'}PN_EXPIRES" | ${'$'}S tee "${'$'}tmp/expires" >/dev/null
                 ${'$'}S chown -R 65534:65534 "${'$'}tmp"
                 ${'$'}S mv "${'$'}tmp" "${'$'}D/t/${'$'}T"
-                echo ok
+                echo "::result::ok=1"
                 """.trimIndent(),
-                slot.inputStream(),
+                env = mapOf("PN_APP" to invite, "PN_KEY" to key, "PN_CONF" to conf, "PN_NAME" to name, "PN_EXPIRES" to (expiresAt / 1000).toString()),
+                timeoutMs = 60_000,
             )
-            if (r.stdout.trim() != "ok") throw SshException("invite_failed", "Could not store invite: ${r.stderr.takeLast(1000)}")
+            if (r.results["ok"] != "1") throw SshException("invite_failed", "Could not store invite: ${r.stderr.takeLast(1000)}")
             return Link(url(creds.host, port, token), token, expiresAt)
         }
     }
 
-    /**
-     * Gets a server ready for links ahead of time (page container, image pull, this version of the
-     * app), so creating a link later is a single quick round trip.
-     */
-    fun prepare(creds: SshCredentials, apk: ApkTemplate?, preferredPort: Int = 80) {
-        SshConnection.open(creds, hostKeys).use { ssh ->
-            ensurePage(ssh, preferredPort)
-            if (apk != null) uploadTemplate(ssh, apk)
-        }
+    /** Gets a server ready for links ahead of time (page container, image pull, download info). */
+    fun prepare(creds: SshCredentials, app: AppDownload?, preferredPort: Int = 80) {
+        SshConnection.open(creds, hostKeys).use { ssh -> ensurePage(ssh, preferredPort, app) }
     }
 
-    private fun ensurePage(ssh: SshConnection, preferredPort: Int): Int {
+    private fun ensurePage(ssh: SshConnection, preferredPort: Int, app: AppDownload?): Int {
         val page = ssh.run(
             ServerManager.script("invite-server.sh"),
             env = mapOf(
                 "PN_INVITE_PORT" to preferredPort.toString(),
                 "PN_INVITE_INDEX" to ServerManager.script("invite/index.html"),
                 "PN_INVITE_CGI" to ServerManager.script("invite/get.cgi"),
+                "PN_APP_JSON" to (app?.json() ?: ""),
             ),
+            timeoutMs = 5 * 60_000,
         )
         return page.results["port"]?.toIntOrNull()
-            ?: throw SshException("invite_failed", "Could not start the invite page: ${page.stderr.takeLast(1000)} ${page.stdout.takeLast(500)}")
+            ?: throw SshException("invite_failed", "Could not start the invite page: ${page.error ?: ""} ${page.stderr.takeLast(1000)}")
     }
 
     /** Which of [tokens] have been used already. */
     fun claimed(creds: SshCredentials, tokens: Collection<String>): Set<String> {
         if (tokens.isEmpty()) return emptySet()
         SshConnection.open(creds, hostKeys).use { ssh ->
-            val r = ssh.run("$SUDO; \$S ls -1 $DATA/c 2>/dev/null || true")
+            val r = ssh.run("$SUDO; \$S ls -1 $DATA/c 2>/dev/null || true", timeoutMs = 30_000)
             val used = r.stdout.lines().map { it.trim() }.toSet()
             return tokens.filter { it in used }.toSet()
         }
@@ -139,20 +114,7 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
     /** Takes back an unused link. */
     fun revoke(creds: SshCredentials, token: String) {
         require(token.matches(TOKEN)) { "bad token" }
-        SshConnection.open(creds, hostKeys).use { ssh -> ssh.run("$SUDO; \$S rm -rf $DATA/t/$token") }
-    }
-
-    private fun uploadTemplate(ssh: SshConnection, apk: ApkTemplate) {
-        val current = ssh.run("$SUDO; \$S cat $DATA/app.sha 2>/dev/null || true").stdout.trim()
-        if (current == apk.sha256) return
-        val up = ssh.pipe(
-            "$SUDO; \$S mkdir -p $DATA && \$S sh -c 'cat > $DATA/app.apk.new' && " +
-                "printf '%s %s\\n' ${apk.slotOffset} ${ApkSlot.SIZE} | \$S tee $DATA/app.slot.new >/dev/null && " +
-                "\$S mv $DATA/app.apk.new $DATA/app.apk && \$S mv $DATA/app.slot.new $DATA/app.slot && " +
-                "printf '%s' ${apk.sha256} | \$S tee $DATA/app.sha >/dev/null && echo ok",
-            apk.open(),
-        )
-        if (up.stdout.trim() != "ok") throw SshException("invite_failed", "Could not upload the app: ${up.stderr.takeLast(1000)}")
+        SshConnection.open(creds, hostKeys).use { ssh -> ssh.run("$SUDO; \$S rm -rf $DATA/t/$token", timeoutMs = 30_000) }
     }
 
     companion object {
@@ -160,6 +122,7 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
         private const val DATA = "/opt/amnezia/paramnezia/invite/data"
         private const val SUDO = "if [ \"\$(id -u)\" -eq 0 ]; then S=''; else S='sudo -n'; fi"
         private val TOKEN = Regex("[A-Za-z0-9_-]{16,64}")
+        private val HEX64 = Regex("[0-9a-f]{64}")
         private val random = SecureRandom()
 
         fun newToken(): String = ByteArray(16).also(random::nextBytes).let { Base64.getUrlEncoder().withoutPadding().encodeToString(it) }
@@ -167,13 +130,6 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
         fun url(host: String, port: Int, token: String): String {
             val h = if (':' in host && !host.startsWith("[")) "[$host]" else host
             return "http://$h" + (if (port == 80) "" else ":$port") + "/#$token"
-        }
-
-        private fun sha256(input: java.io.InputStream): String {
-            val md = MessageDigest.getInstance("SHA-256")
-            val buf = ByteArray(64 * 1024)
-            while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) }
-            return md.digest().joinToString("") { "%02x".format(it) }
         }
     }
 }

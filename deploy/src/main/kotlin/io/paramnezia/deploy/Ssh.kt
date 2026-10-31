@@ -96,25 +96,6 @@ class SshConnection private constructor(private val session: Session) : Closeabl
         return ExecResult(code, stdout.toString(), stderr.toString())
     }
 
-    /** Runs [command] with [input] streamed to its stdin (for binary uploads). Returns stdout. */
-    fun pipe(command: String, input: java.io.InputStream, timeoutMs: Long = 10 * 60_000): ExecResult {
-        val channel = session.openChannel("exec") as ChannelExec
-        channel.setCommand(command)
-        val out = channel.inputStream
-        val err = channel.errStream
-        val stdin = channel.outputStream
-        channel.connect(CONNECT_TIMEOUT_MS)
-        stdin.use { input.copyTo(it, 64 * 1024) }
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (!channel.isClosed) {
-            if (System.currentTimeMillis() > deadline) { channel.disconnect(); throw SshException("timeout", "Upload timed out") }
-            Thread.sleep(50)
-        }
-        val result = ExecResult(channel.exitStatus, out.readBytes().decodeToString(), err.readBytes().decodeToString())
-        channel.disconnect()
-        return result
-    }
-
     override fun close() = session.disconnect()
 
     companion object {
@@ -127,16 +108,23 @@ class SshConnection private constructor(private val session: Session) : Closeabl
          */
         @Volatile var routes: () -> List<javax.net.SocketFactory?> = { listOf(null) }
 
+        /**
+         * Connects over every route in turn, twice: mobile networks drop the odd TCP handshake, and
+         * one quiet retry is cheaper than a failed operation the admin has to start again.
+         */
         fun open(creds: SshCredentials, hostKeys: HostKeyStore): SshConnection {
-            val ways = routes().ifEmpty { listOf(null) }
             var last: SshException? = null
-            for ((i, way) in ways.withIndex()) {
-                try {
-                    return open(creds, hostKeys, way, if (ways.size > 1 && i < ways.size - 1) 10_000 else CONNECT_TIMEOUT_MS)
-                } catch (e: SshException) {
-                    // Wrong password or host key: another route will not help.
-                    if (e.code != "unreachable" && e.code != "connect_failed") throw e
-                    last = e
+            for (attempt in 0 until 2) {
+                if (attempt > 0) Thread.sleep(2_000)
+                val ways = routes().ifEmpty { listOf(null) }
+                for ((i, way) in ways.withIndex()) {
+                    try {
+                        return open(creds, hostKeys, way, if (ways.size > 1 && i < ways.size - 1) 10_000 else CONNECT_TIMEOUT_MS)
+                    } catch (e: SshException) {
+                        // Wrong password or host key: another route or try will not help.
+                        if (e.code != "unreachable" && e.code != "connect_failed") throw e
+                        last = e
+                    }
                 }
             }
             throw last!!

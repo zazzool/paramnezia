@@ -27,7 +27,7 @@ core/         чистый Kotlin/JVM, без Android: форматы, крип�
 deploy/       JVM: SSH (JSch), скрипты установки сервера, публикация манифеста, страница приглашений
 tunnel/       Android-библиотека: VpnService, JNI, Go (amneziawg-go + DNS-фильтр)
 app/          Android-приложение: Compose UI, состояние, флот, OTA, виджет, плитка
-releasetool/  JVM CLI: ключи релизов, публикация релиза, вшивание приглашения в APK
+releasetool/  JVM CLI: ключи релизов, публикация релиза
 tools/bypass-lists/  генератор списков «российское напрямую» и блок-листа трекеров
 ```
 
@@ -43,18 +43,17 @@ tools/bypass-lists/  генератор списков «российское н
 | `ota` | `Release` | релиз, подписанный ключом релизов, проверка, потоковая проверка SHA-256 |
 | `routing` | `BypassLists`, `RoutePlanner` | загрузка списков, план маршрутов в бюджете Android (3000) |
 | `net` | `IpPrefix`, `PrefixSet` | IPv4/IPv6 префиксы, вычитание множеств |
-| `apk` | `ApkSlot` | слот приглашения в APK Signing Block |
 | `profile` | `Profile` | `SshCredentials`, `Protocol` |
 
 ### deploy (`io.paramnezia.deploy`)
 
 | Файл | Что делает |
 |---|---|
-| `Ssh.kt` | `SshConnection`: `run(script, env)` (скрипт через stdin `bash -s`, результаты строками `::result::k=v`), `pipe(cmd, stdin)` для бинарных загрузок, TOFU-проверка ключа хоста |
-| `ServerManager.kt` | `inspect`, `install`, `addClient`, `registerPeer`, `removeClient`, `usedAddresses` |
+| `Ssh.kt` | `SshConnection`: `run(script, env)` (скрипт через stdin `bash -s`, результаты строками `::result::k=v`), TOFU-проверка ключа хоста, два захода по всем маршрутам |
+| `ServerManager.kt` | `inspect`, `install`, `addClient`, `registerPeer`, `ensurePeers` (много за одно подключение), `removeClient(s)`, `usedAddresses` |
 | `ObfuscationProfile.kt` | генерация параметров AmneziaWG (Jc/Jmin/Jmax, S1–S4, H1–H4, I1–I5) |
-| `FleetPublisher.kt` | манифест и релиз на сервер (внутритуннельный httpd 10.8.1.1:8080), gist |
-| `InviteLinks.kt` | одноразовые ссылки: страница, шаблон APK, хранение, проверка «использована», отзыв |
+| `FleetPublisher.kt` | манифест на сервер с проверкой внутритуннельного httpd (`fleet-www.sh`), релиз, который сервер скачивает сам (`release-mirror.sh`), gist |
+| `InviteLinks.kt` | одноразовые ссылки: страница, `app.json`, хранение, проверка «использована», отзыв |
 | `resources/…/*.sh` | серверные скрипты, см. [SERVER.md](SERVER.md) |
 
 ### tunnel (`io.paramnezia.tunnel`)
@@ -73,18 +72,18 @@ tools/bypass-lists/  генератор списков «российское н
 
 | Файл | Что делает |
 |---|---|
-| `App.kt` | процесс приложения и `TunnelHost`: выбор сервера, failover, gossip, приглашение из APK, видимость адресов |
+| `App.kt` | процесс приложения и `TunnelHost`: выбор сервера, failover, gossip, самовосстановление серверов (админ), видимость адресов |
 | `data/AppState.kt` | всё состояние приложения (сериализуется) |
-| `data/Vault.kt`, `data/Repo.kt` | зашифрованное (Keystore AES-GCM) хранилище, асинхронная загрузка |
-| `data/Servers.kt` | импорт ключей/QR/файлов, деплой VPS, экспорт |
-| `fleet/FleetManager.kt` | флот: вступление, синхронизация (сервер, зеркала, Nostr), gossip, управление |
+| `data/Vault.kt`, `data/Repo.kt` | зашифрованное (Keystore AES-GCM) хранилище: атомарная запись, `state.bak`, нечитаемое откладывается; асинхронная загрузка |
+| `data/Servers.kt` | импорт ключей/QR/файлов, деплой VPS, экспорт (в том числе всех ключей с полным доступом) |
+| `fleet/FleetManager.kt` | флот: вступление, синхронизация (сервер, зеркала, Nostr), gossip, управление, `heal` |
 | `fleet/Links.kt` | одноразовые ссылки со стороны админа, подготовка серверов заранее |
-| `ota/Updater.kt` | децентрализованное обновление |
+| `ota/Updater.kt` | децентрализованное обновление: фоновая загрузка, установка по нажатию |
 | `tunnel/SpecBuilder.kt` | собирает `TunnelSpec`: маршруты, исключённые приложения, DNS-политика |
 | `tunnel/Net.kt` | HTTP через туннель и напрямую |
 | `net/Visibility.kt` | «как вас видят сайты»: зарубежный и российский адрес |
 | `work/SyncWorker.kt` | синхронизация раз в 12 часов |
-| `ui/*` | Compose: `MainActivity`, `HomeScreen`, `PowerButton`, `Theme`, `AddScreen`, `FleetScreen`, `SettingsScreen`, `SimpleScreen`, `Qr`, `QuickTile`, `WidgetProvider` |
+| `ui/*` | Compose: `MainActivity`, `HomeScreen`, `PowerButton`, `Theme`, `AddScreen`, `FleetScreen`, `SettingsScreen`, `SimpleScreen`, `Qr`, `QuickTile`, `WidgetProvider` (+ `ToggleActivity` для кнопки виджета) |
 
 ## 3. Сборка и проверка
 
@@ -107,18 +106,18 @@ OTA в нём выключены (нет `RELEASE_KEY`). Debug имеет `appli
 | `FleetTest` | смена мастера без участия пользователя, приглашения, адреса устройств |
 | `ResilienceTest` | failover и кворум |
 | `NostrTest`, `NostrClientTest` | BIP-340 по официальным векторам, события, клиент против встроенного релея |
-| `OtaTest` | подпись релизов, выбор лучшего, проверка SHA-256 |
+| `OtaTest` | подпись релизов, выбор лучшего, установленный релиз, публичные адреса, проверка SHA-256 |
 | `RoutingTest` | ключевые российские сервисы идут напрямую, бюджет маршрутов |
-| `ApkSlotTest` | слот приглашения не ломает zip и подписанные части |
-| `DeployE2ETest` | установка сервера, клиенты, рукопожатие; одноразовая ссылка на настоящем контейнере |
+| `DeployE2ETest` | установка сервера, клиенты (в том числе пачкой и с занятым адресом), рукопожатие, перезапуск внутритуннельного httpd, зеркало релиза; одноразовая ссылка на настоящем контейнере, `app.json`, копия APK на сервере |
 | Go `dns_test.go` | правила, блок, разделение DNS |
 
 ### CI (`.github/workflows/build.yml`)
 
 1. **JVM** — все unit-тесты и e2e с Docker.
 2. **Go** — `vet` и `test -race`.
-3. **Android APK** — debug и release; проверка `apksigner verify` на APK с заполненным слотом приглашения;
-   свежие APK принудительно кладутся в ветку `apk-builds` (`git fetch origin apk-builds`); lint как отчёт.
+3. **Android APK** — debug и release; `apk-audit.sh` (правила Play Protect: подпись, блок подписи без чужих
+   записей, разрешения по списку, не debuggable, targetSdk); свежие APK (подписаны debug-ключом раннера, только
+   для проверки) принудительно кладутся в ветку `apk-builds`; lint как отчёт.
 4. **Starts on an emulator (29, 34)** — ставит release APK на эмуляторы Android 10 и 14, запускает, падает
    при `FATAL EXCEPTION` или если процесс умер. Журнал падения печатается прямо в лог задачи.
 
@@ -170,7 +169,10 @@ gossip и внутритуннельных адресов); каналы, кот
 - **Адреса флота** одинаковы на всех серверах; новые устройства пропускают адреса, уже занятые на серверах
   (`ServerManager.usedAddresses`).
 - **Android 13+** использует `excludeRoute`; до 13 маршруты считаются как дополнение (меньше точность, тот же бюджет).
-- **Отладка на телефоне.** `adb logcat -s ParamneziaVpn Paramnezia PnUpdate AndroidRuntime`.
+- **Play Protect.** Перед тем как трогать установку, обновления, ссылки или разрешения, прочитайте
+  [PLAY-PROTECT.md](PLAY-PROTECT.md). Главное: один APK для всех, приложение не трогает APK-файлы, установка
+  только с подтверждением, новые разрешения только через список в `apk-audit.sh`.
+- **Отладка на телефоне.** `adb logcat -s ParamneziaVpn Paramnezia PnFleet PnLinks PnRepo AndroidRuntime`.
 
 ## 7. Что дальше
 

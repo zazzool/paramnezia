@@ -126,6 +126,44 @@ class ServerManager(private val hostKeys: HostKeyStore) {
         PeerRegistration(r.stdout.substringAfter("::conf-begin::\n", "").substringBefore("::conf-end::"), r.results)
     }
 
+    /** A peer to make sure of: public key, name for clientsTable, fixed address (or null). */
+    data class PeerSpec(val publicKey: WgKey, val name: String, val clientIp: String?)
+
+    /**
+     * Makes sure every peer in [peers] is on the server, over one connection. Already registered
+     * peers are left as they are (the script is idempotent). Returns the peers that could not be
+     * registered, by public key, with the reason; the caller retries them later.
+     */
+    fun ensurePeers(creds: SshCredentials, peers: List<PeerSpec>, protocol: Protocol = Protocol.AWG): Map<String, String> {
+        if (peers.isEmpty()) return emptyMap()
+        val failed = LinkedHashMap<String, String>()
+        SshConnection.open(creds, hostKeys).use { ssh ->
+            for (p in peers) {
+                val r = runCatching {
+                    ssh.run(
+                        script("add-peer.sh"),
+                        env = mapOf("CONTAINER" to protocol.amneziaContainer, "CLIENT_PUB" to p.publicKey.toBase64(), "CLIENT_NAME" to p.name) +
+                            (p.clientIp?.let { mapOf("CLIENT_IP" to it) } ?: emptyMap()),
+                        timeoutMs = 60_000,
+                    )
+                }.getOrElse { failed[p.publicKey.toBase64()] = it.message ?: "error"; continue }
+                if (r.error != null || r.exitCode != 0) failed[p.publicKey.toBase64()] = r.error ?: r.stderr.takeLast(300)
+            }
+        }
+        return failed
+    }
+
+    /** Removes several peers over one connection (absent ones are fine). */
+    fun removeClients(creds: SshCredentials, keys: Collection<WgKey>, protocol: Protocol = Protocol.AWG) {
+        if (keys.isEmpty()) return
+        SshConnection.open(creds, hostKeys).use { ssh ->
+            for (k in keys) {
+                val r = ssh.run(script("remove-peer.sh"), env = mapOf("CONTAINER" to protocol.amneziaContainer, "CLIENT_PUB" to k.toBase64()), timeoutMs = 60_000)
+                if (r.exitCode != 0) throw SshException("remove_peer_failed", "Could not remove client: ${r.stderr.takeLast(2000)}")
+            }
+        }
+    }
+
     fun removeClient(creds: SshCredentials, clientPublicKey: WgKey, protocol: Protocol = Protocol.AWG) {
         SshConnection.open(creds, hostKeys).use { ssh ->
             val r = ssh.run(script("remove-peer.sh"), env = mapOf("CONTAINER" to protocol.amneziaContainer, "CLIENT_PUB" to clientPublicKey.toBase64()))

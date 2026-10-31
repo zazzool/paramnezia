@@ -45,7 +45,7 @@ class App : Application(), TunnelHost {
     /** Created on first use, off the launch path (it reads package info and the stored release). */
     val updater: Updater by lazy { Updater(this, repo, net, fleet, NativeEd25519, scope) }
     lateinit var servers: io.paramnezia.app.data.Servers; private set
-    val links: io.paramnezia.app.fleet.Links by lazy { io.paramnezia.app.fleet.Links(this, repo, fleet) }
+    val links: io.paramnezia.app.fleet.Links by lazy { io.paramnezia.app.fleet.Links(repo, fleet, { updater }, scope) }
     private val visibilityCheck by lazy { io.paramnezia.app.net.VisibilityCheck(net) }
     private val _visibility = kotlinx.coroutines.flow.MutableStateFlow<io.paramnezia.app.net.Visibility?>(null)
     /** What foreign and Russian sites last saw; refreshed by the home screen. */
@@ -66,7 +66,6 @@ class App : Application(), TunnelHost {
         specs = SpecBuilder(this)
         fleet = FleetManager(repo, net, NativeEd25519, scope) { reconnectIfUp() }
         servers = io.paramnezia.app.data.Servers(repo, fleet)
-        applyEmbeddedInvite()
 
         // DNS rules follow the settings; loading them is a one-off ~1 ms parse in Go.
         scope.launch(Dispatchers.IO) {
@@ -100,30 +99,18 @@ class App : Application(), TunnelHost {
         }
     }
 
-    /**
-     * Installed from a one-time link: the invite is inside our own APK. Applied once, on a device
-     * that has nothing set up yet; the check reads a few KiB at the end of the APK.
-     */
-    private fun applyEmbeddedInvite() = scope.launch(Dispatchers.IO) {
-        repo.ready.first { it }
-        val s = repo.current
-        if (s.embeddedInviteChecked) return@launch
-        if (s.profiles.isEmpty() && s.fleet == null) {
-            io.paramnezia.core.apk.ApkSlot.read(java.io.File(applicationInfo.sourceDir))?.let { invite ->
-                runCatching { servers.import(invite) }.onFailure { Log.w(TAG, "embedded invite", it) }
-            }
-        }
-        repo.update { it.copy(embeddedInviteChecked = true) }
-    }
-
     /** Reconnects with a fresh spec when the tunnel is running (new manifest, new settings). */
     fun reconnectIfUp() {
         if (TunnelRuntime.state.value !is TunnelState.Down) TunnelRuntime.reload()
     }
 
-    fun connect() {
+    /**
+     * Turns the tunnel on. Returns false if Android refused to start the service from the background
+     * (only possible when called without a visible screen); callers then open the app.
+     */
+    fun connect(): Boolean {
         repo.update { it.copy(wantConnected = true) }
-        ParamneziaVpnService.start(this)
+        return ParamneziaVpnService.start(this)
     }
 
     fun disconnect() {
@@ -181,10 +168,23 @@ class App : Application(), TunnelHost {
 
     suspend fun afterUpdate() {
         if (repo.current.wantConnected && VpnService.prepare(this) == null) ParamneziaVpnService.start(this)
-        updater.mirrorInstalledToServers()
+        // The admin brings its servers up to date (and has them fetch the new release themselves).
+        healServers(force = true)
+    }
+
+    /**
+     * Admin only: checks and repairs the fleet's servers (see [FleetManager.heal]) at most once a
+     * day, or now if [force]. Cheap for everyone else: returns at once.
+     */
+    suspend fun healServers(force: Boolean = false) {
+        val f = repo.current.fleet ?: return
+        if (f.adminSeed == null) return
+        if (!force && System.currentTimeMillis() - f.lastHeal < HEAL_EVERY_MS) return
+        runCatching { fleet.heal(updater.shareable()) }.onFailure { Log.w(TAG, "heal", it) }
     }
 
     private companion object {
         const val TAG = "Paramnezia"
+        const val HEAL_EVERY_MS = 24 * 3600_000L
     }
 }

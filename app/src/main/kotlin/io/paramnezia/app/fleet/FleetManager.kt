@@ -213,19 +213,67 @@ class FleetManager(
         val current = manifest() ?: error("no manifest")
         val reserved = current.servers.mapNotNull(::access).flatMap { a -> runCatching { servers.usedAddresses(a) }.getOrDefault(emptySet()) }
         val (device, key) = admin.newDevice(current, name, reserved = reserved)
-        registerEverywhere(current.servers, key.publicKey(), name, device.address)
+        val failed = registerEverywhere(current.servers, key.publicKey(), name, device.address)
+        // The master must take the device now; a standby that is down gets it at the next self-check.
+        current.servers.firstOrNull()?.let { master ->
+            if (access(master) != null && master.id in failed) throw failed.getValue(master.id)
+        }
         val next = admin.next(current) { it.copy(devices = it.devices + device) }
         val signed = FleetCrypto.encode(admin.seal(next))
         accept(signed)
         admin.invite(next, device, key)
     }
 
-    /** Admin: revokes a device everywhere. */
+    /**
+     * Admin: revokes a device everywhere. A server that cannot be reached now is cleaned up by the
+     * next self-check ([heal]): the key stays on the revoked list until every server dropped it.
+     */
     suspend fun removeDevice(publicKey: String) = withContext(Dispatchers.IO) {
         val admin = admin() ?: error("not admin")
         val current = manifest() ?: return@withContext
-        for (s in current.servers) access(s)?.let { runCatching { servers.removeClient(it, WgKey.fromBase64(publicKey)) } }
+        repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(revoked = it.revoked + publicKey) }) }
+        var everywhere = true
+        for (s in current.servers) {
+            val a = access(s) ?: continue
+            runCatching { servers.removeClient(a, WgKey.fromBase64(publicKey)) }.onFailure { everywhere = false }
+        }
+        if (everywhere) repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(revoked = it.revoked - publicKey) }) }
         accept(FleetCrypto.encode(admin.seal(admin.next(current) { m -> m.copy(devices = m.devices.filter { it.publicKey != publicKey }) })))
+    }
+
+    /**
+     * Admin: checks and repairs every server it can reach, so that the fleet converges even after
+     * failures (a server that was down while a device was added or removed, a VPS reboot that took
+     * the in-tunnel web server with it, an AmneziaVPN-made container):
+     *  - every device of the manifest is a peer with its fixed address (idempotent);
+     *  - revoked devices are gone;
+     *  - the current signed manifest is stored and served inside the tunnel;
+     *  - the server holds the current app release (downloaded and verified by the server itself).
+     * Each server and each step fails on its own; the next run tries again. Returns servers fixed.
+     */
+    suspend fun heal(release: Pair<io.paramnezia.core.ota.Release, String>?): Int = withContext(Dispatchers.IO) {
+        val f = stored ?: return@withContext 0
+        if (f.adminSeed == null) return@withContext 0
+        val m = manifest() ?: return@withContext 0
+        val peers = m.devices.map { ServerManager.PeerSpec(WgKey.fromBase64(it.publicKey), it.name, it.address.substringBefore('/')) }
+        var ok = 0
+        val stillRevoked = HashSet<String>()
+        for (s in m.servers) {
+            val a = access(s) ?: continue
+            val steps = listOf(
+                "peers" to { servers.ensurePeers(a, peers).forEach { (k, why) -> Log.w(TAG, "${s.name}: peer $k: $why") } },
+                "revoked" to {
+                    runCatching { servers.removeClients(a, f.revoked.map(WgKey::fromBase64)) }.onFailure { stillRevoked += f.revoked }.getOrThrow()
+                },
+                "manifest" to { if (!publisher.publishToServer(a, f.manifest)) Log.w(TAG, "${s.name}: in-tunnel web server is not answering") },
+                "release" to { release?.let { (r, wire) -> publisher.mirrorRelease(a, r.sha256, r.publicApkUrls() + r.downloadUrls(), wire, forInvites = false) } },
+            )
+            var serverOk = true
+            for ((name, step) in steps) runCatching { step() }.onFailure { serverOk = false; Log.w(TAG, "heal ${s.name}/$name: ${it.message}") }
+            if (serverOk) ok++
+        }
+        repo.update { st -> st.copy(fleet = st.fleet?.let { it.copy(revoked = it.revoked.filter { k -> k in stillRevoked }.toSet(), lastHeal = System.currentTimeMillis()) }) }
+        ok
     }
 
     /**
@@ -298,12 +346,19 @@ class FleetManager(
         publishOwnSlot()
     }
 
-    private fun registerEverywhere(list: List<FleetServer>, publicKey: WgKey, name: String, address: String) {
+    /** Registers a device on every server; returns the failures by server id. */
+    private fun registerEverywhere(list: List<FleetServer>, publicKey: WgKey, name: String, address: String): Map<String, Exception> {
+        val failed = HashMap<String, Exception>()
         for (s in list) {
             val a = access(s) ?: continue
-            runCatching { servers.registerPeer(a, publicKey, name, clientIp = address.substringBefore('/')) }
-                .onFailure { Log.w(TAG, "could not register $name on ${s.name}: ${it.message}") }
+            try {
+                servers.registerPeer(a, publicKey, name, clientIp = address.substringBefore('/'))
+            } catch (e: Exception) {
+                Log.w(TAG, "could not register $name on ${s.name}: ${e.message}")
+                failed[s.id] = e
+            }
         }
+        return failed
     }
 
     private fun access(s: FleetServer): SshCredentials? = stored?.serverAccess?.get(s.id)

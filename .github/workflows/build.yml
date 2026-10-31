@@ -60,22 +60,15 @@ jobs:
         env:
           PN_VERSION_CODE: ${{ github.run_number }}
         run: ./gradlew :app:assembleDebug :app:assembleRelease
-      - name: Empty invite slot in the release APK; the signature stays valid
-        run: |
-          ./gradlew -q :releasetool:installDist
-          tool=releasetool/build/install/releasetool/bin/releasetool
-          apk=app/build/outputs/apk/release/app-release.apk
-          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
-          "$tool" slot --apk "$apk" --out /tmp/slotted.apk && mv /tmp/slotted.apk "$apk"
-          "$apksigner" verify --verbose "$apk"
-          "$tool" embed --apk "$apk" --out /tmp/invite.apk --payload "vpn://ci-check"
-          "$apksigner" verify --verbose /tmp/invite.apk
+      - name: Audit the release APK (Play Protect rules, docs/PLAY-PROTECT.md)
+        run: bash .github/scripts/apk-audit.sh app/build/outputs/apk/release/app-release.apk
       - name: Keep the newest APKs on the apk-builds branch
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: |
           mkdir /tmp/apk-builds && cd /tmp/apk-builds
-          cp "$GITHUB_WORKSPACE"/app/build/outputs/apk/release/app-release.apk paramnezia-release.apk
-          cp "$GITHUB_WORKSPACE"/app/build/outputs/apk/debug/app-debug.apk paramnezia-debug.apk
+          # Signed with the runner's debug key: for testing only, it does not install over a release.
+          cp "$GITHUB_WORKSPACE"/app/build/outputs/apk/release/app-release.apk paramnezia-ci-release-debugkey.apk
+          cp "$GITHUB_WORKSPACE"/app/build/outputs/apk/debug/app-debug.apk paramnezia-ci-debug.apk
           git init -q -b apk-builds
           git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com add .
           git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -qm "APKs from ${GITHUB_SHA::7} (run ${{ github.run_number }})"

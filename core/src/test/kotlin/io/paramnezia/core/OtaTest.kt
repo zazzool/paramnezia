@@ -54,6 +54,16 @@ class OtaTest {
         assertFalse(c.offer("garbage"))
     }
 
+    @Test fun remembersTheInstalledRelease() {
+        val c = checker()
+        assertFalse("same version is not an update", c.offer(signed(release(5))))
+        assertEquals(5L, c.installed!!.first.versionCode)
+        assertNull(c.best)
+        assertEquals(listOf("https://blossom.example/$sha.apk"), c.installed!!.first.publicApkUrls())
+        val plain = release(5).copy(blossom = listOf("http://insecure.example"), urls = listOf("https://github.example/a.apk"))
+        assertEquals(listOf("https://github.example/a.apk"), plain.publicApkUrls())
+    }
+
     @Test fun verifiesDownloadedBytes() {
         val r = release(6)
         val out = ByteArrayOutputStream()

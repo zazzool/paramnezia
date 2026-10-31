@@ -78,6 +78,21 @@ class Servers(private val repo: Repo, private val fleet: FleetManager) {
     fun export(p: StoredProfile, withSsh: Boolean): String =
         AmneziaKey.encode(AmneziaFormat.export(p.name, WgQuick.parse(p.conf), if (withSsh) p.ssh else null))
 
+    /**
+     * Every server this device can manage, as `vpn://` keys with full access (SSH included), one per
+     * line: the backup to keep before reinstalling, also importable by AmneziaVPN. Empty if none.
+     */
+    fun exportAllWithAccess(): String {
+        val keys = ArrayList<String>()
+        for (p in repo.current.profiles) if (p.ssh != null) runCatching { keys += export(p, withSsh = true) }
+        val member = fleet.member()
+        if (member != null) for ((server, tunnel) in member.tunnels()) {
+            val ssh = fleet.accessTo(server.id) ?: continue
+            runCatching { keys += AmneziaKey.encode(AmneziaFormat.export(server.name, tunnel, ssh)) }
+        }
+        return keys.distinct().joinToString("\n\n")
+    }
+
     fun remove(id: String) = repo.update { s ->
         val rest = s.profiles.filter { it.id != id }
         s.copy(profiles = rest, activeProfile = if (s.activeProfile == id) rest.firstOrNull()?.id else s.activeProfile)

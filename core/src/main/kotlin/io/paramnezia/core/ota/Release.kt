@@ -33,6 +33,14 @@ data class Release(
     /** Candidate download URLs, content-addressed ones first. */
     fun downloadUrls(extraMirrors: List<String> = emptyList()): List<String> =
         (blossom + extraMirrors).map { it.trimEnd('/') + "/" + sha256 } + urls
+
+    /**
+     * URLs anyone can open in a browser, for people who do not have the app yet: Blossom blobs with
+     * the `.apk` extension (BUD-01 allows it; the browser then saves a proper `.apk` file), HTTPS only.
+     */
+    fun publicApkUrls(): List<String> =
+        blossom.filter { it.startsWith("https://") }.map { it.trimEnd('/') + "/" + sha256 + ".apk" } +
+            urls.filter { it.startsWith("https://") }
 }
 
 /** Wire form: the release JSON and an Ed25519 signature over it. */
@@ -84,20 +92,32 @@ class UpdateChecker(
     var best: Pair<Release, SignedRelease>? = null
         private set
 
+    /**
+     * The signed release of the version that is installed now, if a channel brought it. The admin
+     * needs it to hand the same APK to new devices (invite links, server mirrors) without ever
+     * reading or uploading its own APK file.
+     */
+    var installed: Pair<Release, SignedRelease>? = null
+        private set
+
     /** Offers a release from any channel. Returns true if it became the new best candidate. */
     fun offer(text: String): Boolean {
         val signed = ReleaseCodec.decode(text) ?: return false
         val r = ReleaseCodec.open(signed, pinnedKeys, ed) ?: return false
         if (r.packageName != packageName) return false
+        if (!r.sha256.matches(HEX64)) return false
+        if (r.versionCode == installedVersionCode && sameSigner(r)) { installed = r to signed; return false }
         if (r.versionCode <= installedVersionCode) return false
         if (r.minSdk > sdkInt) return false
-        if (ownSignerSha256.isNotEmpty() && r.signerSha256.isNotEmpty() && !r.signerSha256.equals(ownSignerSha256, true)) return false
-        if (!r.sha256.matches(HEX64)) return false
+        if (!sameSigner(r)) return false
         val current = best?.first
         if (current != null && current.versionCode >= r.versionCode) return false
         best = r to signed
         return true
     }
+
+    private fun sameSigner(r: Release) =
+        ownSignerSha256.isEmpty() || r.signerSha256.isEmpty() || r.signerSha256.equals(ownSignerSha256, true)
 
     companion object {
         private val HEX64 = Regex("[0-9a-f]{64}")

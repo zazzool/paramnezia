@@ -163,7 +163,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(name, { name = it }, label = { Text("Название, например «Телефон мамы»") }, singleLine = true)
-                    Text("Ссылка одноразовая. На Android по ней скачается Paramnezia, уже настроенная; на iPhone ключ для AmneziaVPN.",
+                    Text("Ссылка одноразовая. На Android человек скачает Paramnezia и одной кнопкой на той же странице подключится; на iPhone получит ключ для AmneziaVPN.",
                         style = MaterialTheme.typography.bodySmall)
                 }
             },

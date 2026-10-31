@@ -97,6 +97,14 @@ class ParamneziaVpnService : VpnService() {
         scope.launch { lock.withLock { connect(host?.currentSpec()) } }
     }
 
+    internal fun stopFromApp() {
+        scope.launch { lock.withLock { down() }; stopSelf() }
+    }
+
+    /** Failed starts in a row (no network yet, DNS of the endpoint, a native error); reset on success. */
+    private var startFailures = 0
+    private val retryStart = Runnable { scope.launch { lock.withLock { if (handle < 0) connect(host?.currentSpec()) } } }
+
     private fun connect(next: TunnelSpec?) {
         if (next == null) {
             TunnelRuntime.set(TunnelState.Failed("no_profile"))
@@ -130,7 +138,7 @@ class ParamneziaVpnService : VpnService() {
             builder.setBlocking(true)
 
             down(keepState = true)
-            val tun = builder.establish() ?: throw IllegalStateException("VPN permission missing")
+            val tun = builder.establish() ?: throw IllegalStateException(PERMISSION_MISSING)
             val h = AwgNative.turnOn("pn0", tun.detachFd(), uapi, dns?.encode().orEmpty(), if (dns != null) directDnsSocket() else -1)
             if (h < 0) throw IllegalStateException("tunnel_start_failed:$h")
             protect(AwgNative.socketV4(h)); protect(AwgNative.socketV6(h))
@@ -142,9 +150,18 @@ class ParamneziaVpnService : VpnService() {
             openGossip(next)
             scheduleCheck(FIRST_CHECK_MS)
             TunnelRuntime.bumpGeneration()
+            startFailures = 0
         } catch (e: Exception) {
             Log.e(TAG, "connect failed", e)
             TunnelRuntime.set(TunnelState.Failed(e.message ?: e.javaClass.simpleName))
+            // Without permission only the user can help; anything else may pass (a network that is
+            // not up yet after boot, a DNS hiccup): try again with backoff, then give up.
+            if (e.message != PERMISSION_MISSING && startFailures < MAX_START_RETRIES) {
+                spec = next
+                main.removeCallbacks(retryStart)
+                main.postDelayed(retryStart, minOf(RETRY_BASE_MS shl startFailures, WATCH_SCREEN_OFF_MS))
+                startFailures++
+            }
         }
     }
 
@@ -157,6 +174,7 @@ class ParamneziaVpnService : VpnService() {
 
     private fun down(keepState: Boolean = false) {
         main.removeCallbacks(healthCheck)
+        if (!keepState) { main.removeCallbacks(retryStart); startFailures = 0 }
         gossipSocket?.close(); gossipSocket = null
         val h = handle
         handle = -1
@@ -324,6 +342,8 @@ class ParamneziaVpnService : VpnService() {
         private const val WATCH_SCREEN_ON_MS = 60_000L
         private const val WATCH_SCREEN_OFF_MS = 15 * 60_000L
         private const val RETRY_BASE_MS = 10_000L
+        private const val MAX_START_RETRIES = 8
+        private const val PERMISSION_MISSING = "VPN permission missing"
         /** WireGuard renews a session every 2 minutes while traffic flows; 3 minutes means stale. */
         private const val DEAD_AFTER_SEC = 180L
         /** Rebuilds of the same server before asking for another one. */
@@ -333,12 +353,17 @@ class ParamneziaVpnService : VpnService() {
         /** DNS query: "." IN NS, recursion desired. Tiny, cacheable, answered by every resolver. */
         private val PROBE_QUERY = byteArrayOf(0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1)
 
-        fun start(context: Context) {
-            context.startService(Intent(context, ParamneziaVpnService::class.java).setAction(ACTION_START))
-        }
+        /** False if Android refused (a start from the background on Android 8+). */
+        fun start(context: Context): Boolean = runCatching {
+            context.startService(Intent(context, ParamneziaVpnService::class.java).setAction(ACTION_START)); true
+        }.getOrElse { Log.w(TAG, "start refused", it); false }
 
         fun stop(context: Context) {
-            context.startService(Intent(context, ParamneziaVpnService::class.java).setAction(ACTION_STOP))
+            // A running VPN is bound by the system, so this is allowed even from the background;
+            // if the service is not running there is nothing to stop.
+            val s = TunnelRuntime.service
+            if (s != null) s.stopFromApp()
+            else runCatching { context.startService(Intent(context, ParamneziaVpnService::class.java).setAction(ACTION_STOP)) }
         }
     }
 }
