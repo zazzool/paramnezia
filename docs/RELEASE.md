@@ -52,8 +52,13 @@ git push origin main:release/v1.2.0
 3. `releasetool publish`: подписывает манифест релиза, загружает APK на Blossom-серверы, публикует событие в
    Nostr и прикладывает `release.json` к релизу.
 
-Дальше всё само: устройства находят релиз в Nostr или через gossip, админ-устройство после обновления кладёт
-APK и релиз на все серверы флота (доступно внутри туннеля даже при блокировке всего остального).
+Дальше устройства находят релиз в Nostr или через gossip, скачивают его заранее и показывают «Установить»:
+ставится после нажатия и подтверждения Android. Админ-устройство после обновления просит серверы флота скачать
+релиз самим (доступно внутри туннеля даже при блокировке всего остального).
+
+Перед публикацией `apk-audit.sh --release` проверяет APK по правилам из [PLAY-PROTECT.md](PLAY-PROTECT.md); APK
+публикуется ровно таким, каким его подписал apksigner. Описание релиза берётся из `docs/releases/vX.Y.Z.md`, если
+такой файл есть. Перезапуск упавшего выпуска безопасен: релиз и файлы перезаписываются (`--clobber`).
 
 ## `releasetool`
 
@@ -61,10 +66,10 @@ APK и релиз на все серверы флота (доступно вну
 releasetool keygen
 releasetool publish --apk F --version-code N --version-name S [--blossom URL]… [--relay URL]… [--url URL]…
                     [--signer-sha256 HEX] [--notes S] [--out release.json]      # нужен PN_RELEASE_SEED
-releasetool embed --apk in.apk --out out.apk --payload "vpn://…"             # APK со вшитым приглашением
 ```
 
 ## Сборки без релиза
 
 Каждый пуш в PR и в `main` собирает APK и кладёт свежие файлы в ветку `apk-builds`
-(`paramnezia-release.apk`, `paramnezia-debug.apk`); там же они видны в артефактах запуска Actions.
+(`paramnezia-ci-release-debugkey.apk`, `paramnezia-ci-debug.apk`); там же они видны в артефактах запуска
+Actions. Они подписаны debug-ключом раннера: только для проверки, поверх релиза не встанут.

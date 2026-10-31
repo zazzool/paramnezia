@@ -20,44 +20,52 @@ class FleetPublisher(private val hostKeys: HostKeyStore) {
     /** In-tunnel URL every Paramnezia server answers on (the server is always .1 of the subnet). */
     val tunnelUrl = "http://10.8.1.1:8080/fleet.json"
 
-    fun publishToServer(creds: SshCredentials, manifest: String, protocol: Protocol = Protocol.AWG) {
+    /**
+     * Stores [manifest] (null: only checks) on the server and makes sure its in-tunnel web server
+     * answers, also on containers AmneziaVPN installed and after a reboot. Returns false when the
+     * server stored the manifest but the in-tunnel web server could not be started.
+     */
+    fun publishToServer(creds: SshCredentials, manifest: String?, protocol: Protocol = Protocol.AWG): Boolean {
         SshConnection.open(creds, hostKeys).use { ssh ->
             val r = ssh.run(
-                """
-                set -eu
-                if [ "${'$'}(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
-                printf '%s' "${'$'}MANIFEST" | ${'$'}SUDO docker exec -i "${'$'}CONTAINER" sh -c \
-                  'mkdir -p /opt/amnezia/paramnezia/www && cat > /opt/amnezia/paramnezia/www/fleet.json.new && mv /opt/amnezia/paramnezia/www/fleet.json.new /opt/amnezia/paramnezia/www/fleet.json'
-                echo "::result::ok=1"
-                """.trimIndent(),
-                env = mapOf("MANIFEST" to manifest, "CONTAINER" to protocol.amneziaContainer),
+                ServerManager.script("fleet-www.sh"),
+                env = mapOf("CONTAINER" to protocol.amneziaContainer) + (manifest?.let { mapOf("MANIFEST" to it) } ?: emptyMap()),
+                timeoutMs = 2 * 60_000,
             )
-            if (r.results["ok"] != "1") throw SshException("publish_failed", "Could not store manifest: ${r.stderr.takeLast(1000)}")
+            r.error?.let { throw SshException("publish_failed", "Could not store manifest: $it") }
+            if (r.exitCode != 0 || (manifest != null && r.results["stored"] != "1")) {
+                throw SshException("publish_failed", "Could not store manifest: ${r.stderr.takeLast(1000)}")
+            }
+            return r.results["www"] == "ok"
         }
     }
 
     /**
-     * Puts an app release on the server, so devices can update through the tunnel even when every
-     * public mirror is blocked: the APK under `apk/<sha256>` and the signed release as `release.json`.
-     * Older APKs are removed. Devices find it at [tunnelApkMirror].
+     * Has the server fetch an app release itself (from [urls], HTTPS only) and verify it against
+     * [sha256]; then serves it inside the tunnel next to [signedRelease] (devices update even when
+     * every public host is blocked) and, if [forInvites], on the invite page. The phone uploads
+     * nothing: the server downloads the same public release everyone gets.
      */
-    fun publishRelease(creds: SshCredentials, signedRelease: String, sha256: String, apk: java.io.InputStream, protocol: Protocol = Protocol.AWG) {
+    fun mirrorRelease(
+        creds: SshCredentials,
+        sha256: String,
+        urls: List<String>,
+        signedRelease: String?,
+        forInvites: Boolean,
+        protocol: Protocol? = Protocol.AWG,
+    ) {
         require(sha256.matches(Regex("[0-9a-f]{64}"))) { "bad sha256" }
         SshConnection.open(creds, hostKeys).use { ssh ->
-            val sudo = "if [ \"\$(id -u)\" -eq 0 ]; then S=''; else S='sudo -n'; fi"
-            val www = "/opt/amnezia/paramnezia/www"
-            val c = protocol.amneziaContainer
-            val up = ssh.pipe(
-                "$sudo; \$S docker exec -i $c sh -c 'mkdir -p $www/apk && cat > $www/apk/$sha256.new && " +
-                    "find $www/apk -type f ! -name $sha256.new -delete && mv $www/apk/$sha256.new $www/apk/$sha256' && echo ok",
-                apk,
-            )
-            if (up.stdout.trim() != "ok") throw SshException("publish_failed", "Could not upload APK: ${up.stderr.takeLast(1000)}")
-            val r = ssh.pipe(
-                "$sudo; \$S docker exec -i $c sh -c 'cat > $www/release.json.new && mv $www/release.json.new $www/release.json' && echo ok",
-                signedRelease.byteInputStream(),
-            )
-            if (r.stdout.trim() != "ok") throw SshException("publish_failed", "Could not store release: ${r.stderr.takeLast(1000)}")
+            val env = buildMap {
+                put("PN_SHA256", sha256)
+                put("PN_URLS", urls.filter { it.startsWith("https://") }.joinToString("\n"))
+                signedRelease?.let { put("PN_RELEASE", it) }
+                protocol?.let { put("CONTAINER", it.amneziaContainer) }
+                put("PN_INVITE", if (forInvites) "1" else "0")
+            }
+            val r = ssh.run(ServerManager.script("release-mirror.sh"), env = env, timeoutMs = 10 * 60_000)
+            r.error?.let { throw SshException("mirror_failed", "Server could not get the app: $it") }
+            if (r.exitCode != 0) throw SshException("mirror_failed", "Server could not get the app: ${r.stderr.takeLast(1000)}")
         }
     }
 

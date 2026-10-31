@@ -6,6 +6,7 @@ if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
 $SUDO docker exec -i -e "CLIENT_PUB=$CLIENT_PUB" "$CONTAINER" bash -s <<'REMOVE'
 set -eu
 cd /opt/amnezia/awg
+umask 077
 if [ -f awg0.conf ]; then CONF=awg0.conf; IFACE=awg0; BIN=awg; else CONF=wg0.conf; IFACE=wg0; BIN=wg; command -v wg >/dev/null || BIN=awg; fi
 exec 9>/opt/amnezia/awg/.lock
 flock 9 2>/dev/null || true

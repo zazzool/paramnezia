@@ -22,17 +22,7 @@ import io.paramnezia.tunnel.TunnelState
 class WidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) = refresh(context)
 
-    override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == ACTION_TOGGLE) {
-            val app = context.applicationContext as App
-            if (TunnelRuntime.state.value is TunnelState.Down || TunnelRuntime.state.value is TunnelState.Failed) app.connect() else app.disconnect()
-            return
-        }
-        super.onReceive(context, intent)
-    }
-
     companion object {
-        private const val ACTION_TOGGLE = "io.paramnezia.app.WIDGET_TOGGLE"
 
         fun hasWidgets(context: Context): Boolean =
             AppWidgetManager.getInstance(context).getAppWidgetIds(ComponentName(context, WidgetProvider::class.java)).isNotEmpty()
@@ -58,8 +48,10 @@ class WidgetProvider : AppWidgetProvider() {
             })
 
             // Without VPN permission the first tap has to open the app to ask for it.
+            // The toggle is an invisible activity, not a broadcast: Android lets an app start its
+            // service from an activity the user tapped, but not always from a background receiver.
             val click = if (VpnService.prepare(context) == null) {
-                PendingIntent.getBroadcast(context, 0, Intent(context, WidgetProvider::class.java).setAction(ACTION_TOGGLE), PendingIntent.FLAG_IMMUTABLE)
+                PendingIntent.getActivity(context, 2, Intent(context, ToggleActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_IMMUTABLE)
             } else {
                 PendingIntent.getActivity(context, 0, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
             }
@@ -68,5 +60,21 @@ class WidgetProvider : AppWidgetProvider() {
                 PendingIntent.getActivity(context, 1, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
             manager.updateAppWidget(ids, views)
         }
+    }
+}
+
+/** The widget's toggle: no UI, switches the tunnel and closes at once. */
+class ToggleActivity : android.app.Activity() {
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        val app = application as App
+        val s = TunnelRuntime.state.value
+        if (s is TunnelState.Down || s is TunnelState.Failed) {
+            if (VpnService.prepare(this) == null) app.connect()
+            else startActivity(Intent(this, MainActivity::class.java))
+        } else {
+            app.disconnect()
+        }
+        finish()
     }
 }

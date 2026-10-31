@@ -85,8 +85,10 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
         when (val u = update) {
             is Updater.Status.Available -> ActionCard("Доступна версия ${u.release.versionName}", "Обновить") { scope.launch { app.updater.install() } }
             is Updater.Status.Downloading -> ActionCard("Загружаю версию ${u.release.versionName}…", null) {}
+            is Updater.Status.Ready -> ActionCard("Версия ${u.release.versionName} загружена", "Установить") { scope.launch { app.updater.install() } }
+            is Updater.Status.Installing -> ActionCard("Подтвердите установку версии ${u.release.versionName}", "Ещё раз") { scope.launch { app.updater.install() } }
             is Updater.Status.Failed -> ActionCard("Обновление не удалось: ${u.reason}", "Повторить") { scope.launch { app.updater.install() } }
-            else -> {}
+            Updater.Status.Idle -> {}
         }
 
         // Fleet servers are chosen automatically; standalone ones by the user.

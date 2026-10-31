@@ -1,11 +1,11 @@
 #!/bin/sh
-# One-time invite downloads: /cgi-bin/get?<token>&<what>, what = apk | app | key | conf.
-#   apk   Paramnezia with the invite written into its settings slot (see ApkSlot)
-#   app   the invite itself, for Paramnezia that is already installed
+# One-time invite downloads: /cgi-bin/get?<token>&<what>, what = app | key | conf.
+#   app   the invite itself, opened by Paramnezia (fleet invite or vpn:// key)
 #   key   the same key without the fleet part, for the original AmneziaVPN (iPhone and others)
 #   conf  an AmneziaWG config file
-# The first download claims the invite. For 15 minutes after that the same address may fetch it
-# again (a resumed download, a second try at copying); everyone else gets 410.
+# The app itself is not here: it is the same public release APK for everyone (see app.json).
+# The first download claims the invite. For 30 minutes after that the same address may fetch it
+# again (installing the app in between, a second try at copying); everyone else gets 410.
 D=/srv/data
 T=${QUERY_STRING%%&*}
 W=${QUERY_STRING#*&}
@@ -14,7 +14,7 @@ now=$(date +%s)
 reply() { printf 'Status: %s\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\n\r\n%s\n' "$1" "$2"; exit 0; }
 
 case "$T" in ''|*[!A-Za-z0-9_-]*) reply "400 Bad Request" "bad link" ;; esac
-case "$W" in apk|app|key|conf) ;; *) reply "400 Bad Request" "bad request" ;; esac
+case "$W" in app|key|conf) ;; *) reply "400 Bad Request" "bad request" ;; esac
 
 if [ -d "$D/t/$T" ]; then
   exp=$(cat "$D/t/$T/expires" 2>/dev/null || echo 0)
@@ -26,19 +26,10 @@ if [ -d "$D/t/$T" ]; then
 fi
 [ -f "$D/c/$T/claim" ] || reply "410 Gone" "used"
 read -r at addr < "$D/c/$T/claim"
-[ "$addr" = "$REMOTE_ADDR" ] && [ $((now - at)) -le 900 ] || reply "410 Gone" "used"
+[ "$addr" = "$REMOTE_ADDR" ] && [ $((now - at)) -le 1800 ] || reply "410 Gone" "used"
 
 F=$D/c/$T
 case "$W" in
-  apk)
-    [ -f "$D/app.apk" ] && [ -f "$F/slot" ] || reply "404 Not Found" "no app"
-    read -r off size < "$D/app.slot"
-    total=$(stat -c %s "$D/app.apk")
-    printf 'Content-Type: application/vnd.android.package-archive\r\nContent-Disposition: attachment; filename="paramnezia.apk"\r\nContent-Length: %s\r\nCache-Control: no-store\r\n\r\n' "$total"
-    head -c "$off" "$D/app.apk"
-    cat "$F/slot"
-    tail -c +$((off + size + 1)) "$D/app.apk"
-    ;;
   app|key)
     printf 'Content-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\n\r\n'
     cat "$F/$W"

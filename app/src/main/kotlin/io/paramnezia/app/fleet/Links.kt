@@ -1,28 +1,38 @@
 package io.paramnezia.app.fleet
 
-import android.content.Context
+import android.util.Log
 import io.paramnezia.app.data.Repo
 import io.paramnezia.app.data.StoredLink
 import io.paramnezia.app.data.StoredProfile
 import io.paramnezia.core.amnezia.AmneziaFormat
 import io.paramnezia.core.amnezia.AmneziaKey
-import io.paramnezia.core.apk.ApkSlot
 import io.paramnezia.core.crypto.WgKey
 import io.paramnezia.core.profile.Protocol
 import io.paramnezia.core.profile.SshCredentials
+import io.paramnezia.app.ota.Updater
+import io.paramnezia.deploy.FleetPublisher
 import io.paramnezia.deploy.InviteLinks
 import io.paramnezia.deploy.ServerManager
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 /**
- * One-time links for new devices and people. The link page runs on our own server; Android gets
- * this very app with the invite written into it, iPhone gets a key for AmneziaVPN.
+ * One-time links for new devices and people. The link page runs on our own server. Android gets the
+ * official release APK (the same file for everyone, from public HTTPS mirrors or the server's own
+ * verified copy) and then opens the invite in the installed app; iPhone gets a key for AmneziaVPN.
+ * The app never reads, rewrites or uploads its own APK (see docs/PLAY-PROTECT.md).
  */
-class Links(private val context: Context, private val repo: Repo, private val fleet: FleetManager) {
+class Links(
+    private val repo: Repo,
+    private val fleet: FleetManager,
+    private val updater: () -> Updater,
+    private val scope: CoroutineScope,
+) {
     private val links = InviteLinks(repo.hostKeys)
     private val manager = ServerManager(repo.hostKeys)
+    private val publisher = FleetPublisher(repo.hostKeys)
 
     /** Fleet admin: a new trusted device, joined through a link. */
     suspend fun forFleetDevice(name: String): StoredLink = withContext(Dispatchers.IO) {
@@ -30,12 +40,13 @@ class Links(private val context: Context, private val repo: Repo, private val fl
         val invite = fleet.addDevice(name)
         val pub = io.paramnezia.core.fleet.Invite.read(invite)?.let { WgKey.fromBase64(it.privateKey).publicKey().toBase64() }
         val link = try {
-            links.create(ssh, invite, name, template())
+            links.create(ssh, invite, name, appDownload())
         } catch (e: Exception) {
             // No link, no device: do not leave a member nobody can use.
             pub?.let { runCatching { fleet.removeDevice(it) } }
             throw friendly(e)
         }
+        mirrorForInvites(ssh)
         store(link, name, server.id, pub, fleetDevice = true)
     }
 
@@ -47,11 +58,12 @@ class Links(private val context: Context, private val repo: Repo, private val fl
         val tunnel = try { manager.addClient(ssh, client, name, protocol) } catch (e: Exception) { throw friendly(e) }
         val key = AmneziaFormat.export(profile.name, tunnel).let(AmneziaKey::encode)
         val link = try {
-            links.create(ssh, key, name, template())
+            links.create(ssh, key, name, appDownload())
         } catch (e: Exception) {
             runCatching { manager.removeClient(ssh, client.publicKey(), protocol) }
             throw friendly(e)
         }
+        mirrorForInvites(ssh)
         store(link, name, profile.id, client.publicKey().toBase64())
     }
 
@@ -71,17 +83,41 @@ class Links(private val context: Context, private val repo: Repo, private val fl
     private val prepared = java.util.Collections.synchronizedSet(HashSet<String>())
 
     /**
-     * Readies the servers this admin can hand out links from (page, image, this app version) in the
-     * background, so that pressing "create link" later takes a second or two instead of minutes.
+     * Readies the servers this admin can hand out links from (page container, image pull, the app's
+     * download info and the server's own copy of it) in the background, so that pressing "create
+     * link" later takes a second or two.
      */
     suspend fun prewarm() = withContext(Dispatchers.IO) {
         val targets = listOfNotNull(fleet.managedServer()?.second) + repo.current.profiles.mapNotNull { it.ssh }
-        val apk = template()
+        val app = appDownload()
         for (ssh in targets.distinctBy { "${it.host}:${it.port}" }) {
-            val key = "${ssh.host}:${ssh.port}"
+            val key = "${ssh.host}:${ssh.port}:${app?.sha256}"
             if (key in prepared) continue
-            runCatching { links.prepare(ssh, apk) }.onSuccess { prepared += key }
+            runCatching {
+                links.prepare(ssh, app)
+                app?.let { publisher.mirrorRelease(ssh, it.sha256, it.urls, null, forInvites = true, protocol = null) }
+            }.onSuccess { prepared += key }.onFailure { Log.w(TAG, "prepare ${ssh.host}: ${it.message}") }
         }
+    }
+
+    /**
+     * Where the invite page sends people for the app: the signed release this admin runs (or a newer
+     * one it knows). Looked up once on the release channels if nothing is known yet.
+     */
+    private suspend fun appDownload(): InviteLinks.AppDownload? {
+        val u = updater()
+        if (u.shareable() == null) runCatching { u.check() }
+        val (release, _) = u.shareable() ?: return null
+        val urls = release.publicApkUrls()
+        return InviteLinks.AppDownload(release.versionName, release.sha256, urls)
+    }
+
+    /** The server's own verified copy of the app for the invite page, in the background. */
+    private fun mirrorForInvites(ssh: SshCredentials, protocol: Protocol? = null) = scope.launch(Dispatchers.IO) {
+        val app = appDownload() ?: return@launch
+        val shared = updater().shareable()?.second
+        runCatching { publisher.mirrorRelease(ssh, app.sha256, app.urls, shared, forInvites = true, protocol = protocol) }
+            .onFailure { Log.w(TAG, "mirror to ${ssh.host}: ${it.message}") }
     }
 
     /** Asks the servers which links have been used. */
@@ -118,13 +154,7 @@ class Links(private val context: Context, private val repo: Repo, private val fl
         return stored
     }
 
-    /**
-     * The installed APK itself: release builds carry an empty settings slot, so the app never has to
-     * rewrite an APK. The server writes each invite into its copy, so new devices get exactly the
-     * version the admin runs. Builds without a slot (local debug runs) leave only the iPhone path.
-     */
-    private fun template(): InviteLinks.ApkTemplate? {
-        val apk = File(context.applicationInfo.sourceDir)
-        return ApkSlot.offset(apk)?.let { InviteLinks.ApkTemplate(apk, it) }
+    private companion object {
+        const val TAG = "PnLinks"
     }
 }

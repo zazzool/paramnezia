@@ -18,8 +18,6 @@ data class AppState(
     /** The user wants the tunnel up (restored after an update). */
     val wantConnected: Boolean = false,
     val uiMode: UiMode = UiMode.AUTO,
-    /** The invite inside our own APK (installed from a one-time link) has been looked at. */
-    val embeddedInviteChecked: Boolean = false,
     /** Admin: one-time links handed out, newest first. */
     val links: List<StoredLink> = emptyList(),
 ) {
@@ -62,6 +60,13 @@ data class StoredFleet(
     val gistToken: String? = null,
     /** Last time each server answered, by id (for health reports). */
     val lastSync: Long = 0,
+    /**
+     * Admin: public keys of removed devices. Every self-check removes them from every server again,
+     * so a server that was unreachable at removal time cannot keep a revoked device connected.
+     */
+    val revoked: Set<String> = emptySet(),
+    /** Admin: when the servers were last checked and repaired (see FleetManager.heal). */
+    val lastHeal: Long = 0,
 )
 
 @Serializable

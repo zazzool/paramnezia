@@ -99,10 +99,25 @@ fun SettingsScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
             }
         }
 
+        val managed = state.profiles.any { it.ssh != null } || state.fleet?.serverAccess?.isNotEmpty() == true
+        if (managed) {
+            HorizontalDivider()
+            Text("Резервная копия", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Ключи ваших серверов с полным доступом (SSH). Сохраните их в надёжном месте до переустановки приложения: " +
+                "по ним серверы снова добавляются сюда или в AmneziaVPN. Никому их не отправляйте.",
+                style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = {
+                val text = app.servers.exportAllWithAccess()
+                if (text.isEmpty()) toast("Нет серверов с полным доступом")
+                else context.startActivity(Intent.createChooser(
+                    Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), "Сохранить ключи"))
+            }) { Text("Сохранить ключи серверов") }
+        }
+
         HorizontalDivider()
         Text("Обновления", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         if (app.updater.enabled) {
-            Toggle("Устанавливать автоматически", "Только сборки, подписанные вашим ключом релизов; источники: Nostr, ваши серверы, другие устройства флота", s.autoUpdate) { v -> change { it.copy(autoUpdate = v) } }
+            Toggle("Скачивать обновления заранее", "Только сборки, подписанные ключом релизов; источники: Nostr, ваши серверы, другие устройства флота. Устанавливаются после вашего подтверждения", s.autoUpdate) { v -> change { it.copy(autoUpdate = v) } }
             OutlinedButton(onClick = { scope.launch { app.updater.check(); toast("Проверка завершена") } }) { Text("Проверить обновления") }
         } else {
             Text("Эта сборка без ключа релизов: обновления по воздуху выключены.", style = MaterialTheme.typography.bodySmall)

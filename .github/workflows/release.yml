@@ -42,13 +42,18 @@ jobs:
           PN_VERSION_NAME: ${{ env.VERSION }}
         run: |
           ./gradlew :app:assembleRelease :releasetool:installDist
-          # An empty settings slot: the installed app serves itself as the invite-link template.
-          releasetool/build/install/releasetool/bin/releasetool slot --apk app/build/outputs/apk/release/app-release.apk --out "paramnezia-${VERSION}.apk"
-          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
-          "$apksigner" verify "paramnezia-${VERSION}.apk"
+          # Published byte for byte as apksigner wrote it: the same file for every user and channel.
+          cp app/build/outputs/apk/release/app-release.apk "paramnezia-${VERSION}.apk"
+      - name: Audit the APK (Play Protect rules, docs/PLAY-PROTECT.md)
+        run: bash .github/scripts/apk-audit.sh "paramnezia-${VERSION}.apk" --release
       - name: GitHub release
         env: { GH_TOKEN: "${{ github.token }}" }
-        run: gh release create "$VERSION" "paramnezia-${VERSION}.apk" --target "$GITHUB_SHA" --title "Paramnezia $VERSION" --generate-notes
+        run: |
+          notes=""
+          [ -f "docs/releases/${VERSION}.md" ] && notes="--notes-file docs/releases/${VERSION}.md"
+          # Re-running a failed release: the release may already exist.
+          gh release view "$VERSION" >/dev/null 2>&1 || gh release create "$VERSION" --target "$GITHUB_SHA" --title "Paramnezia $VERSION" ${notes:---generate-notes}
+          gh release upload "$VERSION" "paramnezia-${VERSION}.apk" --clobber
       - name: Sign the OTA manifest, upload to Blossom, announce on Nostr
         env:
           GH_TOKEN: ${{ github.token }}
@@ -63,5 +68,5 @@ jobs:
             --signer-sha256 "$signer" \
             --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/$apk" \
             --out release.json
-          gh release upload "$VERSION" release.json
+          gh release upload "$VERSION" release.json --clobber
         shell: bash

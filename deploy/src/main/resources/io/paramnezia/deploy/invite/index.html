@@ -32,12 +32,20 @@
 </div>
 
 <div id="android" class="card" hidden>
-  <p><b>Paramnezia для Android</b>, уже с вашими настройками. Скачивание начнётся само.</p>
-  <a class="btn" id="apk">Скачать приложение</a>
-  <p><small>Откройте скачанный файл. Если телефон спросит, разрешите установку из браузера. После установки
-    откройте приложение и нажмите одну кнопку: всё уже настроено.</small></p>
-  <button class="btn alt" id="have">Paramnezia уже установлена</button>
-  <a class="btn" id="open" hidden>Открыть в Paramnezia</a>
+  <p><b>1. Установите Paramnezia.</b> Это обычное приложение VPN, одинаковое для всех.</p>
+  <a class="btn" id="apk" hidden>Скачать Paramnezia</a>
+  <a class="btn alt" id="apkhere" href="/paramnezia.apk" hidden>Скачать с этого сервера</a>
+  <p id="noapk" hidden><small>Ссылка на приложение пока не готова. Попросите пригласившего прислать файл Paramnezia.</small></p>
+  <p><small>Откройте скачанный файл и установите. Если телефон спросит, разрешите установку из браузера.
+    <span id="ver"></span></small></p>
+  <p><b>2. Подключитесь.</b> Вернитесь на эту страницу и нажмите:</p>
+  <button class="btn" id="have">Открыть приглашение в Paramnezia</button>
+  <div id="appbox" hidden>
+    <a class="btn" id="open">Открыть ещё раз</a>
+    <p><small>Не открылось? Скопируйте ключ и вставьте его в Paramnezia на вкладке «Добавить».</small></p>
+    <textarea id="appkey" readonly></textarea>
+    <button class="btn alt" id="copyapp">Скопировать ключ</button>
+  </div>
 </div>
 
 <div id="ios" class="card" hidden>
@@ -56,7 +64,7 @@
   <p>Установите <a href="https://amnezia.org/downloads" rel="noreferrer">AmneziaVPN</a> и добавьте ключ или файл настроек.</p>
   <button class="btn" id="getkey2">Получить ключ</button>
   <a class="btn alt" id="conf2">Скачать файл настроек</a>
-  <a class="btn alt" id="apk2">Скачать Paramnezia для Android</a>
+  <a class="btn alt" id="apk2" hidden>Скачать Paramnezia для Android</a>
 </div>
 
 <script>
@@ -65,17 +73,51 @@
   if (!/^[A-Za-z0-9_-]{16,64}$/.test(t)) { $('bad').hidden = false; return; }
   // The token lives in the fragment: it never reaches link previews, server logs or Referer headers.
   var url = function (what) { return '/cgi-bin/get?' + t + '&' + what; };
-  $('apk').href = $('apk2').href = url('apk');
   $('conf').href = $('conf2').href = url('conf');
 
   function show(id) { ['choose', 'android', 'ios', 'other'].forEach(function (s) { $(s).hidden = s !== id; }); }
-  function fetchText(what, done) {
+  function get(path, done, fail) {
     var x = new XMLHttpRequest();
-    x.open('GET', url(what));
-    x.onload = function () { if (x.status === 200) done(x.responseText.trim()); else { show(null); $('gone').hidden = false; } };
-    x.onerror = function () { alert('Нет связи с сервером, попробуйте ещё раз.'); };
+    x.open('GET', path);
+    x.onload = function () { if (x.status === 200) done(x.responseText.trim()); else fail(x.status); };
+    x.onerror = function () { fail(0); };
     x.send();
   }
+  function fetchText(what, done) {
+    get(url(what), done, function (status) {
+      if (status === 0) { alert('Нет связи с сервером, попробуйте ещё раз.'); return; }
+      show(null); $('gone').hidden = false;
+    });
+  }
+  function copy(id, button) {
+    var k = $(id); k.focus(); k.select(); k.setSelectionRange(0, k.value.length);
+    var ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(k.value);
+    button.textContent = ok ? 'Скопировано' : 'Выделите текст и скопируйте';
+  }
+
+  // The app: the same signed release for everyone, from public HTTPS mirrors first. The user starts
+  // the download; nothing downloads by itself.
+  get('/app.json', function (text) {
+    var a = null; try { a = JSON.parse(text); } catch (e) {}
+    if (a && a.urls && a.urls.length) {
+      $('apk').href = $('apk2').href = a.urls[0];
+      $('apk').hidden = $('apk2').hidden = false;
+      $('ver').textContent = 'Версия ' + a.version + ', SHA-256 ' + a.sha256.slice(0, 16) + '…';
+    }
+    var h = new XMLHttpRequest();
+    h.open('HEAD', '/paramnezia.apk');
+    h.onload = function () {
+      if (h.status !== 200) { if ($('apk').hidden) $('noapk').hidden = false; return; }
+      if (!$('apk').hidden) { $('apkhere').hidden = false; return; }
+      // No public mirror known: this server's copy is the only one.
+      $('apk').href = $('apk2').href = '/paramnezia.apk';
+      $('apk').hidden = $('apk2').hidden = false;
+    };
+    h.onerror = function () { if ($('apk').hidden) $('noapk').hidden = false; };
+    h.send();
+  }, function () { $('noapk').hidden = false; });
+
   function keyFlow() {
     show('ios');
     fetchText('key', function (k) { $('key').value = k; $('keybox').hidden = false; $('getkey').hidden = true; });
@@ -85,20 +127,25 @@
   });
   $('getkey').onclick = keyFlow;
   $('getkey2').onclick = keyFlow;
-  $('copy').onclick = function () {
-    var k = $('key'); k.focus(); k.select(); k.setSelectionRange(0, k.value.length);
-    var ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
-    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(k.value);
-    this.textContent = ok ? 'Скопировано' : 'Выделите текст и скопируйте';
-  };
+  $('copy').onclick = function () { copy('key', this); };
+  $('copyapp').onclick = function () { copy('appkey', this); };
   $('have').onclick = function () {
-    fetchText('app', function (k) { var o = $('open'); o.href = k; o.hidden = false; $('have').hidden = true; });
+    fetchText('app', function (k) {
+      // An intent link opens exactly Paramnezia (not another app that also handles vpn://) and,
+      // if it is not installed yet, comes back here instead of going to a store.
+      var rest = k.replace(/^vpn:\/\//, '');
+      var intent = 'intent://' + rest + '#Intent;scheme=vpn;package=io.paramnezia;S.browser_fallback_url=' +
+        encodeURIComponent(location.href) + ';end';
+      $('open').href = intent; $('appkey').value = k;
+      $('appbox').hidden = false; $('have').hidden = true;
+      location.href = intent;
+    });
   };
 
   var ua = navigator.userAgent || '';
   var android = /Android/i.test(ua);
   var ios = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-  if (android) { show('android'); setTimeout(function () { location.href = url('apk'); }, 400); }
+  if (android) show('android');
   else if (ios) show('ios');
   else show('choose');
 })();

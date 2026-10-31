@@ -1,6 +1,7 @@
 package io.paramnezia.app.data
 
 import android.content.Context
+import android.util.Log
 import io.paramnezia.deploy.HostKeyStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -30,9 +31,21 @@ class Repo(context: Context) {
 
     init {
         thread(name = "pn-vault") {
-            vault.read()?.let { runCatching { json.decodeFromString(AppState.serializer(), it) }.getOrNull() }?.let { _state.value = it }
-            loaded.countDown()
-            _ready.value = true
+            try {
+                val text = runCatching { vault.read() }.onFailure { Log.e(TAG, "vault read", it) }.getOrNull()
+                if (text != null) {
+                    val decoded = runCatching { json.decodeFromString(AppState.serializer(), text) }
+                    decoded.onSuccess { _state.value = it }.onFailure {
+                        // Unknown to this version (a downgrade?): keep the file aside, never overwrite it.
+                        Log.e(TAG, "stored state does not decode; keeping it aside", it)
+                        vault.quarantine()
+                    }
+                }
+                vault.lastProblem?.let { Log.w(TAG, "vault: $it, used the backup or started empty") }
+            } finally {
+                loaded.countDown()
+                _ready.value = true
+            }
         }
     }
 
@@ -45,10 +58,13 @@ class Repo(context: Context) {
         val next = change(_state.value)
         if (next != _state.value) {
             _state.value = next
-            vault.write(json.encodeToString(AppState.serializer(), next))
+            // A failed write keeps the new state in memory; the next change writes it again.
+            runCatching { vault.write(json.encodeToString(AppState.serializer(), next)) }.onFailure { Log.e(TAG, "vault write", it) }
         }
         return next
     }
+
+    private companion object { const val TAG = "PnRepo" }
 
     val hostKeys = object : HostKeyStore {
         override fun get(host: String, port: Int) = current.hostKeys["$host:$port"]

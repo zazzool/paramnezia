@@ -26,7 +26,9 @@ import io.paramnezia.app.data.UiMode
 import io.paramnezia.tunnel.TunnelRuntime
 import io.paramnezia.tunnel.TunnelState
 import io.paramnezia.tunnel.TunnelStats
+import io.paramnezia.app.ota.Updater
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * One button for follower devices: servers, routing, updates and failover are handled by the fleet.
@@ -39,6 +41,8 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
     var stats by remember { mutableStateOf<TunnelStats?>(null) }
     var blocked by remember { mutableLongStateOf(0L) }
     var askFull by remember { mutableStateOf(false) }
+    val update by app.updater.status.collectAsState()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     LaunchedEffect(tunnel) {
         while (tunnel is TunnelState.Up) {
@@ -61,6 +65,21 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
         })
         stats?.takeIf { tunnel is TunnelState.Up }?.let {
             Text("↓ ${formatBytes(it.rxBytes)}   ↑ ${formatBytes(it.txBytes)}   трекеров: $blocked", style = MaterialTheme.typography.bodyMedium)
+        }
+        // Updates are installed only with the user's tap, so followers need the button too.
+        when (val u = update) {
+            is Updater.Status.Available, is Updater.Status.Ready, is Updater.Status.Installing, is Updater.Status.Failed -> {
+                val name = when (u) {
+                    is Updater.Status.Available -> u.release.versionName
+                    is Updater.Status.Ready -> u.release.versionName
+                    is Updater.Status.Installing -> u.release.versionName
+                    else -> null
+                }
+                androidx.compose.material3.OutlinedButton(onClick = { scope.launch { app.updater.install() } }) {
+                    Text(if (name != null) "Обновить до $name" else "Повторить обновление")
+                }
+            }
+            else -> {}
         }
     }
 

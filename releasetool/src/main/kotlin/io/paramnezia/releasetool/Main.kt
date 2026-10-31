@@ -26,9 +26,8 @@ import kotlin.system.exitProcess
  *
  *   keygen                       new release key (keep the seed secret, pin the public key in the app)
  *   publish --apk app.apk ...    sign the release, upload the APK to Blossom servers, post it to relays
- *   slot --apk in --out out      add an empty settings slot (CI does this to every release APK)
- *   embed --apk in --out out --payload S
- *                                put an invite into the APK's settings slot (no re-signing needed)
+ *
+ * The APK is published exactly as apksigner produced it: no tool here changes APK bytes.
  *
  * The seed comes from the PN_RELEASE_SEED environment variable (base64), never from the command line.
  */
@@ -36,9 +35,7 @@ fun main(args: Array<String>) {
     when (args.firstOrNull()) {
         "keygen" -> keygen()
         "publish" -> publish(Args(args.drop(1)))
-        "embed" -> embed(Args(args.drop(1)))
-        "slot" -> slot(Args(args.drop(1)))
-        else -> { System.err.println("usage: keygen | slot --apk F --out F | embed --apk F --out F --payload S | publish --apk F --version-code N --version-name S [--blossom URL]... [--relay URL]... [--url URL]... [--signer-sha256 HEX] [--notes S] [--out F]"); exitProcess(2) }
+        else -> { System.err.println("usage: keygen | publish --apk F --version-code N --version-name S [--blossom URL]... [--relay URL]... [--url URL]... [--signer-sha256 HEX] [--notes S] [--out F]"); exitProcess(2) }
     }
 }
 
@@ -50,21 +47,6 @@ private fun keygen() {
     println("PN_RELEASE_SEED=${b64.encodeToString(seed)}")
     println("release public key (pin in app): ${b64.encodeToString(pub)}")
     println("release nostr pubkey (pin in app): ${NostrRelease.publisherPubkey(seed)}")
-}
-
-private fun slot(a: Args) {
-    val out = File(a.one("out"))
-    val offset = io.paramnezia.core.apk.ApkSlot.prepare(File(a.one("apk")), out)
-    check(io.paramnezia.core.apk.ApkSlot.offset(out) == offset) { "slot not found after writing" }
-    println("empty slot at $offset")
-}
-
-private fun embed(a: Args) {
-    val out = File(a.one("out"))
-    val offset = io.paramnezia.core.apk.ApkSlot.prepare(File(a.one("apk")), out)
-    java.io.RandomAccessFile(out, "rw").use { it.seek(offset); it.write(io.paramnezia.core.apk.ApkSlot.encode(a.one("payload"))) }
-    check(io.paramnezia.core.apk.ApkSlot.read(out) == a.one("payload")) { "slot did not read back" }
-    println("slot at $offset")
 }
 
 private fun publish(a: Args) {

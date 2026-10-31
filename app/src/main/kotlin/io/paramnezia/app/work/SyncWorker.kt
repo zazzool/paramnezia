@@ -14,13 +14,15 @@ import java.util.concurrent.TimeUnit
 /**
  * The only scheduled work: every 12 hours (the system batches it with other apps' work, so it
  * rides on wake-ups that happen anyway) look for a newer fleet manifest and app release.
- * Everything urgent travels by gossip or is checked when the tunnel notices a dead server.
+ * Everything urgent travels by gossip or is checked when the tunnel notices a dead server. On the
+ * admin device it also checks and repairs the fleet's servers once a day (FleetManager.heal).
  */
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val app = applicationContext as App
         runCatching { app.fleet.sync() }
         runCatching { app.updater.check() }
+        app.healServers()
         return Result.success()
     }
 
