@@ -114,8 +114,8 @@ jobs:
           # Throwaway keys for this run only.
           wg genkey > s.key; wg pubkey < s.key > s.pub; wg genkey > c.key; wg pubkey < c.key > c.pub
           sudo ip link add wg0 type wireguard
-          sudo install -m 600 s.key /root/wg-server.key
-          sudo wg set wg0 listen-port 51820 private-key /root/wg-server.key peer "$(cat c.pub)" allowed-ips 10.9.0.2/32
+          sudo install -D -m 600 s.key /etc/wireguard/wg0.key  # wg may only read keys under /etc/wireguard (AppArmor)
+          sudo wg set wg0 listen-port 51820 private-key /etc/wireguard/wg0.key peer "$(cat c.pub)" allowed-ips 10.9.0.2/32
           sudo ip addr add 10.9.0.1/24 dev wg0
           sudo ip link set wg0 up
           printf '[Interface]\nPrivateKey = %s\nAddress = 10.9.0.2/32\nDNS = 1.1.1.1\n\n[Peer]\nPublicKey = %s\nEndpoint = 10.0.2.2:51820\nAllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25\n' "$(cat c.key)" "$(cat s.pub)" > client.conf
