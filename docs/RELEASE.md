@@ -38,7 +38,11 @@ tar c paramnezia.jks release.env | openssl enc -aes-256-cbc -pbkdf2 -iter 600000
 
 ```sh
 git tag v1.2.0 && git push origin v1.2.0
+# или, если теги пушить нельзя (так выпускает Claude):
+git push origin main:release/v1.2.0
 ```
+
+Тег релиза при выпуске из ветки создаёт сам `gh release create`.
 
 `release.yml`:
 
