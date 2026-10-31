@@ -76,6 +76,9 @@ class DeployE2ETest {
             val reimported = AmneziaFormat.import(AmneziaFormat.export("e2e", tunnel)).single().tunnel!!
             assertEquals(WgQuick.write(tunnel), WgQuick.write(reimported))
 
+            FleetPublisher(hostKeys).publishToServer(creds, "{\"fleetId\":\"e2e\"}")
+            assertEquals("{\"fleetId\":\"e2e\"}", sh("docker exec amnezia-awg2 cat /opt/amnezia/paramnezia/www/fleet.json"))
+
             handshake(tunnel, port)
             println("e2e ok for $profile")
         }

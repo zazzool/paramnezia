@@ -56,8 +56,9 @@ step image
 $SUDO mkdir -p "$FOLDER"
 $SUDO tee "$FOLDER/Dockerfile" >/dev/null <<'DOCKERFILE'
 FROM amneziavpn/amneziawg-go:latest
-# The base image already has bash, iptables, awg and flock; jq only makes clientsTable edits nicer.
-RUN apk add --no-cache jq >/dev/null 2>&1 || true
+# The base image already has bash, iptables, awg and flock. jq makes clientsTable edits safer and
+# busybox-extras brings httpd, which serves the fleet manifest inside the tunnel. Both are optional.
+RUN apk add --no-cache jq busybox-extras >/dev/null 2>&1 || true
 RUN mkdir -p /opt/amnezia && printf '#!/bin/bash\ntail -f /dev/null\n' > /opt/amnezia/start.sh && chmod a+x /opt/amnezia/start.sh
 ENTRYPOINT [ "/bin/bash", "/opt/amnezia/start.sh" ]
 DOCKERFILE
@@ -113,6 +114,9 @@ iptables -A FORWARD -i awg0 -o eth1 -s $AWG_SUBNET/$AWG_CIDR -j ACCEPT
 iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
 iptables -t nat -A POSTROUTING -s $AWG_SUBNET/$AWG_CIDR -o eth0 -j MASQUERADE
 iptables -t nat -A POSTROUTING -s $AWG_SUBNET/$AWG_CIDR -o eth1 -j MASQUERADE
+# Paramnezia fleet manifest, reachable only through the tunnel.
+mkdir -p /opt/amnezia/paramnezia/www
+if command -v httpd >/dev/null 2>&1; then httpd -p $AWG_SUBNET:8080 -h /opt/amnezia/paramnezia/www; fi
 tail -f /dev/null
 START
 $SUDO docker exec -d "$CONTAINER" sh -c "chmod a+x /opt/amnezia/start.sh && /opt/amnezia/start.sh"

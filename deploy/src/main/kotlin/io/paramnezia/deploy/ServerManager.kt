@@ -80,6 +80,8 @@ class ServerManager(private val hostKeys: HostKeyStore) {
         dns: List<String> = listOf("1.1.1.1", "1.0.0.1"),
         mtu: Int = 1280,
         keepalive: String? = null,
+        /** Fixed tunnel address (fleet devices); null lets the server pick the next free one. */
+        clientIp: String? = null,
     ): TunnelConfig = SshConnection.open(creds, hostKeys).use { ssh ->
         val r = ssh.run(
             script("add-peer.sh"),
@@ -87,8 +89,9 @@ class ServerManager(private val hostKeys: HostKeyStore) {
                 "CONTAINER" to protocol.amneziaContainer,
                 "CLIENT_PUB" to clientPrivateKey.publicKey().toBase64(),
                 "CLIENT_NAME" to name,
-            ),
+            ) + (clientIp?.let { mapOf("CLIENT_IP" to it) } ?: emptyMap()),
         )
+        r.error?.let { throw SshException(it, "Could not add client: $it") }
         if (r.exitCode != 0) throw SshException("add_peer_failed", "Could not add client: ${r.stderr.takeLast(2000)}")
         val serverConf = r.stdout.substringAfter("::conf-begin::\n", "").substringBefore("::conf-end::")
         clientConfig(serverConf, r.results, clientPrivateKey, creds.host, dns, mtu, keepalive)

@@ -3,14 +3,15 @@
 # append a [Peer] to the server config, sync the live interface, record the name in clientsTable.
 # The client's private key never reaches the server: we only get its public key.
 #
-# Inputs (environment): CONTAINER, CLIENT_PUB, CLIENT_NAME
+# Inputs (environment): CONTAINER, CLIENT_PUB, CLIENT_NAME, optional CLIENT_IP (fleet devices keep
+# the same address on every server)
 # Output: "::result::client_ip=…", "::result::server_pub=…", "::result::psk=…", then the server
 #         config without private keys between ::conf-begin:: and ::conf-end::.
 set -eu
 export LC_ALL=C
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
 
-$SUDO docker exec -i -e CLIENT_PUB -e CLIENT_NAME -e CREATED="$(date -u '+%a %b %d %H:%M:%S %Y')" "$CONTAINER" bash -s <<'PEER'
+$SUDO docker exec -i -e CLIENT_PUB -e CLIENT_NAME -e CLIENT_IP="${CLIENT_IP:-}" -e CREATED="$(date -u '+%a %b %d %H:%M:%S %Y')" "$CONTAINER" bash -s <<'PEER'
 set -eu
 cd /opt/amnezia/awg
 if [ -f awg0.conf ]; then CONF=awg0.conf; IFACE=awg0; BIN=awg; else CONF=wg0.conf; IFACE=wg0; BIN=wg; command -v wg >/dev/null || BIN=awg; fi
@@ -20,6 +21,8 @@ flock 9 2>/dev/null || true
 
 if grep -q "^PublicKey = $CLIENT_PUB\$" "$CONF"; then
   ip=$(awk -v k="$CLIENT_PUB" '$1=="PublicKey"&&$3==k{f=1;next} f&&$1=="AllowedIPs"{split($3,a,"/");print a[1];exit}' "$CONF")
+elif [ -n "$CLIENT_IP" ] && grep -q "^AllowedIPs = $CLIENT_IP/32" "$CONF"; then
+  echo "::error::address_taken"; exit 1
 else
   subnet=$(awk -F' = ' '$1=="Address"{print $2;exit}' "$CONF" | cut -d/ -f1)
   last=$(grep -E '^AllowedIPs = [0-9.]+' "$CONF" | sed -E 's/^AllowedIPs = ([0-9.]+).*/\1/' | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | tail -1)
@@ -31,6 +34,7 @@ EOF
   # Skip network/broadcast-looking addresses, as AmneziaVPN does.
   case $((n & 255)) in 0) n=$((n + 1)) ;; 255) n=$((n + 2)) ;; esac
   ip="$(( (n>>24)&255 )).$(( (n>>16)&255 )).$(( (n>>8)&255 )).$(( n&255 ))"
+  [ -n "$CLIENT_IP" ] && ip=$CLIENT_IP
   psk=$(cat wireguard_psk.key)
   printf '[Peer]\nPublicKey = %s\nPresharedKey = %s\nAllowedIPs = %s/32\n\n' "$CLIENT_PUB" "$psk" "$ip" >> "$CONF"
   "$BIN" syncconf "$IFACE" <("$BIN-quick" strip "/opt/amnezia/awg/$CONF")
