@@ -1,10 +1,8 @@
 name: Release
 
-# Push a tag like v1.2.0 to publish. Secrets:
-#   PN_KEYSTORE_B64, PN_KEYSTORE_PASSWORD, PN_KEY_ALIAS  – APK signing key (keep forever: updates need it)
-#   PN_RELEASE_SEED   – OTA release key (from `releasetool keygen`), signs the release manifest
-# Variables:
-#   PN_RELEASE_KEY, PN_RELEASE_NOSTR – its public halves, built into the app
+# Push a tag like v1.2.0 to publish (docs/RELEASE.md).
+# Keys: keys/release-keys.enc (APK keystore + OTA release seed), opened with the secret PN_KEYS_PASSWORD.
+# The public halves of the release key are in gradle.properties.
 on:
   push:
     tags: ["v*"]
@@ -22,17 +20,24 @@ jobs:
       - uses: actions/setup-go@v5
         with: { go-version-file: tunnel/src/main/go/go.mod, cache-dependency-path: tunnel/src/main/go/go.sum }
       - uses: gradle/actions/setup-gradle@v4
+      - name: Open the keys
+        env:
+          PN_KEYS_PASSWORD: ${{ secrets.PN_KEYS_PASSWORD }}
+        run: |
+          if [ -z "$PN_KEYS_PASSWORD" ]; then echo "::error::Secret PN_KEYS_PASSWORD is not set (docs/RELEASE.md)"; exit 1; fi
+          k="$RUNNER_TEMP/keys"; mkdir -p "$k"
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in keys/release-keys.enc -pass env:PN_KEYS_PASSWORD | tar x -C "$k"
+          while IFS='=' read -r name value; do
+            [ -n "$name" ] || continue
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done < "$k/release.env"
+          echo "PN_KEYSTORE=$k/paramnezia.jks" >> "$GITHUB_ENV"
       - name: Build signed APK
         env:
           PN_VERSION_CODE: ${{ github.run_number }}
           PN_VERSION_NAME: ${{ github.ref_name }}
-          PN_KEYSTORE_PASSWORD: ${{ secrets.PN_KEYSTORE_PASSWORD }}
-          PN_KEY_ALIAS: ${{ secrets.PN_KEY_ALIAS }}
-          PN_RELEASE_KEY: ${{ vars.PN_RELEASE_KEY }}
-          PN_RELEASE_NOSTR: ${{ vars.PN_RELEASE_NOSTR }}
         run: |
-          echo "${{ secrets.PN_KEYSTORE_B64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
-          export PN_KEYSTORE="$RUNNER_TEMP/release.jks"
           ./gradlew :app:assembleRelease :releasetool:installDist
           cp app/build/outputs/apk/release/app-release.apk "paramnezia-${GITHUB_REF_NAME}.apk"
       - name: GitHub release
@@ -40,11 +45,11 @@ jobs:
         run: gh release create "$GITHUB_REF_NAME" "paramnezia-${GITHUB_REF_NAME}.apk" --generate-notes
       - name: Sign the OTA manifest, upload to Blossom, announce on Nostr
         env:
-          PN_RELEASE_SEED: ${{ secrets.PN_RELEASE_SEED }}
           GH_TOKEN: ${{ github.token }}
         run: |
           apk="paramnezia-${GITHUB_REF_NAME}.apk"
-          signer=$("$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$apk" | grep -m1 'SHA-256 digest' | awk '{print $NF}')
+          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
+          signer=$("$apksigner" verify --print-certs "$apk" | grep -m1 'SHA-256 digest' | awk '{print $NF}')
           releasetool/build/install/releasetool/bin/releasetool publish \
             --apk "$apk" \
             --version-code "${{ github.run_number }}" \
