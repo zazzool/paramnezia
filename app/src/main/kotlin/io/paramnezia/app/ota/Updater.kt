@@ -73,9 +73,9 @@ class Updater(
     private val lock = Mutex()
     private val publisher = FleetPublisher(repo.hostKeys)
 
-    private val versionCode: Long = context.packageManager.getPackageInfo(context.packageName, 0).let {
+    private val versionCode: Long by lazy { context.packageManager.getPackageInfo(context.packageName, 0).let {
         if (Build.VERSION.SDK_INT >= 28) it.longVersionCode else @Suppress("DEPRECATION") it.versionCode.toLong()
-    }
+    } }
 
     private val checker by lazy {
         UpdateChecker(context.packageName, versionCode, Build.VERSION.SDK_INT, listOf(BuildConfig.RELEASE_KEY), ed, ownSigner())
@@ -83,7 +83,7 @@ class Updater(
 
     init {
         // A release learned earlier (from any channel) is offered again after a restart.
-        repo.current.release?.let { offer(it, spread = false) }
+        scope.launch(Dispatchers.IO) { repo.current.release?.let { offer(it, spread = false) } }
     }
 
     /** Offers a release from any channel; spreads it onward when it is new. */

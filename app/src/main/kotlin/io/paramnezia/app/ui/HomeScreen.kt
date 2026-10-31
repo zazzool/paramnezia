@@ -80,7 +80,7 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
         Text(label, style = MaterialTheme.typography.titleMedium)
 
         stats?.takeIf { tunnel is TunnelState.Up }?.let { s ->
-            Text("↓ ${human(s.rxBytes)}   ↑ ${human(s.txBytes)}", style = MaterialTheme.typography.bodyMedium)
+            Text("↓ ${formatBytes(s.rxBytes)}   ↑ ${formatBytes(s.txBytes)}", style = MaterialTheme.typography.bodyMedium)
         }
         if (state.settings.blockTrackers && tunnel is TunnelState.Up) {
             Text("Заблокировано трекеров и рекламы: $blocked", style = MaterialTheme.typography.bodyMedium)
@@ -130,7 +130,7 @@ private fun UpdateCard(text: String, action: String?, onClick: () -> Unit) {
     }
 }
 
-private fun human(bytes: Long): String = when {
+fun formatBytes(bytes: Long): String = when {
     bytes >= 1L shl 30 -> "%.1f ГБ".format(bytes / (1L shl 30).toDouble())
     bytes >= 1L shl 20 -> "%.1f МБ".format(bytes / (1L shl 20).toDouble())
     bytes >= 1L shl 10 -> "%.0f КБ".format(bytes / 1024.0)

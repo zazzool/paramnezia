@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Paramnezia</string>
+    <string name="widget_toggle">Включить или выключить VPN</string>
+    <string name="widget_description">Кнопка VPN и трафик</string>
 </resources>

@@ -37,6 +37,7 @@ import io.paramnezia.app.App
 import io.paramnezia.app.BuildConfig
 import io.paramnezia.app.data.BatteryMode
 import io.paramnezia.app.data.Settings
+import io.paramnezia.app.data.UiMode
 import io.paramnezia.core.routing.AppRules
 import kotlinx.coroutines.launch
 
@@ -81,6 +82,22 @@ fun SettingsScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
         Text("Система", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Text("Чтобы VPN включался сам после перезагрузки, включите для Paramnezia «Постоянную VPN» в настройках Android.", style = MaterialTheme.typography.bodySmall)
         OutlinedButton(onClick = { context.startActivity(Intent(AndroidSettings.ACTION_VPN_SETTINGS)) }) { Text("Настройки VPN Android") }
+
+        HorizontalDivider()
+        Text("Интерфейс", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        for ((mode, title, sub) in listOf(
+            Triple(UiMode.AUTO, "Автоматически", "Простой на ведомых устройствах флота, полный на остальных"),
+            Triple(UiMode.SIMPLE, "Простой", "Одна кнопка. Полный режим: долгое нажатие на заголовок"),
+            Triple(UiMode.FULL, "Полный", "Все настройки"),
+        )) {
+            Row(Modifier.fillMaxWidth().clickable { app.repo.update { it.copy(uiMode = mode) } }, verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(state.uiMode == mode, { app.repo.update { it.copy(uiMode = mode) } })
+                Column {
+                    Text(title)
+                    Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                }
+            }
+        }
 
         HorizontalDivider()
         Text("Обновления", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)

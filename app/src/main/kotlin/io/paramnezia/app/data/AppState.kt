@@ -17,7 +17,17 @@ data class AppState(
     val release: String? = null,
     /** The user wants the tunnel up (restored after an update). */
     val wantConnected: Boolean = false,
-)
+    val uiMode: UiMode = UiMode.AUTO,
+) {
+    /** Follower devices of a fleet get the one-button screen; the admin and standalone users get everything. */
+    val simpleUi: Boolean get() = when (uiMode) {
+        UiMode.SIMPLE -> true
+        UiMode.FULL -> false
+        UiMode.AUTO -> fleet != null && fleet.adminSeed == null
+    }
+}
+
+enum class UiMode { AUTO, SIMPLE, FULL }
 
 /** A standalone server: imported from a key or deployed from the app. */
 @Serializable

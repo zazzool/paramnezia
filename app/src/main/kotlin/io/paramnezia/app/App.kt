@@ -2,6 +2,7 @@ package io.paramnezia.app
 
 import android.app.Application
 import android.net.VpnService
+import android.os.PowerManager
 import android.util.Log
 import io.paramnezia.app.data.Repo
 import io.paramnezia.app.data.StoredProfile
@@ -9,6 +10,7 @@ import io.paramnezia.app.fleet.FleetManager
 import io.paramnezia.app.ota.Updater
 import io.paramnezia.app.tunnel.Net
 import io.paramnezia.app.tunnel.SpecBuilder
+import io.paramnezia.app.ui.WidgetProvider
 import io.paramnezia.app.work.SyncWorker
 import io.paramnezia.core.config.WgQuick
 import io.paramnezia.core.fleet.FailoverPolicy
@@ -23,6 +25,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -38,7 +41,8 @@ class App : Application(), TunnelHost {
     lateinit var net: Net; private set
     lateinit var specs: SpecBuilder; private set
     lateinit var fleet: FleetManager; private set
-    lateinit var updater: Updater; private set
+    /** Created on first use, off the launch path (it reads package info and the stored release). */
+    val updater: Updater by lazy { Updater(this, repo, net, fleet, NativeEd25519, scope) }
     lateinit var servers: io.paramnezia.app.data.Servers; private set
     private val failover = FailoverPolicy()
 
@@ -48,7 +52,6 @@ class App : Application(), TunnelHost {
         net = Net(this)
         specs = SpecBuilder(this)
         fleet = FleetManager(repo, net, NativeEd25519, scope) { reconnectIfUp() }
-        updater = Updater(this, repo, net, fleet, NativeEd25519, scope)
         servers = io.paramnezia.app.data.Servers(repo, fleet)
 
         // DNS rules follow the settings; loading them is a one-off ~1 ms parse in Go.
@@ -61,7 +64,26 @@ class App : Application(), TunnelHost {
         scope.launch {
             TunnelRuntime.state.collect { s -> if (s is TunnelState.Up) { delay(3_000); fleet.announce() } }
         }
-        SyncWorker.schedule(this)
+        // Nothing below blocks the first frame: WorkManager, the updater and the native library start
+        // in the background.
+        scope.launch(Dispatchers.IO) {
+            SyncWorker.schedule(this@App)
+            updater
+        }
+        // Widget: redraw on every state change; while up, refresh the counters every 30 s with the
+        // screen on (the loop simply does not run while the phone sleeps).
+        scope.launch {
+            TunnelRuntime.state.collectLatest { s ->
+                WidgetProvider.refresh(this@App)
+                android.service.quicksettings.TileService.requestListeningState(
+                    this@App, android.content.ComponentName(this@App, io.paramnezia.app.ui.QuickTile::class.java))
+                val power = getSystemService(PowerManager::class.java)
+                while (s is TunnelState.Up && WidgetProvider.hasWidgets(this@App)) {
+                    delay(30_000)
+                    if (power.isInteractive) WidgetProvider.refresh(this@App)
+                }
+            }
+        }
     }
 
     /** Reconnects with a fresh spec when the tunnel is running (new manifest, new settings). */

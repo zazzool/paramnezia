@@ -1,6 +1,7 @@
 package io.paramnezia.app.ui
 
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -27,6 +28,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,9 +37,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import android.os.Build
 import io.paramnezia.app.App
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -106,7 +109,23 @@ private fun Root(app: App, incoming: MutableSharedFlow<String>, onConnect: () ->
     val toast: (String) -> Unit = { msg -> scope.launch { snackbar.showSnackbar(msg) } }
     var pending by remember { mutableStateOf<String?>(null) }
 
+    val ready by app.repo.ready.collectAsState()
+    val simple by remember { app.repo.state.map { it.simpleUi }.distinctUntilChanged() }.collectAsState(initial = false)
+    // The vault is read in parallel with the first frame; wait those few ms rather than flash the wrong mode.
+    if (!ready) return
+
     LaunchedEffect(Unit) { incoming.collect { pending = it; tab = Tab.ADD } }
+
+    if (simple) {
+        // One-button mode still accepts a new key or invite opened from a messenger.
+        LaunchedEffect(pending) {
+            val key = pending ?: return@LaunchedEffect
+            pending = null
+            runCatching { app.servers.import(key) }.onSuccess { toast("Готово") }.onFailure { toast(it.message ?: "Ошибка") }
+        }
+        Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding -> SimpleScreen(app, Modifier.padding(padding), onConnect) }
+        return
+    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
