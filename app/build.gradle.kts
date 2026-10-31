@@ -66,6 +66,12 @@ android {
     }
 }
 
+composeCompiler {
+    // The mapping task's class reader stops at Java 24 class files, which some dependencies ship in
+    // multi-release jars; the mapping only improves R8-obfuscated Compose stack traces.
+    includeComposeMappingFile.set(false)
+}
+
 kotlin {
     compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
 }
