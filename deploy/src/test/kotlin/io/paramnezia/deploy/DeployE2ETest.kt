@@ -177,7 +177,7 @@ class DeployE2ETest {
     /** Puts [bytes] where release-mirror.sh keeps verified APKs, as if downloaded earlier. */
     private fun putInCache(bytes: ByteArray): String {
         val sha = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-        val f = File.createTempFile("pn", ".apk").apply { writeBytes(bytes); deleteOnExit() }
+        val f = File.createTempFile("pn-release", ".apk").apply { writeBytes(bytes); deleteOnExit() }
         sh("S=\$( [ \"\$(id -u)\" -eq 0 ] || echo sudo -n ); \$S mkdir -p /opt/amnezia/paramnezia/cache && \$S cp ${f.absolutePath} /opt/amnezia/paramnezia/cache/$sha.apk")
         return sha
     }
