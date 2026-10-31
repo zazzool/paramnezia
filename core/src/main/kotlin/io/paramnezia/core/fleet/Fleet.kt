@@ -77,6 +77,15 @@ data class Invite(
             val obj = runCatching { AmneziaKey.decode(text.trim()) }.getOrNull() ?: return null
             return obj[INVITE_KEY]?.let { runCatching { json.decodeFromJsonElement(serializer(), it.jsonObject) }.getOrNull() }
         }
+
+        /**
+         * The same key without the fleet part: what goes to the original AmneziaVPN (an iPhone, say),
+         * which needs only the connection, not the fleet's keys.
+         */
+        fun plainKey(text: String): String {
+            val obj = AmneziaKey.decode(text.trim())
+            return if (INVITE_KEY in obj) AmneziaKey.encode(JsonObject(obj - INVITE_KEY)) else text.trim()
+        }
     }
 }
 
