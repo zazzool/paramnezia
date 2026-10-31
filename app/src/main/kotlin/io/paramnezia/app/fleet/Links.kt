@@ -29,7 +29,14 @@ class Links(private val context: Context, private val repo: Repo, private val fl
         val (server, ssh) = fleet.managedServer() ?: error("Нет SSH-доступа ни к одному серверу флота")
         val invite = fleet.addDevice(name)
         val pub = io.paramnezia.core.fleet.Invite.read(invite)?.let { WgKey.fromBase64(it.privateKey).publicKey().toBase64() }
-        store(links.create(ssh, invite, name, template()), name, server.id, pub, fleetDevice = true)
+        val link = try {
+            links.create(ssh, invite, name, template())
+        } catch (e: Exception) {
+            // No link, no device: do not leave a member nobody can use.
+            pub?.let { runCatching { fleet.removeDevice(it) } }
+            throw friendly(e)
+        }
+        store(link, name, server.id, pub, fleetDevice = true)
     }
 
     /** Without a fleet: a separate account (its own key) on a server we manage. */
@@ -37,9 +44,28 @@ class Links(private val context: Context, private val repo: Repo, private val fl
         val ssh = profile.ssh ?: error("Нет SSH-доступа к этому серверу")
         val protocol = runCatching { Protocol.valueOf(profile.protocol) }.getOrDefault(Protocol.AWG)
         val client = WgKey.generatePrivate()
-        val tunnel = manager.addClient(ssh, client, name, protocol)
-        val key = AmneziaKey.encode(AmneziaFormat.export(profile.name, tunnel))
-        store(links.create(ssh, key, name, template()), name, profile.id, client.publicKey().toBase64())
+        val tunnel = try { manager.addClient(ssh, client, name, protocol) } catch (e: Exception) { throw friendly(e) }
+        val key = AmneziaFormat.export(profile.name, tunnel).let(AmneziaKey::encode)
+        val link = try {
+            links.create(ssh, key, name, template())
+        } catch (e: Exception) {
+            runCatching { manager.removeClient(ssh, client.publicKey(), protocol) }
+            throw friendly(e)
+        }
+        store(link, name, profile.id, client.publicKey().toBase64())
+    }
+
+    /** What went wrong, in words the admin can act on. */
+    private fun friendly(e: Exception): Exception {
+        val code = (e as? io.paramnezia.deploy.SshException)?.code
+        val text = when (code) {
+            "unreachable", "connect_failed" -> "Не удалось подключиться к серверу по SSH (порт 22). Проверьте, что сервер включён и SSH доступен."
+            "auth_failed" -> "Сервер не принял логин или пароль SSH."
+            "host_key_changed" -> "Ключ сервера изменился с первого подключения. Если сервер переустанавливали, удалите и добавьте его заново."
+            "invite_failed" -> "Сервер не смог сохранить ссылку: ${e.message}"
+            else -> e.message ?: e.toString()
+        }
+        return IllegalStateException(text, e)
     }
 
     private val prepared = java.util.Collections.synchronizedSet(HashSet<String>())

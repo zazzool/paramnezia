@@ -120,7 +120,29 @@ class SshConnection private constructor(private val session: Session) : Closeabl
     companion object {
         private const val CONNECT_TIMEOUT_MS = 20_000
 
+        /**
+         * Ways to reach a server, tried in order; null is the default route. The Android app puts the
+         * physical network first while its own VPN is up: SSH to the VPS through the tunnel that ends
+         * on that same VPS does not work reliably.
+         */
+        @Volatile var routes: () -> List<javax.net.SocketFactory?> = { listOf(null) }
+
         fun open(creds: SshCredentials, hostKeys: HostKeyStore): SshConnection {
+            val ways = routes().ifEmpty { listOf(null) }
+            var last: SshException? = null
+            for ((i, way) in ways.withIndex()) {
+                try {
+                    return open(creds, hostKeys, way, if (ways.size > 1 && i < ways.size - 1) 10_000 else CONNECT_TIMEOUT_MS)
+                } catch (e: SshException) {
+                    // Wrong password or host key: another route will not help.
+                    if (e.code != "unreachable" && e.code != "connect_failed") throw e
+                    last = e
+                }
+            }
+            throw last!!
+        }
+
+        private fun open(creds: SshCredentials, hostKeys: HostKeyStore, way: javax.net.SocketFactory?, timeoutMs: Int): SshConnection {
             val jsch = JSch()
             if (creds.privateKey.isNotBlank()) {
                 jsch.addIdentity("key", creds.privateKey.toByteArray(), null, creds.passphrase.takeIf { it.isNotEmpty() }?.toByteArray())
@@ -138,8 +160,14 @@ class SshConnection private constructor(private val session: Session) : Closeabl
             }
             session.setConfig("PreferredAuthentications", "publickey,keyboard-interactive,password")
             session.setServerAliveInterval(15_000)
+            if (way != null) session.setSocketFactory(object : com.jcraft.jsch.SocketFactory {
+                override fun createSocket(host: String, port: Int): java.net.Socket =
+                    way.createSocket().apply { connect(java.net.InetSocketAddress(host, port), timeoutMs) }
+                override fun getInputStream(socket: java.net.Socket) = socket.getInputStream()
+                override fun getOutputStream(socket: java.net.Socket) = socket.getOutputStream()
+            })
             try {
-                session.connect(CONNECT_TIMEOUT_MS)
+                session.connect(timeoutMs)
             } catch (e: JSchException) {
                 val msg = e.message.orEmpty()
                 throw when {
