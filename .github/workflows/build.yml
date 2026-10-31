@@ -115,7 +115,7 @@ jobs:
           script: |
             adb install -r "$(find apk -name '*release*.apk' | head -1)"
             adb logcat -c
-            adb shell am start -W -n io.paramnezia/.ui.MainActivity
+            adb shell monkey -p io.paramnezia -c android.intent.category.LAUNCHER 1
             sleep 15
             adb logcat -d > logcat-${{ matrix.api }}.txt
             adb shell pidof io.paramnezia || { echo "::error::app is not running"; grep -A40 -E "FATAL EXCEPTION|AndroidRuntime" logcat-${{ matrix.api }}.txt | head -120; exit 1; }
