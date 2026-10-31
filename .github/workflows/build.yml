@@ -60,12 +60,15 @@ jobs:
         env:
           PN_VERSION_CODE: ${{ github.run_number }}
         run: ./gradlew :app:assembleDebug :app:assembleRelease
-      - name: Invite slot keeps the APK signature valid
+      - name: Empty invite slot in the release APK; the signature stays valid
         run: |
           ./gradlew -q :releasetool:installDist
+          tool=releasetool/build/install/releasetool/bin/releasetool
           apk=app/build/outputs/apk/release/app-release.apk
-          releasetool/build/install/releasetool/bin/releasetool embed --apk "$apk" --out /tmp/invite.apk --payload "vpn://ci-check"
           apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
+          "$tool" slot --apk "$apk" --out /tmp/slotted.apk && mv /tmp/slotted.apk "$apk"
+          "$apksigner" verify --verbose "$apk"
+          "$tool" embed --apk "$apk" --out /tmp/invite.apk --payload "vpn://ci-check"
           "$apksigner" verify --verbose /tmp/invite.apk
       - name: Keep the newest APKs on the apk-builds branch
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository

@@ -21,9 +21,35 @@ import java.util.Base64
  */
 class InviteLinks(private val hostKeys: HostKeyStore) {
 
-    /** An APK prepared with [ApkSlot.prepare]: the template the server personalizes per download. */
+    /**
+     * An APK with a settings slot at [slotOffset] (CI adds an empty one to every release build): the
+     * template the server personalizes per download. Whatever the slot holds now (the invite this
+     * device was installed from) is blanked on the way out; the file itself is never changed.
+     */
     class ApkTemplate(val file: File, val slotOffset: Long) {
-        val sha256: String by lazy { sha256(file) }
+        val sha256: String by lazy { open().use(::sha256) }
+
+        fun open(): java.io.InputStream = BlankRange(file.inputStream().buffered(1 shl 16), slotOffset, ApkSlot.SIZE.toLong())
+    }
+
+    /** Passes a stream through with bytes [from, from + length) read as zeros. */
+    private class BlankRange(private val src: java.io.InputStream, private val from: Long, length: Long) : java.io.InputStream() {
+        private val to = from + length
+        private var pos = 0L
+        override fun read(): Int {
+            val b = src.read()
+            if (b < 0) return b
+            return if (pos++ in from until to) 0 else b
+        }
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            val n = src.read(b, off, len)
+            if (n <= 0) return n
+            val start = maxOf(pos, from); val end = minOf(pos + n, to)
+            if (start < end) java.util.Arrays.fill(b, off + (start - pos).toInt(), off + (end - pos).toInt(), 0)
+            pos += n
+            return n
+        }
+        override fun close() = src.close()
     }
 
     data class Link(val url: String, val token: String, val expiresAt: Long)
@@ -124,7 +150,7 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
                 "printf '%s %s\\n' ${apk.slotOffset} ${ApkSlot.SIZE} | \$S tee $DATA/app.slot.new >/dev/null && " +
                 "\$S mv $DATA/app.apk.new $DATA/app.apk && \$S mv $DATA/app.slot.new $DATA/app.slot && " +
                 "printf '%s' ${apk.sha256} | \$S tee $DATA/app.sha >/dev/null && echo ok",
-            apk.file.inputStream().buffered(),
+            apk.open(),
         )
         if (up.stdout.trim() != "ok") throw SshException("invite_failed", "Could not upload the app: ${up.stderr.takeLast(1000)}")
     }
@@ -143,12 +169,10 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
             return "http://$h" + (if (port == 80) "" else ":$port") + "/#$token"
         }
 
-        private fun sha256(f: File): String {
+        private fun sha256(input: java.io.InputStream): String {
             val md = MessageDigest.getInstance("SHA-256")
-            f.inputStream().use { input ->
-                val buf = ByteArray(64 * 1024)
-                while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) }
-            }
+            val buf = ByteArray(64 * 1024)
+            while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) }
             return md.digest().joinToString("") { "%02x".format(it) }
         }
     }

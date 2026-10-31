@@ -81,6 +81,9 @@ object ApkSlot {
         return layout.blockStart + 8 + layout.pairsSize + 12
     }
 
+    /** Where the slot's value starts in an APK that has one (release builds get an empty one in CI), or null. */
+    fun offset(apk: File): Long? = runCatching { RandomAccessFile(apk, "r").use { Layout.read(it).slotOffset } }.getOrNull()
+
     /** Reads the invite in an APK's slot, or null. Touches only the last few KiB and the block. */
     fun read(apk: File): String? = runCatching {
         RandomAccessFile(apk, "r").use { f ->

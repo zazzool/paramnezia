@@ -56,6 +56,8 @@ class ApkSlotTest {
         assertEquals(apk.length() + 16384, tmpl.length())
         assertEquals(entries(apk), entries(tmpl))
         assertNull(ApkSlot.read(tmpl)) // empty slot
+        assertNull(ApkSlot.offset(apk))
+        assertEquals(off, ApkSlot.offset(tmpl))
 
         // What the server does: stream the template with the slot bytes replaced.
         val invite = "vpn://" + "x".repeat(5000)
