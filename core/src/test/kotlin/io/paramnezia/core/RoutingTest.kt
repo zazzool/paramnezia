@@ -74,7 +74,8 @@ class RoutingTest {
             val v6Routes = plan.include.count { it.isV6 } + plan.exclude.count { it.isV6 }
             println("excludeRoute=$exclude: v4=$v4Routes v6=$v6Routes blocks=${plan.bypassBlocks} in ${ms}ms")
             assertTrue(v4Routes + v6Routes <= RoutePlanner.ROUTE_BUDGET)
-            assertTrue(plan.bypassBlocks > 500)
+            // Pre-13 devices pay for scattered key networks with a smaller total; the key ones always fit.
+            assertTrue(plan.bypassBlocks > 300)
         }
     }
 
@@ -94,5 +95,41 @@ class RoutingTest {
             listOf("com.yandex.browser", "org.telegram.messenger", "ru.sberbankmobile"),
             apps.select(installed, forceTunnel = setOf("ru.mail.mailapp"), forceDirect = setOf("org.telegram.messenger"), self = "io.paramnezia"),
         )
+    }
+
+    /** The services Vladimir named explicitly must go direct on every device, whatever its route budget. */
+    @Test
+    fun keyRussianServicesGoDirect() {
+        val dir = File("../app/src/main/assets/bypass")
+        val apps = AppRules.parse(File(dir, "apps.txt").readText())
+        val mustBypass = listOf(
+            "ru.sberbankmobile", "com.idamob.tinkoff.android", "ru.vtb24.mobilebanking.android", "ru.alfabank.mobile.android",
+            "ru.ozon.app.android", "com.wildberries.ru", "ru.beru.android", "com.avito.android", "ru.sbermegamarket.app",
+            "ru.rostel", "com.gnivts.selfemployed", "ru.oneme.app", "com.yandex.browser", "ru.rutube.app",
+            "ru.yandex.music", "ru.kinopoisk", "ru.rt.video.app.mobile", "ru.ivi.client", "com.vkontakte.android",
+        )
+        assertEquals(emptyList<String>(), mustBypass.filterNot(apps::matches))
+
+        val d = DomainMatcher.parse(File(dir, "domains.txt").readText())
+        for (h in listOf("esia.gosuslugi.ru", "lkfl2.nalog.ru", "max.ru", "rutube.ru", "music.yandex.ru", "strm.yandex.net",
+                "yastatic.net", "kinopoisk.ru", "vk.com", "sun9-1.userapi.com", "ozon.ru", "wildberries.ru", "online.sberbank.ru")) {
+            assertTrue(h, d.matches(h))
+        }
+        assertFalse(d.matches("youtube.com"))
+
+        // Yandex (77.88.0.0/18, 213.180.192.0/19) and VK (87.240.128.0/18) networks are kept by the
+        // tightest budget (the pre-Android 13 complement path keeps the first ~400 blocks).
+        val v4 = BypassLists.parsePrefixes(File(dir, "ipv4.txt").readText()).take(300)
+        for (ip in listOf("77.88.8.8", "213.180.204.1", "87.240.137.1", "5.255.255.70")) {
+            assertTrue(ip, v4.any { it.contains(p("$ip/32")) })
+        }
+
+        val block = DomainMatcher.parse(File(dir, "blocklist.txt").readText())
+        for (h in listOf("mc.yandex.ru", "appmetrica.yandex.net", "an.yandex.ru", "adfox.ru", "top-fwz1.mail.ru", "app-measurement.com")) {
+            assertTrue(h, block.matches(h))
+        }
+        for (h in listOf("yandex.ru", "music.yandex.ru", "gosuslugi.ru", "online.sberbank.ru", "vk.com", "ozon.ru", "rutube.ru")) {
+            assertFalse(h, block.matches(h))
+        }
     }
 }

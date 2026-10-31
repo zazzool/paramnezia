@@ -40,14 +40,28 @@ func init() {
 func pnSetVerbose(on bool) { verbose = on }
 
 //export pnTurnOn
-func pnTurnOn(interfaceName string, tunFd int32, settings string) int32 {
+func pnTurnOn(interfaceName string, tunFd int32, settings string, dns string, dnsDirectFd int32) int32 {
 	logger := newLogger("Paramnezia/"+interfaceName, verbose)
 
+	var tunDev tun.Device
 	tunDev, name, err := tun.CreateUnmonitoredTUNFromFD(int(tunFd))
 	if err != nil {
 		unix.Close(int(tunFd))
+		if dnsDirectFd >= 0 {
+			unix.Close(int(dnsDirectFd))
+		}
 		logger.Errorf("CreateUnmonitoredTUNFromFD: %v", err)
 		return -1
+	}
+	if cfg, ok := parseDNSConfig(dns); ok {
+		if wrapped, err := newDNSTun(tunDev, cfg, int(dnsDirectFd)); err == nil {
+			tunDev = wrapped
+		} else {
+			logger.Errorf("DNS filter disabled: %v", err)
+		}
+	}
+	if dnsDirectFd >= 0 {
+		unix.Close(int(dnsDirectFd)) // newDNSTun keeps its own duplicate
 	}
 	logger.Verbosef("Attaching to interface %v", name)
 	dev := device.NewDevice(tunDev, conn.NewStdNetBind(), logger)

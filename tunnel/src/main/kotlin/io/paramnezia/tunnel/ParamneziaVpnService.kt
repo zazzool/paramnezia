@@ -7,11 +7,11 @@ import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.IpPrefix as AndroidIpPrefix
 import android.net.Network
-import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import io.paramnezia.core.config.Uapi
 import kotlinx.coroutines.CoroutineScope
@@ -102,21 +102,28 @@ class ParamneziaVpnService : VpnService() {
             val uapi = Uapi.write(next.config.withKeepalive(if (screenOn) next.keepaliveScreenOn else next.keepaliveScreenOff))
             val builder = Builder().setSession(next.serverName).setMtu(next.config.iface.mtu ?: 1280)
             for (a in next.config.iface.addresses) builder.addAddress(a.address, a.length)
-            for (d in next.config.iface.dns) builder.addDnsServer(d)
+            val dns = next.dns
+            if (dns != null) {
+                builder.addDnsServer(dns.virtual)
+                builder.addRoute(dns.virtual, 32)
+            } else {
+                for (d in next.config.iface.dns) builder.addDnsServer(d)
+            }
             for (s in next.config.iface.dnsSearch) builder.addSearchDomain(s)
             for (r in next.routes) builder.addRoute(r.address, r.length)
             if (Build.VERSION.SDK_INT >= 33) {
                 for (r in next.excludedRoutes) builder.excludeRoute(AndroidIpPrefix(r.address, r.length))
             }
             for (pkg in next.excludedApps) runCatching { builder.addDisallowedApplication(pkg) }
-            // Our own sockets (SSH, relays, updates) never need the tunnel and must not loop through it.
-            runCatching { builder.addDisallowedApplication(packageName) }
+            // Our own app stays inside the VPN, so gossip and the in-tunnel mirror work. Channels that
+            // must work while the server is blocked (relays, mirrors, updates) bind to
+            // TunnelRuntime.directNetwork() instead.
             if (Build.VERSION.SDK_INT >= 29) builder.setMetered(false)
             builder.setBlocking(true)
 
             down(keepState = true)
             val tun = builder.establish() ?: throw IllegalStateException("VPN permission missing")
-            val h = AwgNative.turnOn("pn0", tun.detachFd(), uapi)
+            val h = AwgNative.turnOn("pn0", tun.detachFd(), uapi, dns?.encode().orEmpty(), if (dns != null) directDnsSocket() else -1)
             if (h < 0) throw IllegalStateException("tunnel_start_failed:$h")
             protect(AwgNative.socketV4(h)); protect(AwgNative.socketV6(h))
             handle = h
@@ -131,6 +138,13 @@ class ParamneziaVpnService : VpnService() {
             TunnelRuntime.set(TunnelState.Failed(e.message ?: e.javaClass.simpleName))
         }
     }
+
+    /** A UDP socket outside the VPN for Russian lookups; the native side takes ownership. */
+    private fun directDnsSocket(): Int = runCatching {
+        val socket = DatagramSocket()
+        protect(socket)
+        ParcelFileDescriptor.fromDatagramSocket(socket).detachFd().also { socket.close() }
+    }.getOrDefault(-1)
 
     private fun down(keepState: Boolean = false) {
         main.removeCallbacks(healthCheck)
@@ -174,12 +188,7 @@ class ParamneziaVpnService : VpnService() {
         scheduleCheck(PERIODIC_CHECK_MS)
     }
 
-    private fun networkValidated(): Boolean {
-        val cm = getSystemService(ConnectivityManager::class.java)
-        // The VPN is excluded for our own app, so this is the physical network.
-        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-    }
+    private fun networkValidated(): Boolean = TunnelRuntime.directNetwork(this) != null
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {

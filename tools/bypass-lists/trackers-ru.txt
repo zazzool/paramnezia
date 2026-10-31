@@ -1,0 +1,20 @@
+# Russian ad and tracking hosts missing from v2fly category-ads-all. Blocked by the DNS filter.
+adriver.ru
+soloway.ru
+tns-counter.ru
+counter.yadro.ru
+full:top-fwz1.mail.ru
+full:ad.mail.ru
+mytracker.ru
+full:tracker-api.my.com
+yandexadexchange.net
+full:mobile.yandexadexchange.net
+full:ssp.rambler.ru
+full:kraken.rambler.ru
+full:counter.rambler.ru
+full:top100.rambler.ru
+# Global SDK trackers common in Russian apps
+app-measurement.com
+app-analytics-services.com
+appsflyersdk.com
+full:firebase-settings.crashlytics.com

@@ -9,7 +9,18 @@ object AwgNative {
     }
 
     /** Returns a tunnel handle (>= 0) or a negative error. Takes ownership of [tunFd]. */
-    @JvmStatic external fun turnOn(name: String, tunFd: Int, uapi: String): Int
+    /**
+     * Starts a tunnel on [tunFd]. [dns] enables the DNS filter (`virtual=`, `tunnel=`, `direct=`
+     * lines, empty = off); [dnsDirectFd] is a UDP socket protected from the VPN, or -1.
+     * Takes ownership of both descriptors.
+     */
+    @JvmStatic external fun turnOn(name: String, tunFd: Int, uapi: String, dns: String, dnsDirectFd: Int): Int
+
+    /** Block / direct / allow domain rules for the DNS filter, one per line (`full:` = exact name). */
+    @JvmStatic external fun setDnsRules(block: String, direct: String, allow: String)
+
+    /** Queries blocked so far in this process. */
+    @JvmStatic external fun dnsBlocked(): Long
     @JvmStatic external fun turnOff(handle: Int)
     @JvmStatic external fun socketV4(handle: Int): Int
     @JvmStatic external fun socketV6(handle: Int): Int

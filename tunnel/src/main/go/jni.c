@@ -10,7 +10,9 @@
 #include <string.h>
 
 struct go_string { const char *str; long n; };
-extern int pnTurnOn(struct go_string ifname, int tun_fd, struct go_string settings);
+extern int pnTurnOn(struct go_string ifname, int tun_fd, struct go_string settings, struct go_string dns, int dns_direct_fd);
+extern void pnSetDnsRules(struct go_string block, struct go_string direct, struct go_string allow);
+extern long long pnDnsBlocked(void);
 extern void pnTurnOff(int handle);
 extern int pnGetSocketV4(int handle);
 extern int pnGetSocketV6(int handle);
@@ -39,15 +41,28 @@ static jstring take_string(JNIEnv *env, char *s)
 	return ret;
 }
 
-JNIEXPORT jint JNICALL FN(turnOn)(JNIEnv *env, jclass c, jstring ifname, jint tun_fd, jstring settings)
+JNIEXPORT jint JNICALL FN(turnOn)(JNIEnv *env, jclass c, jstring ifname, jint tun_fd, jstring settings, jstring dns, jint dns_direct_fd)
 {
-	const char *a, *b;
-	struct go_string ga = gs(env, ifname, &a), gb = gs(env, settings, &b);
-	int ret = pnTurnOn(ga, tun_fd, gb);
+	const char *a, *b, *d;
+	struct go_string ga = gs(env, ifname, &a), gb = gs(env, settings, &b), gd = gs(env, dns, &d);
+	int ret = pnTurnOn(ga, tun_fd, gb, gd, dns_direct_fd);
 	(*env)->ReleaseStringUTFChars(env, ifname, a);
 	(*env)->ReleaseStringUTFChars(env, settings, b);
+	(*env)->ReleaseStringUTFChars(env, dns, d);
 	return ret;
 }
+
+JNIEXPORT void JNICALL FN(setDnsRules)(JNIEnv *env, jclass c, jstring block, jstring direct, jstring allow)
+{
+	const char *a, *b, *d;
+	struct go_string ga = gs(env, block, &a), gb = gs(env, direct, &b), gd = gs(env, allow, &d);
+	pnSetDnsRules(ga, gb, gd);
+	(*env)->ReleaseStringUTFChars(env, block, a);
+	(*env)->ReleaseStringUTFChars(env, direct, b);
+	(*env)->ReleaseStringUTFChars(env, allow, d);
+}
+
+JNIEXPORT jlong JNICALL FN(dnsBlocked)(JNIEnv *env, jclass c) { return pnDnsBlocked(); }
 
 JNIEXPORT void JNICALL FN(turnOff)(JNIEnv *env, jclass c, jint handle) { pnTurnOff(handle); }
 JNIEXPORT jint JNICALL FN(socketV4)(JNIEnv *env, jclass c, jint handle) { return pnGetSocketV4(handle); }

@@ -1,0 +1,3 @@
+# Never blocked, even if a block list has them: they break links or logins when blocked.
+full:clck.yandex.ru
+full:r.mail.ru
