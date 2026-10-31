@@ -14,7 +14,8 @@ import io.paramnezia.tunnel.TunnelRuntime
 import io.paramnezia.tunnel.TunnelState
 
 /**
- * Home-screen widget: a VPN button, the status and the traffic. Plain RemoteViews, so it costs
+ * Minimal 1×1 home-screen widget: a round VPN button coloured by state, and the traffic under it
+ * while connected. Plain RemoteViews, so it costs
  * nothing until it is redrawn: on every tunnel state change and, while the tunnel is up and the
  * screen is on, every 30 seconds for the counters (see [App]).
  */
@@ -42,16 +43,19 @@ class WidgetProvider : AppWidgetProvider() {
             if (ids.isEmpty()) return
             val state = TunnelRuntime.state.value
             val views = RemoteViews(context.packageName, R.layout.widget)
-            views.setTextViewText(R.id.widget_status, when (state) {
-                is TunnelState.Up -> state.serverName
-                is TunnelState.Connecting -> "Подключаюсь…"
-                is TunnelState.Failed -> "Нет подключения"
-                TunnelState.Down -> "VPN выключен"
-            })
             val stats = if (state is TunnelState.Up) TunnelRuntime.stats() else null
-            views.setTextViewText(R.id.widget_traffic, stats?.let { "↓ ${formatBytes(it.rxBytes)}  ↑ ${formatBytes(it.txBytes)}" } ?: "Нажмите кнопку, чтобы включить")
-            views.setInt(R.id.widget_toggle, "setBackgroundResource",
-                if (state is TunnelState.Up) R.drawable.widget_button_on else R.drawable.widget_button_off)
+            val label = when (state) {
+                is TunnelState.Up -> stats?.let { formatBytes(it.rxBytes + it.txBytes) } ?: "ВКЛ"
+                is TunnelState.Connecting -> "…"
+                else -> null
+            }
+            views.setTextViewText(R.id.widget_traffic, label.orEmpty())
+            views.setViewVisibility(R.id.widget_traffic, if (label == null) android.view.View.GONE else android.view.View.VISIBLE)
+            views.setInt(R.id.widget_toggle, "setBackgroundResource", when (state) {
+                is TunnelState.Up -> R.drawable.widget_button_on
+                is TunnelState.Connecting -> R.drawable.widget_button_connecting
+                else -> R.drawable.widget_button_off
+            })
 
             // Without VPN permission the first tap has to open the app to ask for it.
             val click = if (VpnService.prepare(context) == null) {
