@@ -1,7 +1,6 @@
 package io.paramnezia.app.fleet
 
 import android.content.Context
-import android.os.Build
 import io.paramnezia.app.data.Repo
 import io.paramnezia.app.data.StoredLink
 import io.paramnezia.app.data.StoredProfile
@@ -94,23 +93,12 @@ class Links(private val context: Context, private val repo: Repo, private val fl
     }
 
     /**
-     * This installed APK with an empty settings slot, made once per version. The server writes each
-     * invite into its copy, so new devices get exactly the version the admin runs.
+     * The installed APK itself: release builds carry an empty settings slot, so the app never has to
+     * rewrite an APK. The server writes each invite into its copy, so new devices get exactly the
+     * version the admin runs. Builds without a slot (local debug runs) leave only the iPhone path.
      */
-    private fun template(): InviteLinks.ApkTemplate? = runCatching {
-        val version = context.packageManager.getPackageInfo(context.packageName, 0).let {
-            if (Build.VERSION.SDK_INT >= 28) it.longVersionCode else @Suppress("DEPRECATION") it.versionCode.toLong()
-        }
-        val dir = File(context.cacheDir, "invite").apply { mkdirs() }
-        val file = File(dir, "template-$version.apk")
-        val offsetFile = File(dir, "template-$version.offset")
-        if (!file.exists() || !offsetFile.exists()) {
-            dir.listFiles()?.forEach { it.delete() }
-            val tmp = File(dir, "template.tmp")
-            val offset = ApkSlot.prepare(File(context.applicationInfo.sourceDir), tmp)
-            tmp.renameTo(file)
-            offsetFile.writeText(offset.toString())
-        }
-        InviteLinks.ApkTemplate(file, offsetFile.readText().trim().toLong())
-    }.getOrNull() // An APK we cannot read (unsigned debug run, say) still leaves the iPhone path.
+    private fun template(): InviteLinks.ApkTemplate? {
+        val apk = File(context.applicationInfo.sourceDir)
+        return ApkSlot.offset(apk)?.let { InviteLinks.ApkTemplate(apk, it) }
+    }
 }
