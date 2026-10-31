@@ -1,8 +1,12 @@
 package io.paramnezia.app.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.os.Build
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -55,12 +59,17 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
     var newDevice by remember { mutableStateOf(false) }
     var newServer by remember { mutableStateOf(false) }
     var link by remember { mutableStateOf<StoredLink?>(null) }
+    val clipboard = remember { context.getSystemService(ClipboardManager::class.java) }
     /** Standalone server to make a separate account on (no fleet). */
     var accountOn by remember { mutableStateOf<StoredProfile?>(null) }
 
     // Which links have been used: asked only while some are still open.
     LaunchedEffect(Unit) {
         if (state.links.any { !it.used && it.expiresAt > System.currentTimeMillis() }) runCatching { app.links.refresh() }
+    }
+    // Get the servers ready for links while the admin is still looking at this screen.
+    LaunchedEffect(state.fleet?.adminSeed != null, state.profiles.count { it.ssh != null }) {
+        if (state.fleet?.adminSeed != null || state.profiles.any { it.ssh != null }) runCatching { app.links.prewarm() }
     }
 
     fun work(done: String? = null, block: suspend () -> Unit) {
@@ -93,7 +102,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
                     OutlinedButton(enabled = !busy, onClick = { accountOn = p }) { Text("Ссылка для нового пользователя «${p.name}»") }
                 }
             }
-            LinkList(state.links, busy) { l -> work("Ссылка отозвана") { app.links.revoke(l) } }
+            LinkList(state.links, busy, onOpen = { link = it }) { l -> work("Ссылка отозвана") { app.links.revoke(l) } }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             return@Column
         }
@@ -138,7 +147,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
             }
         }
         if (isAdmin) Button(enabled = !busy, onClick = { newDevice = true }) { Text("Пригласить устройство") }
-        if (isAdmin) LinkList(state.links, busy) { l -> work("Ссылка отозвана") { app.links.revoke(l) } }
+        if (isAdmin) LinkList(state.links, busy, onOpen = { link = it }) { l -> work("Ссылка отозвана") { app.links.revoke(l) } }
 
         OutlinedButton(enabled = !busy, onClick = {
             work { toast(if (app.fleet.sync()) "Получена новая конфигурация" else "Конфигурация актуальна") }
@@ -195,7 +204,11 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
             title = { Text("Ссылка для «${l.name}»") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(l.url, fontWeight = FontWeight.Bold)
+                    SelectionContainer { Text(l.url, fontWeight = FontWeight.Bold) }
+                    TextButton(onClick = {
+                        clipboard.setPrimaryClip(ClipData.newPlainText("Paramnezia", l.url))
+                        toast("Ссылка скопирована")
+                    }) { Text("Скопировать") }
                     Text("Сработает один раз и действует 7 дней. Отправьте её в личном сообщении: кто откроет первым, тот и получит доступ.",
                         style = MaterialTheme.typography.bodySmall)
                 }
@@ -262,19 +275,22 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
 
 /** Links handed out, with whether they have been used yet. */
 @Composable
-private fun LinkList(links: List<StoredLink>, busy: Boolean, onRevoke: (StoredLink) -> Unit) {
+private fun LinkList(links: List<StoredLink>, busy: Boolean, onOpen: (StoredLink) -> Unit, onRevoke: (StoredLink) -> Unit) {
     if (links.isEmpty()) return
     Text("Ссылки-приглашения", style = MaterialTheme.typography.titleMedium)
     val now = System.currentTimeMillis()
     for (l in links.take(10)) {
         val open = !l.used && l.expiresAt > now
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().clickable(enabled = open) { onOpen(l) }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(l.name)
                 Text(when { l.used -> "использована"; !open -> "истекла"; else -> "ждёт" }, style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline)
             }
-            if (open) TextButton(enabled = !busy, onClick = { onRevoke(l) }) { Text("Отозвать") }
+            if (open) {
+                TextButton(onClick = { onOpen(l) }) { Text("Отправить") }
+                TextButton(enabled = !busy, onClick = { onRevoke(l) }) { Text("Отозвать") }
+            }
         }
     }
 }

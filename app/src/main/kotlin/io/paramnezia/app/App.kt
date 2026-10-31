@@ -46,6 +46,12 @@ class App : Application(), TunnelHost {
     val updater: Updater by lazy { Updater(this, repo, net, fleet, NativeEd25519, scope) }
     lateinit var servers: io.paramnezia.app.data.Servers; private set
     val links: io.paramnezia.app.fleet.Links by lazy { io.paramnezia.app.fleet.Links(this, repo, fleet) }
+    private val visibilityCheck by lazy { io.paramnezia.app.net.VisibilityCheck(net) }
+    private val _visibility = kotlinx.coroutines.flow.MutableStateFlow<io.paramnezia.app.net.Visibility?>(null)
+    /** What foreign and Russian sites last saw; refreshed by the home screen. */
+    val visibility: kotlinx.coroutines.flow.StateFlow<io.paramnezia.app.net.Visibility?> = _visibility
+
+    suspend fun refreshVisibility() { _visibility.value = visibilityCheck.run() }
     private val failover = FailoverPolicy()
 
     override fun onCreate() {

@@ -43,6 +43,8 @@ class FleetTest {
         val v3 = admin.next(v2) { it.copy(devices = it.devices + tablet) }
         assertEquals("10.8.1.2/32", phone.address)
         assertEquals("10.8.1.3/32", tablet.address)
+        // Addresses the server already gave to others (its own clients, link users) are skipped.
+        assertEquals("10.8.1.6/32", admin.newDevice(v3, "tv", reserved = listOf("10.8.1.4", "10.8.1.5/32")).first.address)
 
         // The invite is a normal AmneziaVPN key that also carries fleet membership.
         val invite = admin.invite(v3, phone, phoneKey)

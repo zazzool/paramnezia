@@ -71,6 +71,7 @@ class DeployE2ETest {
             // Same key again: idempotent, same address.
             assertEquals(tunnel.iface.addresses, manager.addClient(creds, clientKey, "e2e-phone").iface.addresses)
             assertEquals("10.8.1.3/32", manager.addClient(creds, WgKey.generatePrivate(), "second").iface.addresses.single().toString())
+            assertEquals(setOf("10.8.1.2", "10.8.1.3"), manager.usedAddresses(creds))
 
             // The exported vpn:// key must import back to the same tunnel.
             val reimported = AmneziaFormat.import(AmneziaFormat.export("e2e", tunnel)).single().tunnel!!

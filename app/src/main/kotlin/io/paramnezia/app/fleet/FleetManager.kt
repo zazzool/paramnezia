@@ -190,7 +190,7 @@ class FleetManager(
     suspend fun create(serverName: String, serverTunnel: TunnelConfig, ssh: SshCredentials, deviceName: String) = withContext(Dispatchers.IO) {
         val (admin, empty) = FleetAdmin.create(serverName, ed)
         val serverId = UUID.randomUUID().toString()
-        val (device, key) = admin.newDevice(empty, deviceName)
+        val (device, key) = admin.newDevice(empty, deviceName, reserved = servers.usedAddresses(ssh))
         val config = servers.addClient(ssh, key, deviceName, clientIp = device.address.substringBefore('/'),
             dns = serverTunnel.iface.dns.ifEmpty { listOf("1.1.1.1", "1.0.0.1") })
         val server = fleetServerOf(serverId, serverName, config)
@@ -211,7 +211,8 @@ class FleetManager(
     suspend fun addDevice(name: String): String = withContext(Dispatchers.IO) {
         val admin = admin() ?: error("not admin")
         val current = manifest() ?: error("no manifest")
-        val (device, key) = admin.newDevice(current, name)
+        val reserved = current.servers.mapNotNull(::access).flatMap { a -> runCatching { servers.usedAddresses(a) }.getOrDefault(emptySet()) }
+        val (device, key) = admin.newDevice(current, name, reserved = reserved)
         registerEverywhere(current.servers, key.publicKey(), name, device.address)
         val next = admin.next(current) { it.copy(devices = it.devices + device) }
         val signed = FleetCrypto.encode(admin.seal(next))
@@ -278,9 +279,11 @@ class FleetManager(
         if (url !in current.mirrors) accept(FleetCrypto.encode(admin.seal(admin.next(current) { it.copy(mirrors = it.mirrors + url) })))
     }
 
-    private suspend fun accept(signed: String) {
+    private fun accept(signed: String) {
         offer(signed)
-        publish(signed)
+        // Spreading the new manifest (servers, gist, Nostr) can take a while on a slow network;
+        // the admin's screen does not wait for it.
+        scope.launch { runCatching { publish(signed) }.onFailure { Log.w(TAG, "publish failed", it) } }
     }
 
     /** Admin: pushes a manifest to every channel. Failures are fine as long as one channel works. */

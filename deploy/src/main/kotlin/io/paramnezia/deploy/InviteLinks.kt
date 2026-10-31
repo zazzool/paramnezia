@@ -46,29 +46,20 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
         val conf = AmneziaFormat.import(AmneziaKey.decode(key)).firstNotNullOfOrNull { it.tunnel }?.let(WgQuick::write).orEmpty()
         val expiresAt = now + ttlMs
         SshConnection.open(creds, hostKeys).use { ssh ->
-            val page = ssh.run(
-                ServerManager.script("invite-server.sh"),
-                env = mapOf(
-                    "PN_INVITE_PORT" to preferredPort.toString(),
-                    "PN_INVITE_INDEX" to ServerManager.script("invite/index.html"),
-                    "PN_INVITE_CGI" to ServerManager.script("invite/get.cgi"),
-                ),
-            )
-            val port = page.results["port"]?.toIntOrNull()
-                ?: throw SshException("invite_failed", "Could not start the invite page: ${page.stderr.takeLast(1000)} ${page.stdout.takeLast(500)}")
-
+            val port = ensurePage(ssh, preferredPort)
             if (apk != null) uploadTemplate(ssh, apk)
-            val tmp = "$DATA/t/.new-$token"
-            if (apk != null && invite.toByteArray().size <= ApkSlot.MAX_PAYLOAD) {
-                val up = ssh.pipe("$SUDO; \$S mkdir -p $tmp && \$S sh -c 'cat > $tmp/slot' && echo ok", ApkSlot.encode(invite).inputStream())
-                if (up.stdout.trim() != "ok") throw SshException("invite_failed", "Could not store invite: ${up.stderr.takeLast(1000)}")
-            }
-            val r = ssh.run(
+            // One round trip: the slot comes in on stdin, the texts in the environment.
+            val slot = if (apk != null && invite.toByteArray().size <= ApkSlot.MAX_PAYLOAD) ApkSlot.encode(invite) else ByteArray(0)
+            val env = mapOf("PN_APP" to invite, "PN_KEY" to key, "PN_CONF" to conf, "PN_NAME" to name, "PN_EXPIRES" to (expiresAt / 1000).toString())
+            val r = ssh.pipe(
+                env.entries.joinToString("") { (k, v) -> "export $k=${SshConnection.shellQuote(v)}; " } +
                 """
                 set -eu
                 $SUDO
                 T=$token; D=$DATA; tmp=${'$'}D/t/.new-${'$'}T
                 ${'$'}S mkdir -p "${'$'}tmp"
+                ${'$'}S sh -c "cat > ${'$'}tmp/slot"
+                [ -s "${'$'}tmp/slot" ] || ${'$'}S rm -f "${'$'}tmp/slot"
                 printf '%s' "${'$'}PN_APP" | ${'$'}S tee "${'$'}tmp/app" >/dev/null
                 printf '%s' "${'$'}PN_KEY" | ${'$'}S tee "${'$'}tmp/key" >/dev/null
                 printf '%s' "${'$'}PN_CONF" | ${'$'}S tee "${'$'}tmp/conf" >/dev/null
@@ -76,13 +67,37 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
                 printf '%s' "${'$'}PN_EXPIRES" | ${'$'}S tee "${'$'}tmp/expires" >/dev/null
                 ${'$'}S chown -R 65534:65534 "${'$'}tmp"
                 ${'$'}S mv "${'$'}tmp" "${'$'}D/t/${'$'}T"
-                echo "::result::ok=1"
+                echo ok
                 """.trimIndent(),
-                env = mapOf("PN_APP" to invite, "PN_KEY" to key, "PN_CONF" to conf, "PN_NAME" to name, "PN_EXPIRES" to (expiresAt / 1000).toString()),
+                slot.inputStream(),
             )
-            if (r.results["ok"] != "1") throw SshException("invite_failed", "Could not store invite: ${r.stderr.takeLast(1000)}")
+            if (r.stdout.trim() != "ok") throw SshException("invite_failed", "Could not store invite: ${r.stderr.takeLast(1000)}")
             return Link(url(creds.host, port, token), token, expiresAt)
         }
+    }
+
+    /**
+     * Gets a server ready for links ahead of time (page container, image pull, this version of the
+     * app), so creating a link later is a single quick round trip.
+     */
+    fun prepare(creds: SshCredentials, apk: ApkTemplate?, preferredPort: Int = 80) {
+        SshConnection.open(creds, hostKeys).use { ssh ->
+            ensurePage(ssh, preferredPort)
+            if (apk != null) uploadTemplate(ssh, apk)
+        }
+    }
+
+    private fun ensurePage(ssh: SshConnection, preferredPort: Int): Int {
+        val page = ssh.run(
+            ServerManager.script("invite-server.sh"),
+            env = mapOf(
+                "PN_INVITE_PORT" to preferredPort.toString(),
+                "PN_INVITE_INDEX" to ServerManager.script("invite/index.html"),
+                "PN_INVITE_CGI" to ServerManager.script("invite/get.cgi"),
+            ),
+        )
+        return page.results["port"]?.toIntOrNull()
+            ?: throw SshException("invite_failed", "Could not start the invite page: ${page.stderr.takeLast(1000)} ${page.stdout.takeLast(500)}")
     }
 
     /** Which of [tokens] have been used already. */

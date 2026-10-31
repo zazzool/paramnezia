@@ -29,9 +29,12 @@ class FleetAdmin(
     }
 
     /** A new trusted device: its key pair is made here so joining needs no round trip. */
-    fun newDevice(current: FleetManifest, name: String, subnet: IpPrefix = DEFAULT_SUBNET): Pair<FleetDevice, WgKey> {
+    fun newDevice(current: FleetManifest, name: String, subnet: IpPrefix = DEFAULT_SUBNET, reserved: Collection<String> = emptyList()): Pair<FleetDevice, WgKey> {
         val key = WgKey.generatePrivate()
+        // Fleet addresses are the same on every server, so skip anything a server already gave to
+        // someone else (its own clients, AmneziaVPN users, one-time links).
         val taken = current.devices.mapTo(HashSet()) { IpPrefix.parse(it.address).network }
+        for (r in reserved) runCatching { taken += IpPrefix.parse(if ('/' in r) r else "$r/32").network }
         // .1 is the server; hand out .2, .3, … in order, like AmneziaVPN does.
         var candidate = subnet.network + BigInteger.valueOf(2)
         while (candidate in taken) candidate += BigInteger.ONE

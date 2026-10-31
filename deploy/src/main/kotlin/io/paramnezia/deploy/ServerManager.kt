@@ -44,6 +44,16 @@ class ServerManager(private val hostKeys: HostKeyStore) {
         Inspection(r.results["docker"] == "present", containers, r.results["uname"].orEmpty())
     }
 
+    /** Client addresses already in use on the server (without the prefix length). */
+    fun usedAddresses(creds: SshCredentials, protocol: Protocol = Protocol.AWG): Set<String> = SshConnection.open(creds, hostKeys).use { ssh ->
+        val r = ssh.run(
+            "if [ \"\$(id -u)\" -eq 0 ]; then S=''; else S='sudo -n'; fi; " +
+                "\$S docker exec ${protocol.amneziaContainer} sh -c 'cat /opt/amnezia/awg/awg0.conf /opt/amnezia/awg/wg0.conf 2>/dev/null' | " +
+                "awk '\$1==\"AllowedIPs\"{for(i=3;i<=NF;i++){gsub(\",\",\"\",\$i); print \$i}}'",
+        )
+        r.stdout.lines().map { it.trim().substringBefore('/') }.filter { it.isNotEmpty() }.toSet()
+    }
+
     /** Installs the server. Returns the obfuscation parameters every client must share. */
     fun install(creds: SshCredentials, options: InstallOptions = InstallOptions(), onStep: (Step) -> Unit = {}): Map<AwgParam, String> {
         val params = options.profile.generate()

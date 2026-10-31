@@ -6,11 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -54,28 +50,15 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterVertically)) {
         Text("Paramnezia", style = MaterialTheme.typography.headlineMedium,
             modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { askFull = true }))
-        val up = tunnel is TunnelState.Up || tunnel is TunnelState.Connecting
-        Button(
-            onClick = { if (up) app.disconnect() else onConnect() },
-            shape = CircleShape,
-            modifier = Modifier.size(220.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (tunnel is TunnelState.Up) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                contentColor = if (tunnel is TunnelState.Up) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-            ),
-        ) {
-            Text(when (tunnel) {
-                is TunnelState.Up -> "ВКЛ"
-                is TunnelState.Connecting -> "…"
-                else -> "ВЫКЛ"
-            }, style = MaterialTheme.typography.displaySmall)
-        }
+        PowerButton(tunnel.power(), onClick = { if (tunnel.power() == PowerState.OFF) onConnect() else app.disconnect() }, size = 232.dp)
         Text(when (val t = tunnel) {
             is TunnelState.Up -> "Защищено"
             is TunnelState.Connecting -> "Подключаюсь…"
             is TunnelState.Failed -> "Не удалось подключиться"
             TunnelState.Down -> "Нажмите, чтобы включить"
-        }, style = MaterialTheme.typography.titleMedium)
+        }, style = MaterialTheme.typography.headlineMedium, color = when (tunnel.power()) {
+            PowerState.ON -> Brand.Mint; PowerState.CONNECTING -> Brand.Amber; PowerState.OFF -> MaterialTheme.colorScheme.onSurface
+        })
         stats?.takeIf { tunnel is TunnelState.Up }?.let {
             Text("↓ ${formatBytes(it.rxBytes)}   ↑ ${formatBytes(it.txBytes)}   трекеров: $blocked", style = MaterialTheme.typography.bodyMedium)
         }

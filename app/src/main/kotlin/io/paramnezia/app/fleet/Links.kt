@@ -43,6 +43,22 @@ class Links(private val context: Context, private val repo: Repo, private val fl
         store(links.create(ssh, key, name, template()), name, profile.id, client.publicKey().toBase64())
     }
 
+    private val prepared = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    /**
+     * Readies the servers this admin can hand out links from (page, image, this app version) in the
+     * background, so that pressing "create link" later takes a second or two instead of minutes.
+     */
+    suspend fun prewarm() = withContext(Dispatchers.IO) {
+        val targets = listOfNotNull(fleet.managedServer()?.second) + repo.current.profiles.mapNotNull { it.ssh }
+        val apk = template()
+        for (ssh in targets.distinctBy { "${it.host}:${it.port}" }) {
+            val key = "${ssh.host}:${ssh.port}"
+            if (key in prepared) continue
+            runCatching { links.prepare(ssh, apk) }.onSuccess { prepared += key }
+        }
+    }
+
     /** Asks the servers which links have been used. */
     suspend fun refresh() = withContext(Dispatchers.IO) {
         val open = repo.current.links.filter { !it.used && it.expiresAt > System.currentTimeMillis() }

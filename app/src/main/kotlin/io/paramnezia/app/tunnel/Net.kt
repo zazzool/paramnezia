@@ -17,9 +17,12 @@ class Net(private val context: Context) {
 
     fun directSockets(): SocketFactory = direct()?.socketFactory ?: SocketFactory.getDefault()
 
-    /** GET [url], first the normal way, then over the physical network. Null if both fail. */
-    fun get(url: String, maxBytes: Int = 1 shl 20): String? {
-        for (network in listOf(null, direct())) {
+    /**
+     * GET [url], first the normal way (split routing decides: tunnel or direct), then, if
+     * [fallbackDirect], over the physical network. Null if all fail.
+     */
+    fun get(url: String, maxBytes: Int = 1 shl 20, fallbackDirect: Boolean = true): String? {
+        for (network in if (fallbackDirect) listOf(null, direct()) else listOf(null)) {
             runCatching {
                 val c = open(url, network)
                 try {

@@ -68,6 +68,13 @@ sealed interface TunnelState {
 data class TunnelStats(val rxBytes: Long, val txBytes: Long, val lastHandshakeEpochSec: Long)
 
 /** Process-wide tunnel state for the UI and the app's workers. */
+data class TunnelHealth(
+    val rttMs: Long? = null,
+    val checkedAt: Long = 0,
+    val reconnects: Int = 0,
+    val lastReconnectAt: Long = 0,
+)
+
 object TunnelRuntime {
     private val _state = MutableStateFlow<TunnelState>(TunnelState.Down)
     val state: StateFlow<TunnelState> = _state.asStateFlow()
@@ -75,6 +82,17 @@ object TunnelRuntime {
     @Volatile internal var service: ParamneziaVpnService? = null
 
     internal fun set(s: TunnelState) { _state.value = s }
+
+    private val _health = MutableStateFlow(TunnelHealth())
+    /** What the watchdog last saw: probe round trip and how often it had to rebuild the tunnel. */
+    val health: StateFlow<TunnelHealth> = _health.asStateFlow()
+    internal fun setRtt(ms: Long) { _health.value = _health.value.copy(rttMs = ms, checkedAt = System.currentTimeMillis()) }
+    internal fun noteReconnect() { _health.value = _health.value.copy(reconnects = _health.value.reconnects + 1, lastReconnectAt = System.currentTimeMillis()) }
+
+    private val _generation = MutableStateFlow(0)
+    /** Changes on every successful (re)connect: a signal to refresh what depends on the route. */
+    val generation: StateFlow<Int> = _generation.asStateFlow()
+    internal fun bumpGeneration() { _generation.value++ }
 
     /** Reads counters on demand (call it only while something is on screen). */
     fun stats(): TunnelStats? = service?.stats()
