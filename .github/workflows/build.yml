@@ -118,8 +118,10 @@ jobs:
             adb shell monkey -p io.paramnezia -c android.intent.category.LAUNCHER 1
             sleep 15
             adb logcat -d > logcat-${{ matrix.api }}.txt
-            adb shell pidof io.paramnezia || { echo "::error::app is not running"; grep -A40 -E "FATAL EXCEPTION|AndroidRuntime" logcat-${{ matrix.api }}.txt | head -120; exit 1; }
-            if grep -q "FATAL EXCEPTION" logcat-${{ matrix.api }}.txt; then grep -A40 "FATAL EXCEPTION" logcat-${{ matrix.api }}.txt | head -120; exit 1; fi
+            echo "--- crash buffer ---"; adb logcat -d -b crash | tail -150
+            echo "--- app lines ---"; grep -iE "paramnezia|ActivityTaskManager|ActivityManager: (Start|Process|Killing)|DEBUG|libc" logcat-${{ matrix.api }}.txt | grep -v "Monkey" | head -150
+            adb shell pidof io.paramnezia || { echo "::error::app is not running"; exit 1; }
+            if grep -q "FATAL EXCEPTION" logcat-${{ matrix.api }}.txt; then exit 1; fi
             adb exec-out screencap -p > screen-${{ matrix.api }}.png
       - uses: actions/upload-artifact@v4
         if: always()
