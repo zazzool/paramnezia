@@ -58,6 +58,11 @@ class App : Application(), TunnelHost {
         super.onCreate()
         repo = Repo(this)
         net = Net(this)
+        // Server management goes over the phone's own network while our VPN is up, then through it.
+        io.paramnezia.deploy.SshConnection.routes = {
+            val direct = if (TunnelRuntime.state.value is TunnelState.Down) null else net.direct()
+            listOfNotNull(direct?.socketFactory) + listOf(null)
+        }
         specs = SpecBuilder(this)
         fleet = FleetManager(repo, net, NativeEd25519, scope) { reconnectIfUp() }
         servers = io.paramnezia.app.data.Servers(repo, fleet)
