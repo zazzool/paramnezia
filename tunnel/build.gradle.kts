@@ -4,7 +4,8 @@ plugins {
 
 val goAbis = listOf("arm64-v8a", "armeabi-v7a", "x86_64")
 val minSdkVersion = 26
-val goOut = layout.buildDirectory.dir("go/jniLibs")
+// Go output lands in the default jniLibs folder (git-ignored), so no source set wiring is needed.
+val goOut = layout.projectDirectory.dir("src/main/jniLibs")
 
 android {
     namespace = "io.paramnezia.tunnel"
@@ -20,8 +21,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-
-    sourceSets.getByName("main") { jniLibs.srcDir(goOut.get().asFile.path) }
 }
 
 kotlin {
@@ -29,7 +28,7 @@ kotlin {
 }
 
 // amneziawg-go is built with the NDK's clang through a small script; see build-go.sh.
-val buildGo by tasks.registering(Exec::class) {
+val buildGo = tasks.register<Exec>("buildGo") {
     group = "build"
     description = "Builds libparamnezia.so (amneziawg-go) for $goAbis"
     inputs.dir("src/main/go")

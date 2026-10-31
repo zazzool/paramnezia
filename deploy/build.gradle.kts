@@ -27,5 +27,8 @@ dependencies {
 tasks.test {
     // The end-to-end deploy test needs a local Docker daemon; enable with PN_E2E=1.
     environment("PN_E2E", System.getenv("PN_E2E") ?: "0")
-    testLogging { showStandardStreams = true }
+    testLogging {
+        showStandardStreams = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
 }
