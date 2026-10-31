@@ -79,7 +79,7 @@ $SUDO docker network connect amnezia-dns-net "$CONTAINER" >/dev/null 2>&1 || tru
 
 step configure
 # Values go in through the environment, never through shell quoting.
-$SUDO docker exec -i -e AWG_PORT -e AWG_SUBNET -e AWG_CIDR -e AWG_PARAMS "$CONTAINER" bash -s <<'CONFIGURE'
+$SUDO docker exec -i -e "AWG_PORT=$AWG_PORT" -e "AWG_SUBNET=$AWG_SUBNET" -e "AWG_CIDR=$AWG_CIDR" -e "AWG_PARAMS=$AWG_PARAMS" "$CONTAINER" bash -s <<'CONFIGURE'
 set -eu
 mkdir -p /opt/amnezia/awg
 cd /opt/amnezia/awg
@@ -101,7 +101,7 @@ awg genpsk > wireguard_psk.key
 CONFIGURE
 
 step start
-$SUDO docker exec -i -e AWG_SUBNET -e AWG_CIDR "$CONTAINER" bash -c 'cat > /opt/amnezia/start.sh' <<START
+$SUDO docker exec -i -e "AWG_SUBNET=$AWG_SUBNET" -e "AWG_CIDR=$AWG_CIDR" "$CONTAINER" bash -c 'cat > /opt/amnezia/start.sh' <<START
 #!/bin/bash
 echo "Container startup"
 awg-quick down /opt/amnezia/awg/awg0.conf 2>/dev/null

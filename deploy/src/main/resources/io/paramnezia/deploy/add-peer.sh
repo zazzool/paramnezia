@@ -11,7 +11,7 @@ set -eu
 export LC_ALL=C
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
 
-$SUDO docker exec -i -e CLIENT_PUB -e CLIENT_NAME -e CLIENT_IP="${CLIENT_IP:-}" -e CREATED="$(date -u '+%a %b %d %H:%M:%S %Y')" "$CONTAINER" bash -s <<'PEER'
+$SUDO docker exec -i -e "CLIENT_PUB=$CLIENT_PUB" -e "CLIENT_NAME=$CLIENT_NAME" -e CLIENT_IP="${CLIENT_IP:-}" -e CREATED="$(date -u '+%a %b %d %H:%M:%S %Y')" "$CONTAINER" bash -s <<'PEER'
 set -eu
 cd /opt/amnezia/awg
 if [ -f awg0.conf ]; then CONF=awg0.conf; IFACE=awg0; BIN=awg; else CONF=wg0.conf; IFACE=wg0; BIN=wg; command -v wg >/dev/null || BIN=awg; fi
