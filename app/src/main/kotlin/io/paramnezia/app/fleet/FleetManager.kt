@@ -305,6 +305,13 @@ class FleetManager(
 
     private fun access(s: FleetServer): SshCredentials? = stored?.serverAccess?.get(s.id)
 
+    /** Admin: the first server (master first) this device can reach over SSH. */
+    fun managedServer(): Pair<FleetServer, SshCredentials>? =
+        manifest()?.servers?.firstNotNullOfOrNull { s -> access(s)?.let { s to it } }
+
+    /** Admin: SSH access to a fleet server by id. */
+    fun accessTo(serverId: String): SshCredentials? = stored?.serverAccess?.get(serverId)
+
     private companion object {
         const val TAG = "PnFleet"
     }

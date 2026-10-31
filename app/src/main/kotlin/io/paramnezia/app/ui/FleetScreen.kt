@@ -20,6 +20,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +34,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import io.paramnezia.app.App
+import io.paramnezia.app.data.StoredLink
+import io.paramnezia.app.data.StoredProfile
 import io.paramnezia.core.config.WgQuick
 import io.paramnezia.core.crypto.WgKey
 import io.paramnezia.core.profile.SshCredentials
@@ -51,6 +54,14 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
     var invite by remember { mutableStateOf<String?>(null) }
     var newDevice by remember { mutableStateOf(false) }
     var newServer by remember { mutableStateOf(false) }
+    var link by remember { mutableStateOf<StoredLink?>(null) }
+    /** Standalone server to make a separate account on (no fleet). */
+    var accountOn by remember { mutableStateOf<StoredProfile?>(null) }
+
+    // Which links have been used: asked only while some are still open.
+    LaunchedEffect(Unit) {
+        if (state.links.any { !it.used && it.expiresAt > System.currentTimeMillis() }) runCatching { app.links.refresh() }
+    }
 
     fun work(done: String? = null, block: suspend () -> Unit) {
         busy = true
@@ -76,6 +87,13 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
                     work("Флот создан") { app.fleet.create(p.name, WgQuick.parse(p.conf), p.ssh!!, Build.MODEL) }
                 }) { Text("Создать флот на «${p.name}»") }
             }
+            if (managed.isNotEmpty()) {
+                Text("Или раздайте доступ без флота: каждому своя одноразовая ссылка и свой ключ.", style = MaterialTheme.typography.bodySmall)
+                for (p in managed) {
+                    OutlinedButton(enabled = !busy, onClick = { accountOn = p }) { Text("Ссылка для нового пользователя «${p.name}»") }
+                }
+            }
+            LinkList(state.links, busy) { l -> work("Ссылка отозвана") { app.links.revoke(l) } }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             return@Column
         }
@@ -120,6 +138,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
             }
         }
         if (isAdmin) Button(enabled = !busy, onClick = { newDevice = true }) { Text("Пригласить устройство") }
+        if (isAdmin) LinkList(state.links, busy) { l -> work("Ссылка отозвана") { app.links.revoke(l) } }
 
         OutlinedButton(enabled = !busy, onClick = {
             work { toast(if (app.fleet.sync()) "Получена новая конфигурация" else "Конфигурация актуальна") }
@@ -132,14 +151,61 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
         AlertDialog(
             onDismissRequest = { newDevice = false },
             title = { Text("Новое устройство") },
-            text = { OutlinedTextField(name, { name = it }, label = { Text("Название, например «Телефон мамы»") }, singleLine = true) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(name, { name = it }, label = { Text("Название, например «Телефон мамы»") }, singleLine = true)
+                    Text("Ссылка одноразовая. На Android по ней скачается Paramnezia, уже настроенная; на iPhone ключ для AmneziaVPN.",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            },
             confirmButton = {
                 TextButton(enabled = name.isNotBlank(), onClick = {
                     newDevice = false
-                    work { invite = app.fleet.addDevice(name.trim()) }
-                }) { Text("Создать приглашение") }
+                    work { link = app.links.forFleetDevice(name.trim()) }
+                }) { Text("Создать ссылку") }
             },
-            dismissButton = { TextButton(onClick = { newDevice = false }) { Text("Отмена") } },
+            dismissButton = {
+                TextButton(enabled = name.isNotBlank(), onClick = {
+                    newDevice = false
+                    work { invite = app.fleet.addDevice(name.trim()) }
+                }) { Text("QR-код") }
+            },
+        )
+    }
+
+    accountOn?.let { p ->
+        var name by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { accountOn = null },
+            title = { Text("Новый пользователь") },
+            text = { OutlinedTextField(name, { name = it }, label = { Text("Имя, например «Вика»") }, singleLine = true) },
+            confirmButton = {
+                TextButton(enabled = name.isNotBlank(), onClick = {
+                    accountOn = null
+                    work { link = app.links.forProfile(p, name.trim()) }
+                }) { Text("Создать ссылку") }
+            },
+            dismissButton = { TextButton(onClick = { accountOn = null }) { Text("Отмена") } },
+        )
+    }
+
+    link?.let { l ->
+        AlertDialog(
+            onDismissRequest = { link = null },
+            title = { Text("Ссылка для «${l.name}»") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(l.url, fontWeight = FontWeight.Bold)
+                    Text("Сработает один раз и действует 7 дней. Отправьте её в личном сообщении: кто откроет первым, тот и получит доступ.",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, l.url), "Отправить ссылку"))
+                }) { Text("Отправить") }
+            },
+            dismissButton = { TextButton(onClick = { link = null }) { Text("Готово") } },
         )
     }
 
@@ -191,5 +257,24 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
             },
             dismissButton = { TextButton(onClick = { newServer = false }) { Text("Отмена") } },
         )
+    }
+}
+
+/** Links handed out, with whether they have been used yet. */
+@Composable
+private fun LinkList(links: List<StoredLink>, busy: Boolean, onRevoke: (StoredLink) -> Unit) {
+    if (links.isEmpty()) return
+    Text("Ссылки-приглашения", style = MaterialTheme.typography.titleMedium)
+    val now = System.currentTimeMillis()
+    for (l in links.take(10)) {
+        val open = !l.used && l.expiresAt > now
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(l.name)
+                Text(when { l.used -> "использована"; !open -> "истекла"; else -> "ждёт" }, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline)
+            }
+            if (open) TextButton(enabled = !busy, onClick = { onRevoke(l) }) { Text("Отозвать") }
+        }
     }
 }

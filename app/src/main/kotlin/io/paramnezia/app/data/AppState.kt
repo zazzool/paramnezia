@@ -18,6 +18,10 @@ data class AppState(
     /** The user wants the tunnel up (restored after an update). */
     val wantConnected: Boolean = false,
     val uiMode: UiMode = UiMode.AUTO,
+    /** The invite inside our own APK (installed from a one-time link) has been looked at. */
+    val embeddedInviteChecked: Boolean = false,
+    /** Admin: one-time links handed out, newest first. */
+    val links: List<StoredLink> = emptyList(),
 ) {
     /** Follower devices of a fleet get the one-button screen; the admin and standalone users get everything. */
     val simpleUi: Boolean get() = when (uiMode) {
@@ -82,3 +86,18 @@ enum class BatteryMode(val screenOn: String, val screenOff: String) {
     BALANCED("25-35", "55"),
     RELIABLE("25", "25"),
 }
+
+@Serializable
+data class StoredLink(
+    val token: String,
+    val url: String,
+    val name: String,
+    /** Server that serves the link: a fleet server id or a profile id. */
+    val serverRef: String,
+    val createdAt: Long,
+    val expiresAt: Long,
+    val used: Boolean = false,
+    /** The key the link hands out, so taking the link back also takes the access back. */
+    val peerPublicKey: String? = null,
+    val fleetDevice: Boolean = false,
+)

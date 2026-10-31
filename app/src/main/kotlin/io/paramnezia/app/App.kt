@@ -27,6 +27,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -44,6 +45,7 @@ class App : Application(), TunnelHost {
     /** Created on first use, off the launch path (it reads package info and the stored release). */
     val updater: Updater by lazy { Updater(this, repo, net, fleet, NativeEd25519, scope) }
     lateinit var servers: io.paramnezia.app.data.Servers; private set
+    val links: io.paramnezia.app.fleet.Links by lazy { io.paramnezia.app.fleet.Links(this, repo, fleet) }
     private val failover = FailoverPolicy()
 
     override fun onCreate() {
@@ -53,6 +55,7 @@ class App : Application(), TunnelHost {
         specs = SpecBuilder(this)
         fleet = FleetManager(repo, net, NativeEd25519, scope) { reconnectIfUp() }
         servers = io.paramnezia.app.data.Servers(repo, fleet)
+        applyEmbeddedInvite()
 
         // DNS rules follow the settings; loading them is a one-off ~1 ms parse in Go.
         scope.launch(Dispatchers.IO) {
@@ -84,6 +87,22 @@ class App : Application(), TunnelHost {
                 }
             }
         }
+    }
+
+    /**
+     * Installed from a one-time link: the invite is inside our own APK. Applied once, on a device
+     * that has nothing set up yet; the check reads a few KiB at the end of the APK.
+     */
+    private fun applyEmbeddedInvite() = scope.launch(Dispatchers.IO) {
+        repo.ready.first { it }
+        val s = repo.current
+        if (s.embeddedInviteChecked) return@launch
+        if (s.profiles.isEmpty() && s.fleet == null) {
+            io.paramnezia.core.apk.ApkSlot.read(java.io.File(applicationInfo.sourceDir))?.let { invite ->
+                runCatching { servers.import(invite) }.onFailure { Log.w(TAG, "embedded invite", it) }
+            }
+        }
+        repo.update { it.copy(embeddedInviteChecked = true) }
     }
 
     /** Reconnects with a fresh spec when the tunnel is running (new manifest, new settings). */

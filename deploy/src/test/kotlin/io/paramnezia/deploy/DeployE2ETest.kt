@@ -40,13 +40,13 @@ class DeployE2ETest {
             commandFactory = ProcessShellCommandFactory.INSTANCE
             start()
         }
-        sh("docker rm -f amnezia-awg2 pn-e2e-client >/dev/null 2>&1 || true")
+        sh("docker rm -f amnezia-awg2 pn-e2e-client paramnezia-invite >/dev/null 2>&1 || true")
     }
 
     @After
     fun tearDown() {
         if (::sshd.isInitialized) {
-            sh("docker rm -f amnezia-awg2 pn-e2e-client >/dev/null 2>&1 || true")
+            sh("docker rm -f amnezia-awg2 pn-e2e-client paramnezia-invite >/dev/null 2>&1 || true")
             sshd.stop(true)
         }
     }
@@ -82,6 +82,65 @@ class DeployE2ETest {
             handshake(tunnel, port)
             println("e2e ok for $profile")
         }
+    }
+
+    /** The invite page on a real busybox container: per-download APK, plain key, one-time claim. */
+    @Test
+    fun oneTimeInviteLink() {
+        val links = InviteLinks(hostKeys)
+        val tunnel = WgQuick.parse(
+            """
+            [Interface]
+            PrivateKey = ${WgKey.generatePrivate().toBase64()}
+            Address = 10.8.1.5/32
+            Jc = 4
+            [Peer]
+            PublicKey = ${WgKey.generatePrivate().publicKey().toBase64()}
+            Endpoint = 203.0.113.7:41000
+            AllowedIPs = 0.0.0.0/0
+            """.trimIndent(),
+        )
+        val plain = io.paramnezia.core.amnezia.AmneziaKey.encode(AmneziaFormat.export("Мама", tunnel))
+        // A fleet invite is a plain key plus our field; the page must hand AmneziaVPN the plain part.
+        val invite = io.paramnezia.core.amnezia.AmneziaKey.encode(kotlinx.serialization.json.JsonObject(
+            io.paramnezia.core.amnezia.AmneziaKey.decode(plain) + (io.paramnezia.core.fleet.INVITE_KEY to kotlinx.serialization.json.JsonPrimitive("x"))))
+
+        val apk = File.createTempFile("app", ".apk").apply { deleteOnExit() }
+        val tmpl = File.createTempFile("tmpl", ".apk").apply { deleteOnExit() }
+        apk.writeBytes(fakeSignedApk())
+        val template = InviteLinks.ApkTemplate(tmpl, io.paramnezia.core.apk.ApkSlot.prepare(apk, tmpl))
+
+        val link = links.create(creds, invite, "Мама", template, preferredPort = 18080)
+        assertTrue(link.url, link.url.startsWith("http://127.0.0.1:18080/#"))
+        val base = "http://127.0.0.1:18080"
+        assertTrue("Вас пригласили" in http("$base/").second)
+        assertEquals(setOf<String>(), links.claimed(creds, listOf(link.token)))
+
+        val (code, key) = http("$base/cgi-bin/get?${link.token}&key")
+        assertEquals(200, code)
+        assertEquals(plain, key.trim())
+        assertEquals(setOf(link.token), links.claimed(creds, listOf(link.token)))
+        val got = File.createTempFile("got", ".apk").apply { deleteOnExit() }
+        java.net.URI("$base/cgi-bin/get?${link.token}&apk").toURL().openStream().use { got.outputStream().use { o -> it.copyTo(o) } }
+        assertEquals(tmpl.length(), got.length())
+        assertEquals(invite, io.paramnezia.core.apk.ApkSlot.read(got))
+        assertTrue("[Interface]" in http("$base/cgi-bin/get?${link.token}&conf").second)
+
+        // Unknown, expired and revoked links are gone; the template is uploaded only once.
+        assertEquals(410, http("$base/cgi-bin/get?AAAAAAAAAAAAAAAAAAAAAA&key").first)
+        val old = links.create(creds, invite, "old", template, ttlMs = -1000)
+        assertEquals(410, http("$base/cgi-bin/get?${old.token}&key").first)
+        val revoked = links.create(creds, invite, "r", template)
+        links.revoke(creds, revoked.token)
+        assertEquals(410, http("$base/cgi-bin/get?${revoked.token}&app").first)
+        assertEquals(18080, java.net.URI(links.create(creds, invite, "again", null, preferredPort = 80).url).port)
+    }
+
+    private fun http(url: String): Pair<Int, String> {
+        val c = java.net.URI(url).toURL().openConnection() as java.net.HttpURLConnection
+        val code = c.responseCode
+        val body = (if (code < 400) c.inputStream else c.errorStream)?.use { it.readBytes().decodeToString() }.orEmpty()
+        return code to body
     }
 
     private fun handshake(tunnel: io.paramnezia.core.config.TunnelConfig, port: Int) {
