@@ -34,7 +34,7 @@ val buildGo = tasks.register<Exec>("buildGo") {
     inputs.dir("src/main/go")
     inputs.file("build-go.sh")
     outputs.dir(goOut)
-    commandLine(listOf("bash", file("build-go.sh").path, goOut.get().asFile.path, minSdkVersion.toString()) + goAbis)
+    commandLine(listOf("bash", file("build-go.sh").path, goOut.asFile.path, minSdkVersion.toString()) + goAbis)
 }
 
 tasks.named("preBuild") { dependsOn(buildGo) }
