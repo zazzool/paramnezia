@@ -16,7 +16,8 @@ import java.util.UUID
 /** Admin side: owns the signing seed and produces new manifest versions. */
 class FleetAdmin(
     val trust: FleetTrust,
-    private val signingSeed: ByteArray,
+    /** Ed25519 seed; stays on the admin device. */
+    val signingSeed: ByteArray,
     private val ed: Ed25519,
 ) {
     fun seal(m: FleetManifest): SignedManifest = FleetCrypto.seal(m, trust.fleetKey, signingSeed, ed)
@@ -69,7 +70,15 @@ data class Invite(
     val deviceName: String,
     val privateKey: String,
     val manifest: String,
-)
+) {
+    companion object {
+        /** The fleet part of a `vpn://` invite, or null for an ordinary key. */
+        fun read(text: String): Invite? {
+            val obj = runCatching { AmneziaKey.decode(text.trim()) }.getOrNull() ?: return null
+            return obj[INVITE_KEY]?.let { runCatching { json.decodeFromJsonElement(serializer(), it.jsonObject) }.getOrNull() }
+        }
+    }
+}
 
 const val INVITE_KEY = "paramnezia_fleet"
 private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -107,9 +116,7 @@ class FleetMember(
     companion object {
         /** Reads an invite produced by [FleetAdmin.invite]. Returns null for an ordinary vpn:// key. */
         fun fromInvite(text: String, ed: Ed25519): FleetMember? {
-            val obj = runCatching { AmneziaKey.decode(text) }.getOrNull() ?: return null
-            val inv = obj[INVITE_KEY]?.let { runCatching { json.decodeFromJsonElement(Invite.serializer(), it.jsonObject) }.getOrNull() }
-                ?: return null
+            val inv = Invite.read(text) ?: return null
             val member = FleetMember(inv.trust, WgKey.fromBase64(inv.privateKey), ed)
             if (!member.offer(inv.manifest)) return null
             return member

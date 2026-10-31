@@ -4,10 +4,12 @@ import (
 	"encoding/binary"
 	"net"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
+	"golang.org/x/sys/unix"
 )
 
 func query(id uint16, name string, qtype uint16) []byte {
@@ -89,7 +91,7 @@ func fakeResolver(t *testing.T, addr [4]byte) (string, func() int) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { c.Close() })
-	count := 0
+	var count atomic.Int32
 	go func() {
 		buf := make([]byte, 1500)
 		for {
@@ -97,7 +99,7 @@ func fakeResolver(t *testing.T, addr [4]byte) (string, func() int) {
 			if err != nil {
 				return
 			}
-			count++
+			count.Add(1)
 			_, _, qend, _ := parseQuestion(buf[:n])
 			r := append([]byte(nil), buf[:qend]...)
 			r[2] |= 0x80
@@ -108,7 +110,7 @@ func fakeResolver(t *testing.T, addr [4]byte) (string, func() int) {
 			c.WriteToUDP(r, from)
 		}
 	}()
-	return c.LocalAddr().String(), func() int { return count }
+	return c.LocalAddr().String(), func() int { return int(count.Load()) }
 }
 
 func TestRules(t *testing.T) {
@@ -147,6 +149,8 @@ func TestSplitDNS(t *testing.T) {
 	dc, _ := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	f, _ := dc.File()
 	dc.Close()
+	directFd, _ := unix.Dup(int(f.Fd()))
+	f.Close()
 
 	rules.Store(parseRules("mc.yandex.ru", "ru", ""))
 	ft := &fakeTun{in: make(chan []byte, 8), out: make(chan []byte, 8)}
@@ -154,7 +158,7 @@ func TestSplitDNS(t *testing.T) {
 	if !ok {
 		t.Fatal("config")
 	}
-	dt, err := newDNSTun(ft, cfg, int(f.Fd()))
+	dt, err := newDNSTun(ft, cfg, directFd)
 	if err != nil {
 		t.Fatal(err)
 	}

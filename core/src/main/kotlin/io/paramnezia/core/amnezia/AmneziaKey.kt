@@ -32,6 +32,10 @@ object AmneziaKey {
         return parseJson(qUncompressOrNull(bytes) ?: bytes)
     }
 
+    /** The qCompress'ed bytes inside a `vpn://` key (what AmneziaVPN's QR series carries). */
+    fun compressedPayload(key: String): ByteArray =
+        Base64.getUrlDecoder().decode(key.trim().removePrefix(SCHEME).filterNot { it.isWhitespace() }.trimEnd('='))
+
     fun looksLikeKey(text: String): Boolean = text.trim().startsWith(SCHEME)
 
     private fun parseJson(bytes: ByteArray): JsonObject = runCatching {

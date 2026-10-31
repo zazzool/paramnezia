@@ -1,0 +1,56 @@
+name: Release
+
+# Push a tag like v1.2.0 to publish. Secrets:
+#   PN_KEYSTORE_B64, PN_KEYSTORE_PASSWORD, PN_KEY_ALIAS  – APK signing key (keep forever: updates need it)
+#   PN_RELEASE_SEED   – OTA release key (from `releasetool keygen`), signs the release manifest
+# Variables:
+#   PN_RELEASE_KEY, PN_RELEASE_NOSTR – its public halves, built into the app
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: tunnel/src/main/go/go.mod, cache-dependency-path: tunnel/src/main/go/go.sum }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build signed APK
+        env:
+          PN_VERSION_CODE: ${{ github.run_number }}
+          PN_VERSION_NAME: ${{ github.ref_name }}
+          PN_KEYSTORE_PASSWORD: ${{ secrets.PN_KEYSTORE_PASSWORD }}
+          PN_KEY_ALIAS: ${{ secrets.PN_KEY_ALIAS }}
+          PN_RELEASE_KEY: ${{ vars.PN_RELEASE_KEY }}
+          PN_RELEASE_NOSTR: ${{ vars.PN_RELEASE_NOSTR }}
+        run: |
+          echo "${{ secrets.PN_KEYSTORE_B64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
+          export PN_KEYSTORE="$RUNNER_TEMP/release.jks"
+          ./gradlew :app:assembleRelease :releasetool:installDist
+          cp app/build/outputs/apk/release/app-release.apk "paramnezia-${GITHUB_REF_NAME}.apk"
+      - name: GitHub release
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: gh release create "$GITHUB_REF_NAME" "paramnezia-${GITHUB_REF_NAME}.apk" --generate-notes
+      - name: Sign the OTA manifest, upload to Blossom, announce on Nostr
+        env:
+          PN_RELEASE_SEED: ${{ secrets.PN_RELEASE_SEED }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apk="paramnezia-${GITHUB_REF_NAME}.apk"
+          signer=$("$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$apk" | grep -m1 'SHA-256 digest' | awk '{print $NF}')
+          releasetool/build/install/releasetool/bin/releasetool publish \
+            --apk "$apk" \
+            --version-code "${{ github.run_number }}" \
+            --version-name "$GITHUB_REF_NAME" \
+            --signer-sha256 "$signer" \
+            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$apk" \
+            --out release.json
+          gh release upload "$GITHUB_REF_NAME" release.json
+        shell: bash

@@ -8,9 +8,8 @@ object AwgNative {
         System.loadLibrary("paramnezia")
     }
 
-    /** Returns a tunnel handle (>= 0) or a negative error. Takes ownership of [tunFd]. */
     /**
-     * Starts a tunnel on [tunFd]. [dns] enables the DNS filter (`virtual=`, `tunnel=`, `direct=`
+     * Starts a tunnel on [tunFd] and returns its handle (>= 0) or a negative error. [dns] enables the DNS filter (`virtual=`, `tunnel=`, `direct=`
      * lines, empty = off); [dnsDirectFd] is a UDP socket protected from the VPN, or -1.
      * Takes ownership of both descriptors.
      */
@@ -21,6 +20,7 @@ object AwgNative {
 
     /** Queries blocked so far in this process. */
     @JvmStatic external fun dnsBlocked(): Long
+
     @JvmStatic external fun turnOff(handle: Int)
     @JvmStatic external fun socketV4(handle: Int): Int
     @JvmStatic external fun socketV6(handle: Int): Int

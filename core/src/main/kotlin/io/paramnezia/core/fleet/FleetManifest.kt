@@ -74,3 +74,20 @@ fun FleetServer.tunnelFor(device: FleetDevice, privateKey: WgKey): TunnelConfig 
         ),
     )
 }
+
+/** Turns a server's client config (from a deploy or an imported key) into a fleet server entry. */
+fun fleetServerOf(id: String, name: String, tunnel: TunnelConfig): FleetServer {
+    val peer = tunnel.peers.first()
+    val endpoint = peer.endpoint ?: throw io.paramnezia.core.config.ConfigException("Server config has no endpoint")
+    val host = endpoint.substringBeforeLast(':').removePrefix("[").removeSuffix("]")
+    val port = endpoint.substringAfterLast(':').toInt()
+    return FleetServer(
+        id = id, name = name, host = host, port = port,
+        publicKey = peer.publicKey.toBase64(),
+        presharedKey = peer.presharedKey?.toBase64(),
+        awg = tunnel.iface.awg.mapKeys { it.key.conf },
+        dns = tunnel.iface.dns.ifEmpty { listOf("1.1.1.1", "1.0.0.1") },
+        mtu = tunnel.iface.mtu ?: 1280,
+        keepalive = peer.persistentKeepalive ?: "25",
+    )
+}

@@ -1,0 +1,144 @@
+package io.paramnezia.app.ui
+
+import android.content.Intent
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import android.os.Build
+import io.paramnezia.app.App
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.launch
+
+class MainActivity : ComponentActivity() {
+    private val app get() = application as App
+
+    /** Keys that arrived by link, share or file; handled by the Add screen. */
+    private val incoming = MutableSharedFlow<String>(extraBufferCapacity = 4)
+
+    private val vpnPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (app.vpnPermissionIntent() == null) app.connect()
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
+        super.onCreate(savedInstanceState)
+        handle(intent)
+        setContent {
+            PnTheme {
+                Root(app, incoming, onConnect = ::connect)
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handle(intent)
+    }
+
+    private fun handle(intent: Intent?) {
+        val text = when (intent?.action) {
+            Intent.ACTION_VIEW -> intent.data?.let { uri ->
+                if (uri.scheme == "vpn") uri.toString()
+                else runCatching { contentResolver.openInputStream(uri)?.use { it.reader().readText() } }.getOrNull()
+            }
+            Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
+            else -> null
+        } ?: return
+        incoming.tryEmit(text)
+    }
+
+    fun connect() {
+        val prepare = app.vpnPermissionIntent()
+        if (prepare != null) vpnPermission.launch(prepare) else app.connect()
+    }
+}
+
+@Composable
+fun PnTheme(content: @Composable () -> Unit) {
+    val dark = isSystemInDarkTheme()
+    val ctx = LocalContext.current
+    val scheme = when {
+        Build.VERSION.SDK_INT >= 31 -> if (dark) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
+        dark -> darkColorScheme()
+        else -> lightColorScheme()
+    }
+    MaterialTheme(colorScheme = scheme, content = content)
+}
+
+private enum class Tab(val title: String) { HOME("Главная"), ADD("Добавить"), FLEET("Флот"), SETTINGS("Настройки") }
+
+@Composable
+private fun Root(app: App, incoming: MutableSharedFlow<String>, onConnect: () -> Unit) {
+    var tab by rememberSaveable { mutableStateOf(Tab.HOME) }
+    val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val toast: (String) -> Unit = { msg -> scope.launch { snackbar.showSnackbar(msg) } }
+    var pending by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) { incoming.collect { pending = it; tab = Tab.ADD } }
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
+        bottomBar = {
+            NavigationBar {
+                for (t in Tab.entries) {
+                    NavigationBarItem(
+                        selected = tab == t,
+                        onClick = { tab = t },
+                        icon = {
+                            Icon(
+                                when (t) {
+                                    Tab.HOME -> Icons.Filled.Home
+                                    Tab.ADD -> Icons.Filled.Add
+                                    Tab.FLEET -> Icons.Filled.Share
+                                    Tab.SETTINGS -> Icons.Filled.Settings
+                                },
+                                contentDescription = t.title,
+                            )
+                        },
+                        label = { Text(t.title) },
+                    )
+                }
+            }
+        },
+    ) { padding ->
+        val m = Modifier.padding(padding)
+        when (tab) {
+            Tab.HOME -> HomeScreen(app, m, onConnect)
+            Tab.ADD -> AddScreen(app, m, pending, onConsumed = { pending = null }, toast = toast, onDone = { tab = Tab.HOME })
+            Tab.FLEET -> FleetScreen(app, m, toast)
+            Tab.SETTINGS -> SettingsScreen(app, m, toast)
+        }
+    }
+}

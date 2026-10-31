@@ -82,19 +82,38 @@ class ServerManager(private val hostKeys: HostKeyStore) {
         keepalive: String? = null,
         /** Fixed tunnel address (fleet devices); null lets the server pick the next free one. */
         clientIp: String? = null,
-    ): TunnelConfig = SshConnection.open(creds, hostKeys).use { ssh ->
+    ): TunnelConfig {
+        val r = registerPeer(creds, clientPrivateKey.publicKey(), name, protocol, clientIp)
+        return clientConfig(r.serverConf, r.results, clientPrivateKey, creds.host, dns, mtu, keepalive)
+    }
+
+    /** What the server answered when a peer was added. */
+    class PeerRegistration(val serverConf: String, val results: Map<String, String>) {
+        val clientIp: String get() = results["client_ip"].orEmpty()
+    }
+
+    /**
+     * Registers a peer by its public key only (fleet devices whose private keys never leave the
+     * device). Idempotent, like [addClient].
+     */
+    fun registerPeer(
+        creds: SshCredentials,
+        publicKey: WgKey,
+        name: String,
+        protocol: Protocol = Protocol.AWG,
+        clientIp: String? = null,
+    ): PeerRegistration = SshConnection.open(creds, hostKeys).use { ssh ->
         val r = ssh.run(
             script("add-peer.sh"),
             env = mapOf(
                 "CONTAINER" to protocol.amneziaContainer,
-                "CLIENT_PUB" to clientPrivateKey.publicKey().toBase64(),
+                "CLIENT_PUB" to publicKey.toBase64(),
                 "CLIENT_NAME" to name,
             ) + (clientIp?.let { mapOf("CLIENT_IP" to it) } ?: emptyMap()),
         )
         r.error?.let { throw SshException(it, "Could not add client: $it") }
         if (r.exitCode != 0) throw SshException("add_peer_failed", "Could not add client: ${r.stderr.takeLast(2000)}")
-        val serverConf = r.stdout.substringAfter("::conf-begin::\n", "").substringBefore("::conf-end::")
-        clientConfig(serverConf, r.results, clientPrivateKey, creds.host, dns, mtu, keepalive)
+        PeerRegistration(r.stdout.substringAfter("::conf-begin::\n", "").substringBefore("::conf-end::"), r.results)
     }
 
     fun removeClient(creds: SshCredentials, clientPublicKey: WgKey, protocol: Protocol = Protocol.AWG) {
