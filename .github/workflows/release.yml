@@ -1,11 +1,12 @@
 name: Release
 
-# Push a tag like v1.2.0 to publish (docs/RELEASE.md).
+# Push a tag like v1.2.0, or a branch like release/v1.2.0, to publish (docs/RELEASE.md).
 # Keys: keys/release-keys.enc (APK keystore + OTA release seed), opened with the secret PN_KEYS_PASSWORD.
 # The public halves of the release key are in gradle.properties.
 on:
   push:
     tags: ["v*"]
+    branches: ["release/v*"]
 
 permissions:
   contents: write
@@ -15,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Version
+        run: echo "VERSION=${GITHUB_REF_NAME#release/}" >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 21 }
       - uses: actions/setup-go@v5
@@ -36,26 +39,26 @@ jobs:
       - name: Build signed APK
         env:
           PN_VERSION_CODE: ${{ github.run_number }}
-          PN_VERSION_NAME: ${{ github.ref_name }}
+          PN_VERSION_NAME: ${{ env.VERSION }}
         run: |
           ./gradlew :app:assembleRelease :releasetool:installDist
-          cp app/build/outputs/apk/release/app-release.apk "paramnezia-${GITHUB_REF_NAME}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "paramnezia-${VERSION}.apk"
       - name: GitHub release
         env: { GH_TOKEN: "${{ github.token }}" }
-        run: gh release create "$GITHUB_REF_NAME" "paramnezia-${GITHUB_REF_NAME}.apk" --generate-notes
+        run: gh release create "$VERSION" "paramnezia-${VERSION}.apk" --target "$GITHUB_SHA" --title "Paramnezia $VERSION" --generate-notes
       - name: Sign the OTA manifest, upload to Blossom, announce on Nostr
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          apk="paramnezia-${GITHUB_REF_NAME}.apk"
+          apk="paramnezia-${VERSION}.apk"
           apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
           signer=$("$apksigner" verify --print-certs "$apk" | grep -m1 'SHA-256 digest' | awk '{print $NF}')
           releasetool/build/install/releasetool/bin/releasetool publish \
             --apk "$apk" \
             --version-code "${{ github.run_number }}" \
-            --version-name "$GITHUB_REF_NAME" \
+            --version-name "$VERSION" \
             --signer-sha256 "$signer" \
-            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/$apk" \
+            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/$apk" \
             --out release.json
-          gh release upload "$GITHUB_REF_NAME" release.json
+          gh release upload "$VERSION" release.json
         shell: bash
