@@ -17,3 +17,11 @@
 -dontwarn org.newsclub.**
 -dontwarn com.sun.jna.**
 -dontwarn javax.naming.**
+
+# WorkManager's Room database and our workers are created by reflection. Their consumer rules do
+# not always reach R8 (crash on first start: NoSuchMethodException WorkDatabase_Impl.<init>).
+-keep class * extends androidx.room.RoomDatabase { <init>(); }
+-keep class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+-keep class androidx.work.impl.** { <init>(...); }
