@@ -29,8 +29,8 @@ dependencyResolutionManagement {
 rootProject.name = "paramnezia"
 
 // Pure-Kotlin modules: protocol/config logic, routing lists, server deployment.
-// They build and test without the Android SDK.
-include(":core", ":deploy")
+// They build and test without the Android SDK. `releasetool` signs and publishes app updates (CI).
+include(":core", ":deploy", ":releasetool")
 
 // `-Pparamnezia.jvmOnly=true` skips Android modules (for machines without the Android SDK).
 if (providers.gradleProperty("paramnezia.jvmOnly").orNull != "true") {

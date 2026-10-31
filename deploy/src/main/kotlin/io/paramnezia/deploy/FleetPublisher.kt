@@ -37,6 +37,37 @@ class FleetPublisher(private val hostKeys: HostKeyStore) {
     }
 
     /**
+     * Puts an app release on the server, so devices can update through the tunnel even when every
+     * public mirror is blocked: the APK under `apk/<sha256>` and the signed release as `release.json`.
+     * Older APKs are removed. Devices find it at [tunnelApkMirror].
+     */
+    fun publishRelease(creds: SshCredentials, signedRelease: String, sha256: String, apk: java.io.InputStream, protocol: Protocol = Protocol.AWG) {
+        require(sha256.matches(Regex("[0-9a-f]{64}"))) { "bad sha256" }
+        SshConnection.open(creds, hostKeys).use { ssh ->
+            val sudo = "if [ \"\$(id -u)\" -eq 0 ]; then S=''; else S='sudo -n'; fi"
+            val www = "/opt/amnezia/paramnezia/www"
+            val c = protocol.amneziaContainer
+            val up = ssh.pipe(
+                "$sudo; \$S docker exec -i $c sh -c 'mkdir -p $www/apk && cat > $www/apk/$sha256.new && " +
+                    "find $www/apk -type f ! -name $sha256.new -delete && mv $www/apk/$sha256.new $www/apk/$sha256' && echo ok",
+                apk,
+            )
+            if (up.stdout.trim() != "ok") throw SshException("publish_failed", "Could not upload APK: ${up.stderr.takeLast(1000)}")
+            val r = ssh.pipe(
+                "$sudo; \$S docker exec -i $c sh -c 'cat > $www/release.json.new && mv $www/release.json.new $www/release.json' && echo ok",
+                signedRelease.byteInputStream(),
+            )
+            if (r.stdout.trim() != "ok") throw SshException("publish_failed", "Could not store release: ${r.stderr.takeLast(1000)}")
+        }
+    }
+
+    /** In-tunnel mirror base for APKs; the hash is appended. */
+    val tunnelApkMirror = "http://10.8.1.1:8080/apk"
+
+    /** In-tunnel URL of the newest signed release. */
+    val tunnelReleaseUrl = "http://10.8.1.1:8080/release.json"
+
+    /**
      * Updates a GitHub gist (create it once, secret is fine) and returns its raw URL, which devices
      * can read without any credentials.
      */

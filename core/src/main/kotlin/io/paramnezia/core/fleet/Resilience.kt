@@ -24,6 +24,10 @@ sealed interface GossipMessage {
     @Serializable @SerialName("health")
     data class Health(val serverId: String, val reachable: Boolean, val at: Long) : GossipMessage
 
+    /** "Here is the newest app release I verified" (SignedRelease wire form). */
+    @Serializable @SerialName("release")
+    data class Release(val signed: String) : GossipMessage
+
     companion object {
         const val PORT = 51999
         private val json = Json { ignoreUnknownKeys = true; classDiscriminator = "t" }

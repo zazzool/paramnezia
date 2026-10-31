@@ -96,6 +96,25 @@ class SshConnection private constructor(private val session: Session) : Closeabl
         return ExecResult(code, stdout.toString(), stderr.toString())
     }
 
+    /** Runs [command] with [input] streamed to its stdin (for binary uploads). Returns stdout. */
+    fun pipe(command: String, input: java.io.InputStream, timeoutMs: Long = 10 * 60_000): ExecResult {
+        val channel = session.openChannel("exec") as ChannelExec
+        channel.setCommand(command)
+        val out = channel.inputStream
+        val err = channel.errStream
+        val stdin = channel.outputStream
+        channel.connect(CONNECT_TIMEOUT_MS)
+        stdin.use { input.copyTo(it, 64 * 1024) }
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (!channel.isClosed) {
+            if (System.currentTimeMillis() > deadline) { channel.disconnect(); throw SshException("timeout", "Upload timed out") }
+            Thread.sleep(50)
+        }
+        val result = ExecResult(channel.exitStatus, out.readBytes().decodeToString(), err.readBytes().decodeToString())
+        channel.disconnect()
+        return result
+    }
+
     override fun close() = session.disconnect()
 
     companion object {

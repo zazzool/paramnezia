@@ -19,6 +19,9 @@ class NostrFleet(private val trust: FleetTrust) {
     /** Opaque d-tag shared by the fleet; reveals nothing about it. */
     val tag: String = sha256("paramnezia-fleet-tag-v1", trust.fleetId.toByteArray(), key()).toHex().take(32)
 
+    /** Slot in which fleet devices re-publish the newest app release they verified. */
+    val releaseTag: String get() = "$tag-r"
+
     /** The Nostr secret key of the device with WireGuard public key [devicePublicKey] (base64). */
     fun secretFor(devicePublicKey: String): ByteArray {
         var counter = 0
