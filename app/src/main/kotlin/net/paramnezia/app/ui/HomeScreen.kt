@@ -73,6 +73,7 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer:
     Column(modifier.fillMaxSize().padding(horizontal = Space.M + 4.dp).padding(top = Space.S, bottom = Space.M)) {
         TopBar(app, tunnel, servers, onDetails = { details = true })
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            val button = buttonFor(maxHeight, maxWidth, 216.dp)
             if (p == Protection.NO_SERVER) {
                 // Normally fits; the scroll is only a safety net for very small or zoomed screens.
                 Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), contentAlignment = Alignment.Center) {
@@ -83,7 +84,7 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer:
                     PowerButton(
                         tunnel.power(),
                         onClick = { if (tunnel.power() == PowerState.OFF) onConnect() else app.disconnect() },
-                        size = buttonFor(maxHeight, maxWidth, 216.dp),
+                        size = button,
                     )
                     StatusBlock(tunnel, p)
                 }

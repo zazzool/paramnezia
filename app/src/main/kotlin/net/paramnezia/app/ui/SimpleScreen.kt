@@ -65,6 +65,7 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
             }
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            val button = buttonFor(maxHeight, maxWidth, 232.dp)
             if (p == Protection.NO_SERVER) {
                 Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), contentAlignment = Alignment.Center) {
                     EmptyHero(follower = true, onAdd = null, onPaste = paste, modifier = Modifier.padding(vertical = Space.M))
@@ -74,7 +75,7 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
                     PowerButton(
                         tunnel.power(),
                         onClick = { if (tunnel.power() == PowerState.OFF) onConnect() else app.disconnect() },
-                        size = buttonFor(maxHeight, maxWidth, 232.dp),
+                        size = button,
                     )
                     StatusBlock(tunnel, p)
                 }
