@@ -51,8 +51,7 @@ swipe_up() {
   w=${w:-320}; h=${h:-640}
   adb shell input swipe $((w / 2)) $((h * 3 / 4)) $((w / 2)) $((h / 5)) 400
 }
-swipe_up; shot empty-scrolled 2
-python3 "$here/ui.py" find "ui-$tag-empty-scrolled.xml" "Нет ни одного сервера" >/dev/null || fail "no 'no servers' card on a fresh install"
+python3 "$here/ui.py" find "ui-$tag-empty.xml" "Нет ни одного сервера" >/dev/null || fail "no 'no servers' card on a fresh install"
 
 adb push "$conf" /data/local/tmp/c.conf >/dev/null
 adb shell 'am start -n net.paramnezia/net.paramnezia.app.ui.MainActivity -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "$(cat /data/local/tmp/c.conf)"' >/dev/null
@@ -89,8 +88,11 @@ adb shell ping -c 3 -W 2 10.9.0.1 || echo "::warning::[$tag] ping 10.9.0.1 throu
 adb shell pidof net.paramnezia >/dev/null || fail "the app died"
 # The "how sites see you" card checks the addresses a few seconds after connecting.
 shot connected 15
-swipe_up; shot connected-scrolled 2
-python3 "$here/ui.py" find "ui-$tag-connected-scrolled.xml" "Как вас видят сайты" >/dev/null || echo "::warning::[$tag] the 'how sites see you' card is not on screen" 
+# Details are one tap away, in a sheet.
+tap "Подробнее" || echo "::warning::[$tag] no 'details' on the home screen"
+shot details 3
+python3 "$here/ui.py" find "ui-$tag-details.xml" "Как вас видят сайты" >/dev/null || echo "::warning::[$tag] the 'how sites see you' card is not in the details"
+adb shell input keyevent KEYCODE_BACK
 # Our own crashes only: with internet in the emulator, Google's apps sometimes die on their own.
 grep -A1 "FATAL EXCEPTION" <(adb logcat -d) | grep -q "Process: net.paramnezia" && fail "crash in the log"
 grep -A1 "FATAL EXCEPTION" <(adb logcat -d) | grep "Process:" | sort -u | sed "s/^/::warning::[$tag] another app crashed: /"

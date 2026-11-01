@@ -91,55 +91,6 @@ fun protectionColor(p: Protection): Color = when (p) {
     Protection.OFF, Protection.FAILED, Protection.NO_SERVER -> Brand.Coral
 }
 
-/** The pill at the top of the screen: the first thing a user should read (as in Proton, Mullvad). */
-@Composable
-fun ProtectionPill(p: Protection) {
-    val color by animateColorAsState(protectionColor(p), tween(400), label = "pill")
-    Surface(shape = CircleShape, color = color.copy(alpha = 0.16f), border = BorderStroke(1.dp, color.copy(alpha = 0.45f))) {
-        Row(Modifier.padding(horizontal = 14.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(if (p == Protection.ON) Icons.Filled.Lock else Icons.Filled.Warning, null, Modifier.size(16.dp), tint = color)
-            Spacer(Modifier.width(8.dp))
-            Text(p.label, style = MaterialTheme.typography.labelLarge, color = color)
-        }
-    }
-}
-
-/**
- * Shown instead of everything else when the device has no server at all: the button cannot do
- * anything yet, so the screen says so and offers the way out.
- */
-@Composable
-fun NoServersCard(follower: Boolean, onAdd: (() -> Unit)?, onPaste: () -> Unit) {
-    Card(
-        Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(Brand.Coral.copy(alpha = 0.10f)),
-        border = BorderStroke(1.dp, Brand.Coral.copy(alpha = 0.55f)),
-    ) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(40.dp).clip(CircleShape).background(Brand.Coral.copy(alpha = 0.2f)), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Filled.Warning, null, tint = Brand.Coral)
-                }
-                Spacer(Modifier.width(12.dp))
-                Column {
-                    Text("Нет ни одного сервера", style = MaterialTheme.typography.titleMedium)
-                    Text("VPN пока не к чему подключить", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            Text(
-                if (follower) "Попросите у администратора ссылку-приглашение и откройте её на этом телефоне. Или скопируйте ключ vpn:// и нажмите «Вставить ключ»."
-                else "Вставьте ключ vpn:// (из AmneziaVPN или приглашения), отсканируйте QR или разверните свой сервер на VPS.",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            // Stacked full-width buttons: two side by side do not fit on narrow phones.
-            if (onAdd != null) Button(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Filled.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Добавить сервер", maxLines = 1)
-            }
-            OutlinedButton(onClick = onPaste, modifier = Modifier.fillMaxWidth()) { Text("Вставить ключ из буфера", maxLines = 1) }
-        }
-    }
-}
-
 /** Imports whatever key is on the clipboard (the quickest path from a messenger). */
 @Composable
 fun rememberPasteKey(app: App, onDone: (String) -> Unit): () -> Unit {
@@ -236,7 +187,7 @@ private fun SeenRow(who: String, route: Route, a: SeenAddress?, loading: Boolean
                     loading -> "Проверяю…"
                     else -> "Не удалось узнать"
                 },
-                style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleMedium,
             )
             if (a != null) {
                 Text(
@@ -313,25 +264,6 @@ fun ago(ms: Long): String {
     }
 }
 
-/** One line for the follower screen: where foreign sites think this phone is. */
-@Composable
-fun CompactVisibility(app: App, tunnel: TunnelState) {
-    val (v, loading, _) = rememberVisibility(app, tunnel)
-    val a = v?.foreign
-    val text = when {
-        a != null -> listOfNotNull(VisibilityCheck.flag(a.countryCode), a.country ?: "Страна не определена", a.ip).joinToString("  ")
-        loading -> "Проверяю адрес…"
-        else -> return
-    }
-    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(if (tunnel is TunnelState.Up) "Сайты видят вас здесь" else "Ваш настоящий адрес виден сайтам",
-                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(text, style = MaterialTheme.typography.bodyMedium.merge(TabularNumbers), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-    }
-}
-
 /** Shared by both screens: the cheap button label that tells what a tap will do. */
 fun tapHint(p: Protection): String = when (p) {
     Protection.ON -> "Нажмите, чтобы отключить"
@@ -341,13 +273,3 @@ fun tapHint(p: Protection): String = when (p) {
     Protection.NO_SERVER -> "Сначала добавьте сервер"
 }
 
-/**
- * The button takes at most about a third of the screen height, so the information under it stays in
- * view on small phones; with no server it shrinks further to make room for the "add a server" card.
- */
-@Composable
-fun buttonSize(noServer: Boolean, max: Int): androidx.compose.ui.unit.Dp {
-    val h = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp
-    val fit = (h * 0.30f / 1.35f).toInt()
-    return (if (noServer) minOf(max, fit, 120) else minOf(max, fit)).coerceAtLeast(96).dp
-}

@@ -1,12 +1,9 @@
 package net.paramnezia.app.ui
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,13 +13,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -31,20 +32,21 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import net.paramnezia.app.App
 import net.paramnezia.app.ota.Updater
 import net.paramnezia.tunnel.TunnelRuntime
 import net.paramnezia.tunnel.TunnelState
-import kotlinx.coroutines.delay
 import net.paramnezia.tunnel.TunnelStats
 
 fun TunnelState.power(): PowerState = when (this) {
@@ -53,112 +55,109 @@ fun TunnelState.power(): PowerState = when (this) {
     else -> PowerState.OFF
 }
 
+/**
+ * The home screen fits one screen, without scrolling: header, the button (sized to the space
+ * left), the status, and a compact info panel. Everything else is one tap away in a sheet.
+ * With no server at all, the button gives way to an "add a server" hero.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer: () -> Unit) {
     val tunnel by TunnelRuntime.state.collectAsState()
-    val state by app.repo.state.collectAsState()
-    val update by app.updater.status.collectAsState()
     val servers = rememberServerCount(app)
     val p = protection(tunnel, servers)
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val paste = rememberPasteKey(app) { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show() }
+    var details by remember { mutableStateOf(false) }
 
-    Column(
-        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Header(tunnel, servers)
-        ProtectionPill(p)
-        PowerButton(
-            tunnel.power(),
-            onClick = {
-                when {
-                    tunnel.power() != PowerState.OFF -> app.disconnect()
-                    servers == 0 -> onAddServer()
-                    else -> onConnect()
+    Column(modifier.fillMaxSize().padding(horizontal = Space.M + 4.dp).padding(top = Space.S, bottom = Space.M)) {
+        TopBar(app, tunnel, servers, onDetails = { details = true })
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            if (p == Protection.NO_SERVER) {
+                // Normally fits; the scroll is only a safety net for very small or zoomed screens.
+                Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), contentAlignment = Alignment.Center) {
+                    EmptyHero(follower = false, onAdd = onAddServer, onPaste = paste, modifier = Modifier.padding(vertical = Space.M))
                 }
-            },
-            dimmed = p == Protection.NO_SERVER,
-            size = buttonSize(p == Protection.NO_SERVER, 216),
-        )
-        StatusLine(tunnel, p)
-        if (p == Protection.NO_SERVER) NoServersCard(follower = false, onAdd = onAddServer, onPaste = paste)
-        if (tunnel is TunnelState.Up) LiveStats(state.settings.blockTrackers)
-        if (p != Protection.NO_SERVER) VisibilityCard(app, tunnel)
-
-        when (val u = update) {
-            is Updater.Status.Available -> ActionCard("Доступна версия ${u.release.versionName}", "Скачать") {
-                if (!app.updater.openDownload()) android.widget.Toast.makeText(app, "Нет ссылки на APK", android.widget.Toast.LENGTH_SHORT).show()
-            }
-            Updater.Status.Idle -> {}
-        }
-
-        // Fleet servers are chosen automatically; standalone ones by the user.
-        if (state.fleet == null && state.profiles.size > 1) {
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceContainer)) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Сервер", style = MaterialTheme.typography.titleMedium)
-                    for (pr in state.profiles) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected = pr.id == (state.activeProfile ?: state.profiles.first().id), onClick = {
-                                app.repo.update { it.copy(activeProfile = pr.id) }
-                                app.reconnectIfUp()
-                            })
-                            Text(pr.name)
-                        }
-                    }
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    PowerButton(
+                        tunnel.power(),
+                        onClick = { if (tunnel.power() == PowerState.OFF) onConnect() else app.disconnect() },
+                        size = buttonFor(maxHeight, maxWidth, 216.dp),
+                    )
+                    StatusBlock(tunnel, p)
                 }
             }
         }
-        Spacer(Modifier.height(8.dp))
+        if (p != Protection.NO_SERVER) InfoPanel(app, tunnel, onMore = { details = true })
+    }
+
+    if (details) {
+        ModalBottomSheet(onDismissRequest = { details = false }) {
+            DetailsSheet(app, tunnel)
+        }
     }
 }
 
+/** Title, update badge and the server chip (a menu when there are several standalone servers). */
 @Composable
-private fun Header(tunnel: TunnelState, servers: Int) {
-    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("Paramnezia", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+private fun TopBar(app: App, tunnel: TunnelState, servers: Int, onDetails: () -> Unit) {
+    val state by app.repo.state.collectAsState()
+    val update by app.updater.status.collectAsState()
+    var menu by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+        FitText("Paramnezia", MaterialTheme.typography.titleLarge, Modifier.weight(1f), min = 14.sp)
+        (update as? Updater.Status.Available)?.let { u ->
+            Surface(shape = CircleShape, color = Brand.Violet, modifier = Modifier.clip(CircleShape).tactile { app.updater.openDownload() }) {
+                FitText("${u.release.versionName} ↓", MaterialTheme.typography.labelLarge, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), color = Color.White)
+            }
+            Spacer(Modifier.width(Space.S))
+        }
         val server = when (tunnel) { is TunnelState.Up -> tunnel.serverName; is TunnelState.Connecting -> tunnel.serverName; else -> null }
+        val pickable = state.fleet == null && state.profiles.size > 1
         val (label, dot) = when {
             server != null -> server to (if (tunnel is TunnelState.Up) Brand.Mint else Brand.Amber)
             servers == 0 -> "нет сервера" to Brand.Coral
+            pickable -> (state.profiles.firstOrNull { it.id == state.activeProfile } ?: state.profiles.first()).name to MaterialTheme.colorScheme.outline
             else -> "серверов: $servers" to MaterialTheme.colorScheme.outline
         }
-        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-            Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
-                Spacer(Modifier.width(8.dp))
-                Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Box {
+            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.clip(CircleShape).tactile { if (pickable) menu = true else onDetails() }) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp).widthIn(max = 160.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
+                    Spacer(Modifier.width(Space.S))
+                    FitText(label + if (pickable) " ▾" else "", MaterialTheme.typography.labelLarge, min = 9.sp)
+                }
+            }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                for (pr in state.profiles) {
+                    DropdownMenuItem(
+                        text = { Text(pr.name) },
+                        leadingIcon = { RadioButton(selected = pr.id == (state.activeProfile ?: state.profiles.first().id), onClick = null) },
+                        onClick = {
+                            menu = false
+                            app.repo.update { it.copy(activeProfile = pr.id) }
+                            app.reconnectIfUp()
+                        },
+                    )
+                }
             }
         }
     }
 }
 
+/** Everything that does not fit the main screen: full address details, counters, trackers. */
 @Composable
-private fun StatusLine(tunnel: TunnelState, p: Protection) {
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(tunnel) { while (tunnel is TunnelState.Up) { now = System.currentTimeMillis(); delay(1_000) } }
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        AnimatedContent(p, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "status") { s ->
-            Text(
-                when (s) {
-                    Protection.ON -> "VPN включён"
-                    Protection.CONNECTING -> "Подключаюсь…"
-                    Protection.FAILED -> "Нет соединения"
-                    Protection.OFF -> "VPN выключен"
-                    Protection.NO_SERVER -> "Сервер не добавлен"
-                },
-                style = MaterialTheme.typography.headlineMedium,
-                color = if (s == Protection.ON || s == Protection.CONNECTING) protectionColor(s) else MaterialTheme.colorScheme.onSurface,
-            )
-        }
-        Text(
-            if (tunnel is TunnelState.Up) "${tunnel.serverName} · ${formatDuration(now - tunnel.since)}" else tapHint(p),
-            style = MaterialTheme.typography.bodyLarge.merge(TabularNumbers),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-        )
+fun DetailsSheet(app: App, tunnel: TunnelState) {
+    val state by app.repo.state.collectAsState()
+    Column(
+        Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = Space.M, vertical = Space.S),
+        verticalArrangement = Arrangement.spacedBy(Space.M),
+    ) {
+        VisibilityCard(app, tunnel)
+        if (tunnel is TunnelState.Up) LiveStats(state.settings.blockTrackers)
+        Spacer(Modifier.height(Space.L))
     }
 }
 
@@ -198,24 +197,14 @@ private fun LiveStats(blockTrackers: Boolean) {
 @Composable
 private fun StatTile(title: String, value: String, sub: String, accent: Color, modifier: Modifier) {
     Card(modifier, colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceContainer)) {
-        Column(Modifier.padding(14.dp)) {
+        Column(Modifier.padding(Space.M)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(8.dp).clip(CircleShape).background(accent))
                 Spacer(Modifier.width(6.dp))
-                Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FitText(title, MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, min = 9.sp)
             }
-            Text(value, style = MaterialTheme.typography.titleLarge.merge(TabularNumbers), maxLines = 1)
-            Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-        }
-    }
-}
-
-@Composable
-private fun ActionCard(text: String, action: String?, onClick: () -> Unit) {
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(MaterialTheme.colorScheme.secondaryContainer)) {
-        Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(text, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSecondaryContainer)
-            if (action != null) FilledTonalButton(onClick = onClick) { Text(action) }
+            FitText(value, MaterialTheme.typography.titleLarge.merge(TabularNumbers), min = 12.sp)
+            FitText(sub, MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, min = 8.sp)
         }
     }
 }
