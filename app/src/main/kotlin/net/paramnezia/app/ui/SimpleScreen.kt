@@ -69,7 +69,7 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
                     else -> onConnect()
                 }
             },
-            size = 232.dp,
+            size = buttonSize(p == Protection.NO_SERVER, 232),
             dimmed = p == Protection.NO_SERVER,
         )
         Text(when (p) {

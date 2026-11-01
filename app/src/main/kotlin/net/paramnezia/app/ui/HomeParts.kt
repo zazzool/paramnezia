@@ -337,3 +337,14 @@ fun tapHint(p: Protection): String = when (p) {
     Protection.OFF -> "Нажмите, чтобы включить VPN"
     Protection.NO_SERVER -> "Сначала добавьте сервер"
 }
+
+/**
+ * The button takes at most about a third of the screen height, so the information under it stays in
+ * view on small phones; with no server it shrinks further to make room for the "add a server" card.
+ */
+@Composable
+fun buttonSize(noServer: Boolean, max: Int): androidx.compose.ui.unit.Dp {
+    val h = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp
+    val fit = (h * 0.30f / 1.35f).toInt()
+    return (if (noServer) minOf(max, fit, 140) else minOf(max, fit)).coerceAtLeast(110).dp
+}

@@ -30,6 +30,8 @@ tap() {
 }
 
 adb install -r "$apk" || fail "install failed"
+# A phone-sized screen, so the screenshots look like a real phone (the default AVD is 320x640).
+adb shell wm size 1080x2340; adb shell wm density 440
 adb logcat -c
 adb shell monkey -p net.paramnezia -c android.intent.category.LAUNCHER 1 >/dev/null
 sleep 10
@@ -40,7 +42,7 @@ shot() {
   sleep "${2:-0}"
   adb exec-out screencap -p > "screen-$tag-$1.png" || true
   adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "ui-$tag-$1.xml" >/dev/null 2>&1
-  echo "--- screen: $1 ---"; python3 "$here/ui.py" list "ui-$tag-$1.xml" 2>/dev/null | head -40
+  echo "--- screen: $1 ---"; python3 "$here/ui.py" list "ui-$tag-$1.xml" 2>/dev/null | head -60
 }
 # Fresh install, no servers: the home screen must say so plainly.
 shot empty
@@ -81,7 +83,10 @@ adb shell ping -c 3 -W 2 10.9.0.1 || echo "::warning::[$tag] ping 10.9.0.1 throu
 adb shell pidof net.paramnezia >/dev/null || fail "the app died"
 # The "how sites see you" card checks the addresses a few seconds after connecting.
 shot connected 15
-adb shell input swipe 540 1800 540 700 300; shot connected-scrolled 2
+w=1080; h=2340
+read -r w h < <(adb shell wm size | sed -n 's/.*: \([0-9]*\)x\([0-9]*\).*/\1 \2/p' | tail -1)
+adb shell input swipe $((w / 2)) $((h * 3 / 4)) $((w / 2)) $((h / 5)) 400; shot connected-scrolled 2
+python3 "$here/ui.py" find "ui-$tag-connected-scrolled.xml" "Как вас видят сайты" >/dev/null || echo "::warning::[$tag] the 'how sites see you' card is not on screen" 
 grep -q "FATAL EXCEPTION" <(adb logcat -d) && fail "crash in the log"
 dump >/dev/null
 echo "[$tag] VPN end-to-end: OK"

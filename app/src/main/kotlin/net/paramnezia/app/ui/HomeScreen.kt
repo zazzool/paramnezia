@@ -80,6 +80,7 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer:
                 }
             },
             dimmed = p == Protection.NO_SERVER,
+            size = buttonSize(p == Protection.NO_SERVER, 216),
         )
         StatusLine(tunnel, p)
         if (p == Protection.NO_SERVER) NoServersCard(follower = false, onAdd = onAddServer, onPaste = paste)
