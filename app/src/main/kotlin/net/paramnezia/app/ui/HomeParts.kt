@@ -131,12 +131,11 @@ fun NoServersCard(follower: Boolean, onAdd: (() -> Unit)?, onPaste: () -> Unit) 
                 else "Вставьте ключ vpn:// (из AmneziaVPN или приглашения), отсканируйте QR или разверните свой сервер на VPS.",
                 style = MaterialTheme.typography.bodyMedium,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (onAdd != null) Button(onClick = onAdd) {
-                    Icon(Icons.Filled.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Добавить сервер")
-                }
-                OutlinedButton(onClick = onPaste) { Text("Вставить ключ") }
+            // Stacked full-width buttons: two side by side do not fit on narrow phones.
+            if (onAdd != null) Button(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Filled.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Добавить сервер", maxLines = 1)
             }
+            OutlinedButton(onClick = onPaste, modifier = Modifier.fillMaxWidth()) { Text("Вставить ключ из буфера", maxLines = 1) }
         }
     }
 }
@@ -225,7 +224,8 @@ private fun SeenRow(who: String, route: Route, a: SeenAddress?, loading: Boolean
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(who, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(who, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 Spacer(Modifier.width(8.dp))
                 RouteBadge(route)
             }
@@ -236,7 +236,7 @@ private fun SeenRow(who: String, route: Route, a: SeenAddress?, loading: Boolean
                     loading -> "Проверяю…"
                     else -> "Не удалось узнать"
                 },
-                style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
             )
             if (a != null) {
                 Text(
@@ -258,7 +258,8 @@ private fun SeenRow(who: String, route: Route, a: SeenAddress?, loading: Boolean
 private fun RouteBadge(route: Route) {
     val c = if (route == Route.TUNNEL) Brand.Mint else MaterialTheme.colorScheme.onSurfaceVariant
     Surface(shape = CircleShape, color = c.copy(alpha = 0.14f)) {
-        Text(route.label, Modifier.padding(horizontal = 8.dp, vertical = 2.dp), style = MaterialTheme.typography.labelSmall, color = c)
+        Text(route.label, Modifier.padding(horizontal = 8.dp, vertical = 2.dp), style = MaterialTheme.typography.labelSmall, color = c,
+            maxLines = 1, softWrap = false)
     }
 }
 
@@ -348,5 +349,5 @@ fun tapHint(p: Protection): String = when (p) {
 fun buttonSize(noServer: Boolean, max: Int): androidx.compose.ui.unit.Dp {
     val h = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp
     val fit = (h * 0.30f / 1.35f).toInt()
-    return (if (noServer) minOf(max, fit, 140) else minOf(max, fit)).coerceAtLeast(110).dp
+    return (if (noServer) minOf(max, fit, 120) else minOf(max, fit)).coerceAtLeast(96).dp
 }
