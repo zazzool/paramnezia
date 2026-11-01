@@ -24,12 +24,17 @@ shot() {
   adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "ui-$tag-ui-$1.xml" >/dev/null 2>&1
   echo "--- screen: $1 ---"; python3 "$here/ui.py" list "ui-$tag-ui-$1.xml" 2>/dev/null | grep "$pkg" | head -40
 }
-scroll() { adb shell input swipe 540 1700 540 700 500; }
+# Swipes in the middle of the screen (the bottom bar must not catch the gesture).
+size() { adb shell wm size | sed -n 's/.*: \([0-9]*\)x\([0-9]*\).*/\1 \2/p' | tail -1; }
+scroll() { local w h; read -r w h < <(size); adb shell input swipe $((w / 2)) $((h * 3 / 5)) $((w / 2)) $((h / 5)) 600; sleep 1; }
+top() { local w h; read -r w h < <(size); for _ in 1 2 3; do adb shell input swipe $((w / 2)) $((h / 4)) $((w / 2)) $((h * 3 / 4)) 200; done; sleep 1; }
 demo() {
   adb shell am force-stop $pkg
   adb shell am start -n $pkg/net.paramnezia.app.DemoActivity --es demo "$1" >/dev/null
   sleep 7
 }
+# Back only while the keyboard is up: otherwise it would leave the app.
+hide_keyboard() { adb shell dumpsys input_method | grep -q "mInputShown=true" && adb shell input keyevent KEYCODE_BACK; sleep 1; }
 crashed() { grep -A1 "FATAL EXCEPTION" <(adb logcat -d) | grep -q "Process: $pkg"; }
 
 adb install -r "$apk" || { echo "::error::[$tag] debug install failed"; exit 1; }
@@ -39,10 +44,11 @@ adb logcat -c
 # A fresh install: someone who was sent a key, or an admin about to get a server.
 demo empty
 tap "Добавить" && shot add
-tap "Свой VPS" && shot add-vps
+tap "Свой VPS" && { sleep 1; scroll; shot add-vps; }
 # The keyboard comes only on request, and the field stays above it.
-tap "Ввести с клавиатуры" && shot add-keyboard 3
-adb shell input keyevent KEYCODE_BACK; sleep 1
+if tap "Ввести с клавиатуры"; then shot add-keyboard 3; hide_keyboard; fi
+top; tap "Ввести" && shot add-type 3
+hide_keyboard
 tap "Флот" && shot fleet-empty
 
 # An admin with a server of their own but no fleet yet.
@@ -56,7 +62,7 @@ tap "Флот" && shot fleet-admin
 scroll; shot fleet-admin-2
 scroll; shot fleet-admin-3
 scroll; shot fleet-admin-4
-adb shell input swipe 540 700 540 2000 300; adb shell input swipe 540 700 540 2000 300; sleep 1
+top
 tap "Пригласить" && shot invite-dialog
 adb shell input keyevent KEYCODE_BACK; sleep 1
 

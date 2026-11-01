@@ -169,7 +169,7 @@ private fun DeployCard(app: App, toast: (String) -> Unit, onDone: () -> Unit) {
 
     Group {
         GroupRow(
-            "Купить у хостера", subtitle = "Cloudzy или Timeweb Cloud: сервер готов за 3–8 минут, нужен только токен API",
+            "Купить у хостера", subtitle = "Cloudzy или Timeweb: готов за 3–8 минут, нужен токен API",
             icon = Glyph.Cloud, onClick = { if (!running) buying = true },
             trailing = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
         )

@@ -7,6 +7,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -162,59 +163,70 @@ fun PasteField(
         if (onPaste != null) onPaste(text) else onValueChange(if (singleLine) text.lines().first().trim() else text)
     }
 
-    OutlinedTextField(
-        value = shown ?: value,
-        onValueChange = { if (shown == null) onValueChange(it) },
-        modifier = modifier
-            .fillMaxWidth()
-            .focusRequester(focus)
-            .onFocusChanged { if (!it.isFocused) typing = false },
-        enabled = enabled,
-        // Read-only until the keyboard is asked for: a tap selects and copies, nothing pops up.
-        readOnly = !typing,
-        label = { Text(label) },
-        placeholder = placeholder?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
-        supportingText = supporting?.let { { Text(it) } },
-        isError = isError,
-        singleLine = singleLine,
-        minLines = minLines,
-        maxLines = maxLines,
-        shape = RoundedCornerShape(16.dp),
-        textStyle = if (mono) MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace) else MaterialTheme.typography.bodyLarge,
-        visualTransformation = if (secret && !reveal && shown == null) PasswordVisualTransformation() else VisualTransformation.None,
-        keyboardOptions = KeyboardOptions(keyboardType = if (secret && !reveal) KeyboardType.Password else keyboardType, autoCorrectEnabled = false),
-        colors = OutlinedTextFieldDefaults.colors(
-            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-            disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
-            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-        ),
-        trailingIcon = {
-            Row(Modifier.padding(end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (secret && value.isNotEmpty() && shown == null) {
-                    IconButton(onClick = { reveal = !reveal }, enabled = enabled) {
-                        Icon(Glyph.Eye, if (reveal) "Скрыть" else "Показать", Modifier.size(20.dp),
-                            tint = if (reveal) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+    // Narrow (dialogs) and multi-line fields get their buttons under the field, so the text keeps its room.
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val below = !singleLine || maxWidth < 300.dp
+        val actions: @Composable () -> Unit = {
+            if (secret && value.isNotEmpty() && shown == null) {
+                IconButton(onClick = { reveal = !reveal }, enabled = enabled) {
+                    Icon(Glyph.Eye, if (reveal) "Скрыть" else "Показать", Modifier.size(20.dp),
+                        tint = if (reveal) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                IconButton(enabled = enabled, onClick = {
-                    if (shown != null) onValueChange("")
-                    typing = true
-                    focus.requestFocus()
-                    keyboard?.show()
-                }) {
-                    Icon(Glyph.Keyboard, "Ввести с клавиатуры", tint = if (typing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                if (value.isEmpty()) {
-                    PastePill(enabled) { paste() }
-                } else {
-                    IconButton(enabled = enabled, onClick = { onValueChange(""); reveal = false }) {
-                        Icon(Icons.Filled.Close, "Очистить", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
+        }
+        IconButton(enabled = enabled, onClick = {
+            if (shown != null) onValueChange("")
+            typing = true
+            focus.requestFocus()
+            keyboard?.show()
+        }) {
+            Icon(Glyph.Keyboard, "Ввести с клавиатуры", tint = if (typing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (value.isEmpty()) {
+            PastePill(enabled) { paste() }
+        } else {
+            IconButton(enabled = enabled, onClick = { onValueChange(""); reveal = false }) {
+                Icon(Icons.Filled.Close, "Очистить", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-        },
-    )
+        }
+        }
+        val trailing: (@Composable () -> Unit)? = if (below) null else {
+            { Row(Modifier.padding(end = 4.dp), verticalAlignment = Alignment.CenterVertically) { actions() } }
+        }
+        Column {
+            OutlinedTextField(
+                value = shown ?: value,
+                onValueChange = { if (shown == null) onValueChange(it) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focus)
+                    .onFocusChanged { if (!it.isFocused) typing = false },
+                enabled = enabled,
+                // Read-only until the keyboard is asked for: a tap selects and copies, nothing pops up.
+                readOnly = !typing,
+                label = { Text(label) },
+                placeholder = placeholder?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
+                supportingText = supporting?.let { { Text(it) } },
+                isError = isError,
+                singleLine = singleLine,
+                minLines = minLines,
+                maxLines = maxLines,
+                shape = RoundedCornerShape(16.dp),
+                textStyle = if (mono) MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace) else MaterialTheme.typography.bodyLarge,
+                visualTransformation = if (secret && !reveal && shown == null) PasswordVisualTransformation() else VisualTransformation.None,
+                keyboardOptions = KeyboardOptions(keyboardType = if (secret && !reveal) KeyboardType.Password else keyboardType, autoCorrectEnabled = false),
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                    disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                ),
+                trailingIcon = trailing,
+            )
+            if (below) Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                actions()
+            }
+        }
+    }
 }
 
 /** The labelled paste button inside a field: big enough to hit, obvious enough to find. */
