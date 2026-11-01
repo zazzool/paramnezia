@@ -39,13 +39,18 @@ adb push "$conf" /data/local/tmp/c.conf >/dev/null
 adb shell 'am start -n net.paramnezia/net.paramnezia.app.ui.MainActivity -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "$(cat /data/local/tmp/c.conf)"' >/dev/null
 sleep 6
 
-tap "VPN" || fail "no power button on the home screen"
-sleep 3
+# Settings opened from a message connect at once (2.2.0), so the system's VPN consent dialog comes
+# up by itself; otherwise press the power button first.
+vpn_dialog() { adb shell dumpsys window | grep -qE "mCurrentFocus.*vpndialogs"; }
+if ! vpn_dialog; then
+  tap "VPN" || fail "no power button on the home screen"
+  sleep 3
+fi
 # The system asks once whether the app may set up a VPN.
-if adb shell dumpsys window | grep -qE "mCurrentFocus.*vpndialogs"; then
+if vpn_dialog; then
   tap "OK" || tap "ОК" || fail "could not accept the VPN dialog"
 else
-  echo "::warning::[$tag] no VPN consent dialog after pressing the button"
+  echo "::warning::[$tag] no VPN consent dialog"
 fi
 
 for _ in $(seq 1 30); do
