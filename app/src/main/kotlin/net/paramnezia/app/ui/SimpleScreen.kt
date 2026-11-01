@@ -2,76 +2,90 @@ package net.paramnezia.app.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Surface
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.sp
 import net.paramnezia.app.App
 import net.paramnezia.app.data.UiMode
 import net.paramnezia.tunnel.TunnelRuntime
-import net.paramnezia.tunnel.TunnelState
-import net.paramnezia.tunnel.TunnelStats
 import net.paramnezia.app.ota.Updater
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 /**
  * One button for follower devices: servers, routing, updates and failover are handled by the fleet.
  * A long press on the title opens the full mode (for whoever looks after this phone).
  */
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
     val tunnel by TunnelRuntime.state.collectAsState()
-    var stats by remember { mutableStateOf<TunnelStats?>(null) }
-    var blocked by remember { mutableLongStateOf(0L) }
     var askFull by remember { mutableStateOf(false) }
+    var details by remember { mutableStateOf(false) }
     val update by app.updater.status.collectAsState()
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val servers = rememberServerCount(app)
+    val p = protection(tunnel, servers)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val paste = rememberPasteKey(app) { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show() }
 
-    LaunchedEffect(tunnel) {
-        while (tunnel is TunnelState.Up) {
-            stats = TunnelRuntime.stats(); blocked = TunnelRuntime.blockedQueries(); delay(2_000)
-        }
-    }
-
-    Column(modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterVertically)) {
-        Text("Paramnezia", style = MaterialTheme.typography.headlineMedium,
-            modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { askFull = true }))
-        PowerButton(tunnel.power(), onClick = { if (tunnel.power() == PowerState.OFF) onConnect() else app.disconnect() }, size = 232.dp)
-        Text(when (val t = tunnel) {
-            is TunnelState.Up -> "Защищено"
-            is TunnelState.Connecting -> "Подключаюсь…"
-            is TunnelState.Failed -> "Не удалось подключиться"
-            TunnelState.Down -> "Нажмите, чтобы включить"
-        }, style = MaterialTheme.typography.headlineMedium, color = when (tunnel.power()) {
-            PowerState.ON -> Brand.Mint; PowerState.CONNECTING -> Brand.Amber; PowerState.OFF -> MaterialTheme.colorScheme.onSurface
-        })
-        stats?.takeIf { tunnel is TunnelState.Up }?.let {
-            Text("↓ ${formatBytes(it.rxBytes)}   ↑ ${formatBytes(it.txBytes)}   трекеров: $blocked", style = MaterialTheme.typography.bodyMedium)
-        }
-        // The browser downloads the APK; Android's installer asks the user, as with the first install.
-        (update as? Updater.Status.Available)?.let { u ->
-            androidx.compose.material3.OutlinedButton(onClick = { app.updater.openDownload() }) {
-                Text("Скачать версию ${u.release.versionName}")
+    // Same rhythm as the full screen, one screen high: title, the button (or the "no servers"
+    // hero), the status and the info panel; details one tap away.
+    Column(modifier.fillMaxSize().padding(horizontal = Space.M + 4.dp).padding(top = Space.S, bottom = Space.M),
+        horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+            FitText("Paramnezia", MaterialTheme.typography.titleLarge, min = 14.sp,
+                modifier = Modifier.weight(1f).combinedClickable(onClick = {}, onLongClick = { askFull = true }))
+            (update as? Updater.Status.Available)?.let { u ->
+                Surface(shape = CircleShape, color = Brand.Violet, modifier = Modifier.clip(CircleShape).tactile { app.updater.openDownload() }) {
+                    FitText("${u.release.versionName} ↓", MaterialTheme.typography.labelLarge, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), color = Color.White)
+                }
             }
         }
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            val button = buttonFor(maxHeight, maxWidth, 232.dp)
+            if (p == Protection.NO_SERVER) {
+                Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), contentAlignment = Alignment.Center) {
+                    EmptyHero(follower = true, onAdd = null, onPaste = paste, modifier = Modifier.padding(vertical = Space.M))
+                }
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    PowerButton(
+                        tunnel.power(),
+                        onClick = { if (tunnel.power() == PowerState.OFF) onConnect() else app.disconnect() },
+                        size = button,
+                    )
+                    StatusBlock(tunnel, p)
+                }
+            }
+        }
+        if (p != Protection.NO_SERVER) InfoPanel(app, tunnel, onMore = { details = true })
+    }
+
+    if (details) {
+        androidx.compose.material3.ModalBottomSheet(onDismissRequest = { details = false }) { DetailsSheet(app, tunnel) }
     }
 
     if (askFull) {

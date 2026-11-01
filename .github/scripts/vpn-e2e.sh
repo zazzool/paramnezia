@@ -35,9 +35,28 @@ adb shell monkey -p net.paramnezia -c android.intent.category.LAUNCHER 1 >/dev/n
 sleep 10
 adb shell pidof net.paramnezia >/dev/null || fail "the app is not running after launch"
 
+# Screenshot of a screen state for the PR (uploaded with the job's artifacts).
+shot() {
+  sleep "${2:-0}"
+  adb exec-out screencap -p > "screen-$tag-$1.png" || true
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "ui-$tag-$1.xml" >/dev/null 2>&1
+  echo "--- screen: $1 ---"; python3 "$here/ui.py" list "ui-$tag-$1.xml" 2>/dev/null | head -60
+}
+# Fresh install, no servers: the home screen must say so plainly.
+shot empty
+python3 "$here/ui.py" find "ui-$tag-empty.xml" "Нет сервера" >/dev/null || fail "no 'no servers' indicator on a fresh install"
+swipe_up() {
+  local w=320 h=640
+  read -r w h < <(adb shell wm size | sed -n 's/.*: \([0-9]*\)x\([0-9]*\).*/\1 \2/p' | tail -1) || true
+  w=${w:-320}; h=${h:-640}
+  adb shell input swipe $((w / 2)) $((h * 3 / 4)) $((w / 2)) $((h / 5)) 400
+}
+python3 "$here/ui.py" find "ui-$tag-empty.xml" "Нет ни одного сервера" >/dev/null || fail "no 'no servers' card on a fresh install"
+
 adb push "$conf" /data/local/tmp/c.conf >/dev/null
 adb shell 'am start -n net.paramnezia/net.paramnezia.app.ui.MainActivity -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "$(cat /data/local/tmp/c.conf)"' >/dev/null
 sleep 6
+shot ready
 
 # Settings opened from a message connect at once (2.2.0), so the system's VPN consent dialog comes
 # up by itself; otherwise press the power button first.
@@ -72,7 +91,16 @@ sudo wg show wg0
 # Traffic really flows through the tunnel: the server's tunnel address answers.
 adb shell ping -c 3 -W 2 10.9.0.1 || echo "::warning::[$tag] ping 10.9.0.1 through the tunnel failed"
 adb shell pidof net.paramnezia >/dev/null || fail "the app died"
-grep -q "FATAL EXCEPTION" <(adb logcat -d) && fail "crash in the log"
+# The "how sites see you" card checks the addresses a few seconds after connecting.
+shot connected 15
+# Details are one tap away, in a sheet.
+tap "Подробнее" || echo "::warning::[$tag] no 'details' on the home screen"
+shot details 3
+python3 "$here/ui.py" find "ui-$tag-details.xml" "Как вас видят сайты" >/dev/null || echo "::warning::[$tag] the 'how sites see you' card is not in the details"
+adb shell input keyevent KEYCODE_BACK
+# Our own crashes only: with internet in the emulator, Google's apps sometimes die on their own.
+grep -A1 "FATAL EXCEPTION" <(adb logcat -d) | grep -q "Process: net.paramnezia" && fail "crash in the log"
+grep -A1 "FATAL EXCEPTION" <(adb logcat -d) | grep "Process:" | sort -u | sed "s/^/::warning::[$tag] another app crashed: /"
 dump >/dev/null
 
 # Screenshots of the one-button screen that family devices show (used on the server's family page,

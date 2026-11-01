@@ -21,10 +21,13 @@ class Net(private val context: Context) {
      * GET [url], first the normal way (split routing decides: tunnel or direct), then, if
      * [fallbackDirect], over the physical network. Null if all fail.
      */
-    fun get(url: String, maxBytes: Int = 1 shl 20, fallbackDirect: Boolean = true): String? {
+    fun get(url: String, maxBytes: Int = 1 shl 20, fallbackDirect: Boolean = true, fresh: Boolean = false, timeoutMs: Int = 20_000): String? {
         for (network in if (fallbackDirect) listOf(null, direct()) else listOf(null)) {
             runCatching {
-                val c = open(url, network)
+                val c = open(url, network, timeoutMs)
+                // A pooled keep-alive socket remembers the route it was opened on: a connection made
+                // before the tunnel came up would still go direct. Checks of "how sites see me" must not reuse one.
+                if (fresh) { c.setRequestProperty("Connection", "close"); c.useCaches = false }
                 try {
                     if (c.responseCode == 200) {
                         return c.inputStream.use { it.readUpTo(maxBytes) }.decodeToString()
@@ -71,7 +74,7 @@ class Net(private val context: Context) {
     private fun open(url: String, network: Network?, readTimeoutMs: Int = 20_000): HttpURLConnection {
         val u = URL(url)
         val c = (network?.openConnection(u) ?: u.openConnection()) as HttpURLConnection
-        c.connectTimeout = 15_000
+        c.connectTimeout = minOf(15_000, readTimeoutMs)
         c.readTimeout = readTimeoutMs
         c.setRequestProperty("User-Agent", "paramnezia")
         return c

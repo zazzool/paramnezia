@@ -26,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
@@ -52,7 +53,7 @@ enum class PowerState { OFF, CONNECTING, ON }
  * (no images), and the animations stop when the state is OFF, so it costs nothing at rest.
  */
 @Composable
-fun PowerButton(state: PowerState, onClick: () -> Unit, modifier: Modifier = Modifier, size: Dp = 216.dp) {
+fun PowerButton(state: PowerState, onClick: () -> Unit, modifier: Modifier = Modifier, size: Dp = 216.dp, dimmed: Boolean = false) {
     val dark = isSystemInDarkTheme()
     val haptic = LocalHapticFeedback.current
     val interaction = remember { MutableInteractionSource() }
@@ -85,6 +86,8 @@ fun PowerButton(state: PowerState, onClick: () -> Unit, modifier: Modifier = Mod
     Box(
         modifier
             .size(size * 1.35f)
+            // No server yet: the button stays tappable (it leads to adding one) but looks inactive.
+            .alpha(if (dimmed) 0.45f else 1f)
             .semantics {
                 contentDescription = "VPN"
                 stateDescription = when (state) { PowerState.ON -> "включён"; PowerState.CONNECTING -> "подключается"; PowerState.OFF -> "выключен" }

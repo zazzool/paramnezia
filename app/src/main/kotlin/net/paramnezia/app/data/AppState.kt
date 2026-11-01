@@ -24,6 +24,8 @@ data class AppState(
     val links: List<StoredLink> = emptyList(),
     /** Admin: the family page on each own server, host → URL (see Links.preparePage). */
     val pages: Map<String, String> = emptyMap(),
+    /** Admin: hosting provider tokens and the servers bought through them (see [net.paramnezia.app.data.Cloud]). */
+    val cloud: CloudState = CloudState(),
 ) {
     /** Follower devices of a fleet get the one-button screen; the admin and standalone users get everything. */
     val simpleUi: Boolean get() = when (uiMode) {
@@ -118,4 +120,33 @@ data class StoredLink(
     val fleetDevice: Boolean = false,
     /** Sent as a settings file rather than a link (no page on the server, never "used"). */
     val file: Boolean = false,
+)
+
+/**
+ * Hosting providers, admin only. Kept in the encrypted state like SSH passwords; never exported,
+ * never sent anywhere but to the provider's own API.
+ */
+@Serializable
+data class CloudState(
+    /** API token by provider id (`cloudzy`, `timeweb`). */
+    val tokens: Map<String, String> = emptyMap(),
+    /** SSH key root accepts on bought servers (one per admin device): PEM private and OpenSSH public. */
+    val sshPrivate: String? = null,
+    val sshPublic: String? = null,
+    /** Last provider and region used, offered first next time. */
+    val lastProvider: String? = null,
+    val lastRegion: String? = null,
+    /** Servers bought from the app, so they can be deleted (and billing stopped) from the app too. */
+    val servers: List<CloudServerRef> = emptyList(),
+)
+
+@Serializable
+data class CloudServerRef(
+    val provider: String,
+    val serverId: String,
+    val name: String,
+    /** Public IPv4, once known. */
+    val host: String? = null,
+    val createdAt: Long,
+    val price: String = "",
 )

@@ -53,6 +53,7 @@ tools/bypass-lists/  генератор списков «российское н
 | `ObfuscationProfile.kt` | генерация параметров AmneziaWG (Jc/Jmin/Jmax, S1–S4, H1–H4, I1–I5) |
 | `FleetPublisher.kt` | манифест на сервер с проверкой внутритуннельного httpd (`fleet-www.sh`), релиз, который сервер скачивает сам (`release-mirror.sh`), gist |
 | `InviteLinks.kt` | одноразовые ссылки: страница, `app.json`, хранение, проверка «использована», отзыв |
+| `cloud/` | покупка VPS по API хостеров: `CloudProvider` (интерфейс), `CloudzyProvider`, `TimewebProvider`, `CloudProvisioner` (создание, ожидание IP, cloud-init с заранее созданным ключом хоста, ожидание SSH), `CloudProviders` (список, выбор тарифа). Каталог и источники: [`providers/README.md`](../providers/README.md) |
 | `resources/…/*.sh` | серверные скрипты, см. [SERVER.md](SERVER.md) |
 
 ### tunnel (`net.paramnezia.tunnel`)

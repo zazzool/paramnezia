@@ -38,8 +38,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import net.paramnezia.app.App
+import net.paramnezia.app.data.CloudServerRef
 import net.paramnezia.app.data.StoredLink
 import net.paramnezia.app.fleet.Links
+import net.paramnezia.deploy.cloud.CloudProviders
 import net.paramnezia.app.data.StoredProfile
 import net.paramnezia.core.config.WgQuick
 import net.paramnezia.core.crypto.WgKey
@@ -59,6 +61,9 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
     var invite by remember { mutableStateOf<String?>(null) }
     var newDevice by remember { mutableStateOf(false) }
     var newServer by remember { mutableStateOf(false) }
+    var buying by remember { mutableStateOf(false) }
+    /** A server bought from the app was just removed from the fleet: offer to delete it at the provider. */
+    var boughtRemoved by remember { mutableStateOf<CloudServerRef?>(null) }
     var link by remember { mutableStateOf<StoredLink?>(null) }
     /** People just added in one go, with what to send each of them. */
     var created by remember { mutableStateOf<List<Links.Created>?>(null) }
@@ -143,12 +148,18 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
                         TextButton(enabled = !busy, onClick = { work("${s.name} теперь основной") { app.fleet.promote(s.id) } }) { Text("Сделать основным") }
                     }
                     if (isAdmin && manifest.servers.size > 1) {
-                        TextButton(enabled = !busy, onClick = { work("Сервер удалён") { app.fleet.removeServer(s.id) } }) { Text("Удалить") }
+                        TextButton(enabled = !busy, onClick = {
+                            val bought = app.cloud.serverAt(s.host)
+                            work("Сервер удалён из флота") { app.fleet.removeServer(s.id); boughtRemoved = bought }
+                        }) { Text("Удалить") }
                     }
                 }
             }
         }
-        if (isAdmin) OutlinedButton(enabled = !busy, onClick = { newServer = true }) { Text("Добавить сервер (VPS)") }
+        if (isAdmin) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(enabled = !busy, onClick = { buying = true }) { Text("Купить у хостера") }
+            OutlinedButton(enabled = !busy, onClick = { newServer = true }) { Text("Свой VPS") }
+        }
 
         Text("Устройства", style = MaterialTheme.typography.titleMedium)
         manifest?.devices?.forEach { d ->
@@ -311,6 +322,20 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
         )
     }
 
+    if (buying) CloudBuyDialog(app, onDismiss = { buying = false }, toast = toast) { n, ssh, onStep ->
+        app.fleet.addServer(n, ssh, makeMaster = false, onStep = onStep)
+    }
+    boughtRemoved?.let { ref ->
+        val provider = CloudProviders.info(ref.provider)?.name ?: ref.provider
+        AlertDialog(
+            onDismissRequest = { boughtRemoved = null },
+            title = { Text("Удалить и у хостера?") },
+            text = { Text("Сервер ${ref.host ?: ref.name} куплен у $provider из приложения${if (ref.price.isNotEmpty()) " (${ref.price})" else ""}. " +
+                "Удалить его у хостера, чтобы он больше не оплачивался? Это необратимо.") },
+            confirmButton = { TextButton(onClick = { boughtRemoved = null; work("Сервер удалён у $provider") { app.cloud.delete(ref) } }) { Text("Удалить у хостера") } },
+            dismissButton = { TextButton(onClick = { boughtRemoved = null }) { Text("Оставить") } },
+        )
+    }
     if (newServer) {
         var host by remember { mutableStateOf("") }
         var password by remember { mutableStateOf("") }
