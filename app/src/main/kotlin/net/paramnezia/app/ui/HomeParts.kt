@@ -191,16 +191,17 @@ private fun SeenRow(who: String, route: Route, a: SeenAddress?, loading: Boolean
                 style = MaterialTheme.typography.titleMedium,
             )
             if (a != null) {
-                Text(
+                // IPv6 addresses are long: the address shrinks to fit rather than being cut.
+                FitText(
                     a.ip,
-                    style = MaterialTheme.typography.bodyMedium.merge(TabularNumbers), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    MaterialTheme.typography.bodyMedium.merge(TabularNumbers).copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium),
+                    min = 8.sp,
                     modifier = Modifier.clickable {
                         clipboard.setText(AnnotatedString(a.ip))
                         Toast.makeText(context, "Адрес скопирован", Toast.LENGTH_SHORT).show()
                     },
                 )
-                a.org?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                a.org?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
         }
     }
