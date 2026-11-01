@@ -5,6 +5,7 @@ import net.paramnezia.core.config.TunnelConfig
 import net.paramnezia.core.crypto.WgKey
 import net.paramnezia.core.net.IpPrefix
 import kotlinx.serialization.Serializable
+import net.paramnezia.core.config.ConfigException
 
 /**
  * The fleet: one owner's servers and trusted devices. The admin device signs every new version;
@@ -78,7 +79,7 @@ fun FleetServer.tunnelFor(device: FleetDevice, privateKey: WgKey): TunnelConfig 
 /** Turns a server's client config (from a deploy or an imported key) into a fleet server entry. */
 fun fleetServerOf(id: String, name: String, tunnel: TunnelConfig): FleetServer {
     val peer = tunnel.peers.first()
-    val endpoint = peer.endpoint ?: throw net.paramnezia.core.config.ConfigException("Server config has no endpoint")
+    val endpoint = peer.endpoint ?: throw ConfigException("Server config has no endpoint")
     val host = endpoint.substringBeforeLast(':').removePrefix("[").removeSuffix("]")
     val port = endpoint.substringAfterLast(':').toInt()
     return FleetServer(

@@ -31,6 +31,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import java.util.Base64
 import java.util.UUID
+import net.paramnezia.core.ota.Release
 
 /**
  * Fleet membership on this device and, on the admin device, fleet management.
@@ -251,7 +252,7 @@ class FleetManager(
      *  - the server holds the current app release (downloaded and verified by the server itself).
      * Each server and each step fails on its own; the next run tries again. Returns servers fixed.
      */
-    suspend fun heal(release: Pair<net.paramnezia.core.ota.Release, String>?): Int = withContext(Dispatchers.IO) {
+    suspend fun heal(release: Pair<Release, String>?): Int = withContext(Dispatchers.IO) {
         val f = stored ?: return@withContext 0
         if (f.adminSeed == null) return@withContext 0
         val m = manifest() ?: return@withContext 0

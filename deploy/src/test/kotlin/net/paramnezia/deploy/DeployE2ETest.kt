@@ -18,6 +18,10 @@ import org.junit.Test
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.TimeUnit
+import net.paramnezia.core.amnezia.AmneziaKey
+import net.paramnezia.core.config.TunnelConfig
+import net.paramnezia.core.fleet.INVITE_KEY
+import net.paramnezia.core.profile.Protocol
 
 /**
  * Installs a real AmneziaWG server through our SSH client and scripts, then brings up a real
@@ -61,7 +65,7 @@ class DeployE2ETest {
             val port = 41000 + profile.ordinal
             val params = manager.install(creds, ServerManager.InstallOptions(port = port, profile = profile, reinstall = true)) { steps += it }
             assertEquals(ServerManager.Step.DONE, steps.last())
-            assertEquals(net.paramnezia.core.profile.Protocol.AWG, manager.inspect(creds).awgContainer)
+            assertEquals(Protocol.AWG, manager.inspect(creds).awgContainer)
 
             val clientKey = WgKey.generatePrivate()
             val tunnel = manager.addClient(creds, clientKey, "e2e-phone")
@@ -123,10 +127,10 @@ class DeployE2ETest {
             AllowedIPs = 0.0.0.0/0
             """.trimIndent(),
         )
-        val plain = net.paramnezia.core.amnezia.AmneziaKey.encode(AmneziaFormat.export("Мама", tunnel))
+        val plain = AmneziaKey.encode(AmneziaFormat.export("Мама", tunnel))
         // A fleet invite is a plain key plus our field; the page must hand AmneziaVPN the plain part.
-        val invite = net.paramnezia.core.amnezia.AmneziaKey.encode(kotlinx.serialization.json.JsonObject(
-            net.paramnezia.core.amnezia.AmneziaKey.decode(plain) + (net.paramnezia.core.fleet.INVITE_KEY to kotlinx.serialization.json.JsonPrimitive("x"))))
+        val invite = AmneziaKey.encode(kotlinx.serialization.json.JsonObject(
+            AmneziaKey.decode(plain) + (INVITE_KEY to kotlinx.serialization.json.JsonPrimitive("x"))))
 
         val bytes = ByteArray(300_000) { (it * 13).toByte() }
         val sha = putInCache(bytes)
@@ -189,7 +193,7 @@ class DeployE2ETest {
         return code to body
     }
 
-    private fun handshake(tunnel: net.paramnezia.core.config.TunnelConfig, port: Int) {
+    private fun handshake(tunnel: TunnelConfig, port: Int) {
         val gateway = sh("docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'").trim()
         val clientConf = tunnel.copy(
             iface = tunnel.iface.copy(dns = emptyList()),

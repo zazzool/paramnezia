@@ -27,6 +27,8 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import net.paramnezia.core.config.TunnelConfig
+import net.paramnezia.core.fleet.GossipMessage
 
 /**
  * The VPN service. Designed to cost nothing while idle:
@@ -335,7 +337,7 @@ class ParamneziaVpnService : VpnService() {
         private const val TAG = "ParamneziaVpn"
         const val ACTION_START = "net.paramnezia.tunnel.START"
         const val ACTION_STOP = "net.paramnezia.tunnel.STOP"
-        const val GOSSIP_PORT = net.paramnezia.core.fleet.GossipMessage.PORT
+        const val GOSSIP_PORT = GossipMessage.PORT
         private const val FIRST_CHECK_MS = 20_000L
         private const val NETWORK_CHANGE_CHECK_MS = 15_000L
         private const val SCREEN_ON_CHECK_MS = 3_000L
@@ -368,5 +370,5 @@ class ParamneziaVpnService : VpnService() {
     }
 }
 
-private fun net.paramnezia.core.config.TunnelConfig.withKeepalive(ka: String) =
+private fun TunnelConfig.withKeepalive(ka: String) =
     copy(peers = peers.map { it.copy(persistentKeepalive = ka) })

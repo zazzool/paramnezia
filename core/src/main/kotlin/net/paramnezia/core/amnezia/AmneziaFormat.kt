@@ -18,6 +18,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
+import net.paramnezia.core.config.Uapi
 
 /**
  * Maps AmneziaVPN server JSON (the payload of `vpn://` keys) to [ServerProfile]s and back.
@@ -130,7 +131,7 @@ object AmneziaFormat {
     ): JsonObject {
         val protocol = if (tunnel.isAmnezia) Protocol.AWG else Protocol.WIREGUARD
         val peer = tunnel.peers.firstOrNull() ?: throw ConfigException("Tunnel has no peer")
-        val (host, port) = net.paramnezia.core.config.Uapi.splitEndpoint(peer.endpoint ?: throw ConfigException("Peer has no endpoint"))
+        val (host, port) = Uapi.splitEndpoint(peer.endpoint ?: throw ConfigException("Peer has no endpoint"))
         val dns1 = dns.getOrNull(0) ?: tunnel.iface.dns.getOrNull(0) ?: DEFAULT_DNS1
         val dns2 = dns.getOrNull(1) ?: tunnel.iface.dns.getOrNull(1) ?: DEFAULT_DNS2
         val clientPub = tunnel.iface.privateKey.publicKey().toBase64()

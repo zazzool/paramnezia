@@ -17,6 +17,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import net.paramnezia.core.fleet.Invite
+import net.paramnezia.deploy.SshException
 
 /**
  * One-time links for new devices and people. The link page runs on our own server. Android gets the
@@ -38,7 +40,7 @@ class Links(
     suspend fun forFleetDevice(name: String): StoredLink = withContext(Dispatchers.IO) {
         val (server, ssh) = fleet.managedServer() ?: error("Нет SSH-доступа ни к одному серверу флота")
         val invite = fleet.addDevice(name)
-        val pub = net.paramnezia.core.fleet.Invite.read(invite)?.let { WgKey.fromBase64(it.privateKey).publicKey().toBase64() }
+        val pub = Invite.read(invite)?.let { WgKey.fromBase64(it.privateKey).publicKey().toBase64() }
         val link = try {
             links.create(ssh, invite, name, appDownload())
         } catch (e: Exception) {
@@ -69,7 +71,7 @@ class Links(
 
     /** What went wrong, in words the admin can act on. */
     private fun friendly(e: Exception): Exception {
-        val code = (e as? net.paramnezia.deploy.SshException)?.code
+        val code = (e as? SshException)?.code
         val text = when (code) {
             "unreachable", "connect_failed" -> "Не удалось подключиться к серверу по SSH (порт 22). Проверьте, что сервер включён и SSH доступен."
             "auth_failed" -> "Сервер не принял логин или пароль SSH."

@@ -56,6 +56,7 @@ import net.paramnezia.tunnel.TunnelRuntime
 import net.paramnezia.tunnel.TunnelState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import net.paramnezia.tunnel.TunnelStats
 
 fun TunnelState.power(): PowerState = when (this) {
     is TunnelState.Up -> PowerState.ON
@@ -168,7 +169,7 @@ private fun LiveStats(blockTrackers: Boolean) {
     var up by remember { mutableLongStateOf(0L) }
     var blocked by remember { mutableLongStateOf(0L) }
     LaunchedEffect(Unit) {
-        var prev: net.paramnezia.tunnel.TunnelStats? = null
+        var prev: TunnelStats? = null
         var prevAt = 0L
         while (true) {
             val s = TunnelRuntime.stats()

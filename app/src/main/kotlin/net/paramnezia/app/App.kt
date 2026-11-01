@@ -31,6 +31,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import net.paramnezia.app.data.Servers
+import net.paramnezia.app.fleet.Links
+import net.paramnezia.app.net.Visibility
+import net.paramnezia.app.net.VisibilityCheck
+import net.paramnezia.app.ui.QuickTile
+import net.paramnezia.deploy.SshConnection
 
 /**
  * The app process. Also the [TunnelHost] the VPN service asks for configs: it decides which server
@@ -44,12 +50,12 @@ class App : Application(), TunnelHost {
     lateinit var fleet: FleetManager; private set
     /** Created on first use, off the launch path (it reads package info and the stored release). */
     val updater: Updater by lazy { Updater(this, repo, net, fleet, NativeEd25519, scope) }
-    lateinit var servers: net.paramnezia.app.data.Servers; private set
-    val links: net.paramnezia.app.fleet.Links by lazy { net.paramnezia.app.fleet.Links(repo, fleet, { updater }, scope) }
-    private val visibilityCheck by lazy { net.paramnezia.app.net.VisibilityCheck(net) }
-    private val _visibility = kotlinx.coroutines.flow.MutableStateFlow<net.paramnezia.app.net.Visibility?>(null)
+    lateinit var servers: Servers; private set
+    val links: Links by lazy { Links(repo, fleet, { updater }, scope) }
+    private val visibilityCheck by lazy { VisibilityCheck(net) }
+    private val _visibility = kotlinx.coroutines.flow.MutableStateFlow<Visibility?>(null)
     /** What foreign and Russian sites last saw; refreshed by the home screen. */
-    val visibility: kotlinx.coroutines.flow.StateFlow<net.paramnezia.app.net.Visibility?> = _visibility
+    val visibility: kotlinx.coroutines.flow.StateFlow<Visibility?> = _visibility
 
     suspend fun refreshVisibility() { _visibility.value = visibilityCheck.run() }
     private val failover = FailoverPolicy()
@@ -59,13 +65,13 @@ class App : Application(), TunnelHost {
         repo = Repo(this)
         net = Net(this)
         // Server management goes over the phone's own network while our VPN is up, then through it.
-        net.paramnezia.deploy.SshConnection.routes = {
+        SshConnection.routes = {
             val direct = if (TunnelRuntime.state.value is TunnelState.Down) null else net.direct()
             listOfNotNull(direct?.socketFactory) + listOf(null)
         }
         specs = SpecBuilder(this)
         fleet = FleetManager(repo, net, NativeEd25519, scope) { reconnectIfUp() }
-        servers = net.paramnezia.app.data.Servers(repo, fleet)
+        servers = Servers(repo, fleet)
 
         // DNS rules follow the settings; loading them is a one-off ~1 ms parse in Go.
         scope.launch(Dispatchers.IO) {
@@ -89,7 +95,7 @@ class App : Application(), TunnelHost {
             TunnelRuntime.state.collectLatest { s ->
                 WidgetProvider.refresh(this@App)
                 android.service.quicksettings.TileService.requestListeningState(
-                    this@App, android.content.ComponentName(this@App, net.paramnezia.app.ui.QuickTile::class.java))
+                    this@App, android.content.ComponentName(this@App, QuickTile::class.java))
                 val power = getSystemService(PowerManager::class.java)
                 while (s is TunnelState.Up && WidgetProvider.hasWidgets(this@App)) {
                     delay(30_000)
