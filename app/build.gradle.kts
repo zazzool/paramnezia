@@ -8,11 +8,11 @@ plugins {
 fun prop(name: String, env: String): String? = providers.gradleProperty(name).orNull ?: System.getenv(env)
 
 android {
-    namespace = "io.paramnezia.app"
+    namespace = "net.paramnezia.app"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "io.paramnezia"
+        applicationId = "net.paramnezia"
         minSdk = 26
         targetSdk = 36
         versionCode = (prop("paramnezia.versionCode", "PN_VERSION_CODE") ?: "1").toInt()

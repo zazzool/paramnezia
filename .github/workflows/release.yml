@@ -44,6 +44,12 @@ jobs:
           ./gradlew :app:assembleRelease :releasetool:installDist
           # Published byte for byte as apksigner wrote it: the same file for every user and channel.
           cp app/build/outputs/apk/release/app-release.apk "paramnezia-${VERSION}.apk"
+      - name: Check that the release key matches the key pinned in the app
+        run: |
+          # A mismatch would ship builds that silently reject every later OTA update.
+          releasetool/build/install/releasetool/bin/releasetool pubkey > pinned-check.txt
+          grep -E '^paramnezia\.release(Key|Nostr)=' gradle.properties | diff - pinned-check.txt \
+            || { echo "::error::PN_RELEASE_SEED in keys/release-keys.enc does not match gradle.properties (docs/RELEASE.md)"; exit 1; }
       - name: Audit the APK (Play Protect rules, docs/PLAY-PROTECT.md)
         run: bash .github/scripts/apk-audit.sh "paramnezia-${VERSION}.apk" --release
       - name: GitHub release

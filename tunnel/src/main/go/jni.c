@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0
  *
- * JNI bindings for io.paramnezia.tunnel.AwgNative. Derived from amneziawg-android's jni.c
+ * JNI bindings for net.paramnezia.tunnel.AwgNative. Derived from amneziawg-android's jni.c
  * (Copyright © 2017-2021 Jason A. Donenfeld).
  */
 
@@ -24,7 +24,7 @@ extern int pnEd25519Generate(void *seed_out, void *pub_out);
 extern void pnEd25519Sign(void *seed, void *msg, int msg_len, void *sig_out);
 extern bool pnEd25519Verify(void *pub, void *msg, int msg_len, void *sig);
 
-#define FN(name) Java_io_paramnezia_tunnel_AwgNative_##name
+#define FN(name) Java_net_paramnezia_tunnel_AwgNative_##name
 
 static struct go_string gs(JNIEnv *env, jstring s, const char **chars)
 {

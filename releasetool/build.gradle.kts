@@ -16,7 +16,7 @@ kotlin {
 }
 
 application {
-    mainClass.set("io.paramnezia.releasetool.MainKt")
+    mainClass.set("net.paramnezia.releasetool.MainKt")
 }
 
 dependencies {

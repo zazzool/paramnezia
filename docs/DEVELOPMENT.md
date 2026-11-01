@@ -31,7 +31,7 @@ releasetool/  JVM CLI: ключи релизов, публикация рели�
 tools/bypass-lists/  генератор списков «российское напрямую» и блок-листа трекеров
 ```
 
-### core (`io.paramnezia.core`)
+### core (`net.paramnezia.core`)
 
 | Пакет | Файлы | Что делает |
 |---|---|---|
@@ -45,7 +45,7 @@ tools/bypass-lists/  генератор списков «российское н
 | `net` | `IpPrefix`, `PrefixSet` | IPv4/IPv6 префиксы, вычитание множеств |
 | `profile` | `Profile` | `SshCredentials`, `Protocol` |
 
-### deploy (`io.paramnezia.deploy`)
+### deploy (`net.paramnezia.deploy`)
 
 | Файл | Что делает |
 |---|---|
@@ -56,7 +56,7 @@ tools/bypass-lists/  генератор списков «российское н
 | `InviteLinks.kt` | одноразовые ссылки: страница, `app.json`, хранение, проверка «использована», отзыв |
 | `resources/…/*.sh` | серверные скрипты, см. [SERVER.md](SERVER.md) |
 
-### tunnel (`io.paramnezia.tunnel`)
+### tunnel (`net.paramnezia.tunnel`)
 
 | Файл | Что делает |
 |---|---|
@@ -68,7 +68,7 @@ tools/bypass-lists/  генератор списков «российское н
 | `go/jni.c` | JNI-обвязка |
 | `build-go.sh` | сборка `libparamnezia.so` под ABI (патч Go на CLOCK_BOOTTIME) |
 
-### app (`io.paramnezia.app`)
+### app (`net.paramnezia.app`)
 
 | Файл | Что делает |
 |---|---|
@@ -95,7 +95,7 @@ PN_E2E=1 ./gradlew -Pparamnezia.jvmOnly=true :deploy:test   # настоящий
 ```
 
 APK: `app/build/outputs/apk/{debug,release}/`. Release без ключа подписывается debug-ключом: ставится, но
-OTA в нём выключены (нет `RELEASE_KEY`). Debug имеет `applicationId` `io.paramnezia.debug` и ставится рядом.
+OTA в нём выключены (нет `RELEASE_KEY`). Debug имеет `applicationId` `net.paramnezia.debug` и ставится рядом.
 
 ### Тесты
 

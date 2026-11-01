@@ -53,8 +53,8 @@ android.permission.CAMERA
 android.permission.RECEIVE_BOOT_COMPLETED
 android.permission.WAKE_LOCK
 android.permission.FOREGROUND_SERVICE
-io.paramnezia.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
-io.paramnezia.debug.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+net.paramnezia.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+net.paramnezia.debug.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
 for p in $(echo "$badging" | sed -n "s/^uses-permission: name='\([^']*\)'.*/\1/p"); do
   echo "$allowed" | grep -qx "$p" || bad "permission $p is not on the allowed list"
 done

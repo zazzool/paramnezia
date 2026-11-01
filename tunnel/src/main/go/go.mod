@@ -1,4 +1,4 @@
-module io.paramnezia/tunnel
+module net.paramnezia/tunnel
 
 go 1.25.0
 
