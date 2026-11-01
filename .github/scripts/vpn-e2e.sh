@@ -91,6 +91,8 @@ adb shell pidof net.paramnezia >/dev/null || fail "the app died"
 shot connected 15
 swipe_up; shot connected-scrolled 2
 python3 "$here/ui.py" find "ui-$tag-connected-scrolled.xml" "Как вас видят сайты" >/dev/null || echo "::warning::[$tag] the 'how sites see you' card is not on screen" 
-grep -q "FATAL EXCEPTION" <(adb logcat -d) && fail "crash in the log"
+# Our own crashes only: with internet in the emulator, Google's apps sometimes die on their own.
+grep -A1 "FATAL EXCEPTION" <(adb logcat -d) | grep -q "Process: net.paramnezia" && fail "crash in the log"
+grep -A1 "FATAL EXCEPTION" <(adb logcat -d) | grep "Process:" | sort -u | sed "s/^/::warning::[$tag] another app crashed: /"
 dump >/dev/null
 echo "[$tag] VPN end-to-end: OK"
