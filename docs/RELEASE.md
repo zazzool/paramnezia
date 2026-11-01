@@ -71,7 +71,7 @@ git push origin main:release/v2.1.0
 1. Собирает APK, подписанный вашим ключом, с вшитыми `PN_RELEASE_KEY` и `UPDATE_URL`; `versionCode` — номер
    запуска workflow, `versionName` — тег.
 2. Создаёт GitHub Release с APK.
-3. `releasetool sign`: подписывает `release.json` (ссылка на APK: `https://paramnezia.paramnezia.psync.ru-vX.Y.Z.apk`).
+3. `releasetool sign`: подписывает `release.json` (ссылка на APK: `https://paramnezia.psync.ru/paramnezia-vX.Y.Z.apk`).
 4. Выкладывает на psync.ru по rsync: сначала APK, потом `paramnezia.apk` (последняя версия) и `release.json`,
    затем проверяет, что `https://paramnezia.psync.ru/release.json` отдаёт новый релиз.
 
@@ -84,13 +84,13 @@ git push origin main:release/v2.1.0
 - На сервере: ключ только для выкладки, ограниченный папкой через `rrsync`:
   ```sh
   ssh-keygen -t ed25519 -N '' -f /root/pn-deploy
-  mkdir -p /root/paramnezia.psync.ru-dl
-  echo "command=\"rrsync /root/paramnezia.psync.ru-dl\",restrict $(cat /root/pn-deploy.pub)" >> /root/.ssh/authorized_keys
+  mkdir -p /root/psync.ru/paramnezia-dl
+  echo "command=\"rrsync /root/psync.ru/paramnezia-dl\",restrict $(cat /root/pn-deploy.pub)" >> /root/.ssh/authorized_keys
   ```
 - Секреты репозитория: `PN_DEPLOY_KEY` (приватный ключ `/root/pn-deploy`) и `PN_DEPLOY_HOST` (`root@psync.ru`
   или `root@psync.ru:порт`).
-- nginx в репозитории psync.ru отдаёт папку как `https://paramnezia.psync.ru/` (location `^~ /paramnezia/` и том
-  `./paramnezia-dl:/var/www/paramnezia:ro` в `docker-compose.yml`).
+- nginx в репозитории psync.ru отдаёт папку как `https://paramnezia.psync.ru/` (отдельный `server` с wildcard-сертификатом
+  `*.psync.ru` и том `./paramnezia-dl:/var/www/paramnezia:ro` в `docker-compose.yml`).
 
 Перед публикацией `apk-audit.sh --release` проверяет APK по правилам из [PLAY-PROTECT.md](PLAY-PROTECT.md); APK
 публикуется ровно таким, каким его подписал apksigner. Описание релиза берётся из `docs/releases/vX.Y.Z.md`, если

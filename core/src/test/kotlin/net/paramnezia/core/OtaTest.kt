@@ -71,7 +71,7 @@ class OtaTest {
     }
 
     @Test fun publicUrlsAreHttpsOnly() {
-        val r = release(7).copy(urls = listOf("https://paramnezia.paramnezia.psync.ru-v7.apk", "http://10.8.1.1:8080/apk/x"))
-        assertEquals(listOf("https://paramnezia.paramnezia.psync.ru-v7.apk"), r.publicApkUrls())
+        val r = release(7).copy(urls = listOf("https://paramnezia.psync.ru/paramnezia-v7.apk", "http://10.8.1.1:8080/apk/x"))
+        assertEquals(listOf("https://paramnezia.psync.ru/paramnezia-v7.apk"), r.publicApkUrls())
     }
 }

@@ -134,7 +134,7 @@ class DeployE2ETest {
 
         val bytes = ByteArray(300_000) { (it * 13).toByte() }
         val sha = putInCache(bytes)
-        val app = InviteLinks.AppDownload("v9.9.9", sha, listOf("https://paramnezia.paramnezia.psync.ru-v9.9.9.apk", "http://plain.example/x.apk"))
+        val app = InviteLinks.AppDownload("v9.9.9", sha, listOf("https://paramnezia.psync.ru/paramnezia-v9.9.9.apk", "http://plain.example/x.apk"))
 
         val link = links.create(creds, invite, "Мама", app, preferredPort = 18080)
         assertTrue(link.url, link.url.startsWith("http://127.0.0.1:18080/#"))

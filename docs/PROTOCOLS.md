@@ -94,7 +94,7 @@ SignedRelease(body = json(Release), sig = Ed25519(releaseSeed, "paramnezia-relea
 раза в 12 часов и по кнопке в настройках.
 
 Приложение не скачивает и не ставит APK само. «Скачать» открывает в браузере первый HTTPS-адрес из `urls`
-(`https://paramnezia.paramnezia.psync.ru-vX.Y.Z.apk`), дальше обычная установка Android. Админ при открытом
+(`https://paramnezia.psync.ru/paramnezia-vX.Y.Z.apk`), дальше обычная установка Android. Админ при открытом
 приложении раз в сутки просит серверы скачать релиз самим (`release-mirror.sh`: HTTPS-адреса из релиза, проверка
 SHA-256) и положить его в `apk/<sha256>` и `release.json` внутри туннеля и на страницу приглашений.
 
