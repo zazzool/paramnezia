@@ -22,10 +22,20 @@ openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in keys/release-keys.enc | tar
 
 Сборки CI из PR и `main` подписаны debug-ключом раннера; поверх них релиз ставится только после удаления.
 
-Отпечаток сертификата подписи 2.x (SHA-256):
-`1C:19:A3:3B:D3:03:8E:59:41:F0:97:97:6D:C8:66:0E:5B:5A:89:4C:41:8F:8B:81:A7:35:C8:14:A5:0F:5F:20`.
+Отпечаток сертификата подписи (SHA-256) — в `keys/signing-cert-sha256.txt`.
 
 ## Если нужно заменить ключи
+
+Проще всего в GitHub Actions (так созданы ключи 2.0.0, они никогда не покидали Actions):
+
+1. Задайте новое случайное значение секрета `PN_KEYS_PASSWORD` (Settings → Secrets and variables → Actions) и
+   сохраните копию офлайн.
+2. Запушьте ветку `keys/rotate-<что угодно>`. Workflow `rotate-keys.yml` создаст keystore и ключ релизов,
+   зашифрует их этим паролем, проверит расшифровку и закоммитит в ту же ветку `keys/release-keys.enc`,
+   `keys/signing-cert-sha256.txt` и публичные ключи в `gradle.properties`.
+3. Смёржите ветку.
+
+Вручную:
 
 ```sh
 keytool -genkeypair -keystore paramnezia.jks -storetype PKCS12 -alias paramnezia -keyalg EC -groupname secp256r1 -validity 36500

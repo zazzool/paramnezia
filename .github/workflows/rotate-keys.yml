@@ -1,0 +1,59 @@
+name: Rotate keys
+
+# Creates a brand-new APK signing keystore and OTA release key inside GitHub Actions, so no secret ever leaves it.
+# 1. Put a new random value into the secret PN_KEYS_PASSWORD (keep a copy offline).
+# 2. Push any commit to a branch named keys/rotate-<anything>.
+# The job commits the new keys/release-keys.enc and the public halves in gradle.properties to that branch;
+# merge it like any other change (docs/RELEASE.md). New signing key = reinstall on every device.
+on:
+  push:
+    branches: ["keys/rotate-*"]
+
+permissions:
+  contents: write
+
+jobs:
+  rotate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build releasetool
+        run: ./gradlew -Pparamnezia.jvmOnly=true :releasetool:installDist --no-configuration-cache
+      - name: Generate and encrypt the keys
+        env:
+          PN_KEYS_PASSWORD: ${{ secrets.PN_KEYS_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PN_KEYS_PASSWORD" ]; then echo "::error::Secret PN_KEYS_PASSWORD is not set"; exit 1; fi
+          k="$RUNNER_TEMP/keys"; mkdir -m 700 -p "$k"; cd "$k"
+          rt="$GITHUB_WORKSPACE/releasetool/build/install/releasetool/bin/releasetool"
+          ks=$(openssl rand -hex 24)
+          keytool -genkeypair -keystore paramnezia.jks -storetype PKCS12 -alias paramnezia -keyalg EC \
+            -groupname secp256r1 -validity 36500 -dname "CN=Paramnezia" -storepass "$ks" -keypass "$ks" >/dev/null 2>&1
+          seed=$("$rt" keygen | sed -n 's/^PN_RELEASE_SEED=//p')
+          echo "::add-mask::$ks"; echo "::add-mask::$seed"
+          printf 'PN_KEYSTORE_PASSWORD=%s\nPN_KEY_ALIAS=paramnezia\nPN_RELEASE_SEED=%s\n' "$ks" "$seed" > release.env
+          PN_RELEASE_SEED="$seed" "$rt" pubkey > pub.txt
+          tar c paramnezia.jks release.env | openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt \
+            -pass env:PN_KEYS_PASSWORD -out "$GITHUB_WORKSPACE/keys/release-keys.enc"
+          # Round trip with the secret before committing anything.
+          mkdir check
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass env:PN_KEYS_PASSWORD \
+            -in "$GITHUB_WORKSPACE/keys/release-keys.enc" | tar x -C check
+          cmp check/release.env release.env && cmp check/paramnezia.jks paramnezia.jks
+          fp=$(keytool -list -v -keystore paramnezia.jks -storepass "$ks" 2>/dev/null | sed -n 's/.*SHA256: //p' | head -1)
+          cd "$GITHUB_WORKSPACE"
+          sed -i "s#^paramnezia.releaseKey=.*#$(grep releaseKey= "$k/pub.txt")#; s#^paramnezia.releaseNostr=.*#$(grep releaseNostr= "$k/pub.txt")#" gradle.properties
+          echo "$fp" > keys/signing-cert-sha256.txt
+          rm -rf "$k"
+          { echo "### New keys"; echo "Signing certificate SHA-256: \`$fp\`"; echo '```'; grep '^paramnezia.release' gradle.properties; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898333+github-actions[bot]@users.noreply.github.com"
+          git add keys/release-keys.enc keys/signing-cert-sha256.txt gradle.properties
+          git commit -m "Rotate signing and release keys"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
