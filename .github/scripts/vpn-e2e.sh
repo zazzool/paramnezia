@@ -30,8 +30,6 @@ tap() {
 }
 
 adb install -r "$apk" || fail "install failed"
-# A phone-sized screen, so the screenshots look like a real phone (the default AVD is 320x640).
-adb shell wm size 1080x2340; adb shell wm density 440
 adb logcat -c
 adb shell monkey -p net.paramnezia -c android.intent.category.LAUNCHER 1 >/dev/null
 sleep 10
@@ -46,7 +44,15 @@ shot() {
 }
 # Fresh install, no servers: the home screen must say so plainly.
 shot empty
-python3 "$here/ui.py" find "ui-$tag-empty.xml" "Нет ни одного сервера" >/dev/null || fail "no 'no servers' indicator on a fresh install"
+python3 "$here/ui.py" find "ui-$tag-empty.xml" "Нет сервера" >/dev/null || fail "no 'no servers' indicator on a fresh install"
+swipe_up() {
+  local w=320 h=640
+  read -r w h < <(adb shell wm size | sed -n 's/.*: \([0-9]*\)x\([0-9]*\).*/\1 \2/p' | tail -1) || true
+  w=${w:-320}; h=${h:-640}
+  adb shell input swipe $((w / 2)) $((h * 3 / 4)) $((w / 2)) $((h / 5)) 400
+}
+swipe_up; shot empty-scrolled 2
+python3 "$here/ui.py" find "ui-$tag-empty-scrolled.xml" "Нет ни одного сервера" >/dev/null || fail "no 'no servers' card on a fresh install"
 
 adb push "$conf" /data/local/tmp/c.conf >/dev/null
 adb shell 'am start -n net.paramnezia/net.paramnezia.app.ui.MainActivity -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "$(cat /data/local/tmp/c.conf)"' >/dev/null
@@ -83,9 +89,7 @@ adb shell ping -c 3 -W 2 10.9.0.1 || echo "::warning::[$tag] ping 10.9.0.1 throu
 adb shell pidof net.paramnezia >/dev/null || fail "the app died"
 # The "how sites see you" card checks the addresses a few seconds after connecting.
 shot connected 15
-w=1080; h=2340
-read -r w h < <(adb shell wm size | sed -n 's/.*: \([0-9]*\)x\([0-9]*\).*/\1 \2/p' | tail -1)
-adb shell input swipe $((w / 2)) $((h * 3 / 4)) $((w / 2)) $((h / 5)) 400; shot connected-scrolled 2
+swipe_up; shot connected-scrolled 2
 python3 "$here/ui.py" find "ui-$tag-connected-scrolled.xml" "Как вас видят сайты" >/dev/null || echo "::warning::[$tag] the 'how sites see you' card is not on screen" 
 grep -q "FATAL EXCEPTION" <(adb logcat -d) && fail "crash in the log"
 dump >/dev/null
