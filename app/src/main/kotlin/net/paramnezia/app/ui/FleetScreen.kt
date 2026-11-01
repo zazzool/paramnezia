@@ -1,26 +1,59 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package net.paramnezia.app.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.os.Build
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -33,27 +66,33 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import net.paramnezia.app.App
 import net.paramnezia.app.data.CloudServerRef
 import net.paramnezia.app.data.StoredLink
-import net.paramnezia.app.fleet.Links
-import net.paramnezia.deploy.cloud.CloudProviders
 import net.paramnezia.app.data.StoredProfile
+import net.paramnezia.app.fleet.Links
 import net.paramnezia.core.config.WgQuick
 import net.paramnezia.core.crypto.WgKey
-import net.paramnezia.core.profile.SshCredentials
+import net.paramnezia.deploy.cloud.CloudProviders
 import kotlinx.coroutines.launch
 
 /**
- * The fleet: this owner's servers and trusted devices. Devices follow the admin's manifest on their
- * own; the admin device manages it here.
+ * The fleet: this owner's servers and trusted devices, and everything for handing out access.
+ * Devices follow the admin's manifest on their own; the admin device manages it here.
+ *
+ * Who comes here and what they need first:
+ * - no server of their own yet → why a server is needed, and the way to get one;
+ * - an admin with a server but no fleet → create the fleet (recommended) or invite people without one;
+ * - a fleet admin → invite (the most frequent action), then devices, servers, sharing, delivery;
+ * - a fleet member → which servers and devices there are and when settings last arrived.
  */
 @Composable
-fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
+fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServer: () -> Unit = {}) {
     val state by app.repo.state.collectAsState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -68,8 +107,8 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
     /** People just added in one go, with what to send each of them. */
     var created by remember { mutableStateOf<List<Links.Created>?>(null) }
     val clipboard = remember { context.getSystemService(ClipboardManager::class.java) }
-    /** Standalone server to make a separate account on (no fleet). */
-    var accountOn by remember { mutableStateOf<StoredProfile?>(null) }
+    /** Standalone servers to make separate accounts on (no fleet); the dialog lets the admin pick one. */
+    var accountOn by remember { mutableStateOf<List<StoredProfile>?>(null) }
 
     // Which links have been used: asked only while some are still open.
     LaunchedEffect(Unit) {
@@ -87,184 +126,189 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
             busy = false
         }
     }
+    val openUrl: (String) -> Unit = { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(it))) }
+    val shareFamily: (String) -> Unit = { Share.text(context, familyMessage(it), "Отправить страницу") }
+    val sync = { work { toast(if (app.fleet.sync()) "Получена новая конфигурация" else "Конфигурация актуальна") } }
 
-    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(
+        modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = Space.M, vertical = Space.S),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         val fleet = state.fleet
         if (fleet == null) {
-            Text("Флот", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("Флот объединяет ваши серверы и устройства. Устройства сами получают новые серверы и ваши настройки, " +
-                "а при блокировке сервера переключаются на резервный.")
             val managed = state.profiles.filter { it.ssh != null }
-            if (managed.isEmpty()) {
-                Text("Чтобы создать флот, сначала разверните свой сервер на вкладке «Добавить» или импортируйте ключ с полным доступом.",
-                    style = MaterialTheme.typography.bodySmall)
-            }
-            for (p in managed) {
-                Button(enabled = !busy, onClick = {
-                    work("Флот создан") { app.fleet.create(p.name, WgQuick.parse(p.conf), p.ssh!!, Build.MODEL) }
-                }) { Text("Создать флот на «${p.name}»") }
-            }
-            if (managed.isNotEmpty()) {
-                Text("Или раздайте доступ без флота: каждому свой ключ, ссылкой или файлом, можно сразу нескольким.", style = MaterialTheme.typography.bodySmall)
-                for (p in managed) {
-                    OutlinedButton(enabled = !busy, onClick = { accountOn = p }) { Text("Новые пользователи «${p.name}»") }
-                }
-            }
-            if (managed.isNotEmpty()) {
-                FamilyPage(state.pages[managed.first().ssh!!.host], busy,
-                    onCreate = { work { app.links.familyPage() } },
-                    onShare = { Share.text(context, familyMessage(it), "Отправить страницу") },
-                    onOpen = { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(it))) })
-            }
-            LinkList(state.links, busy, onOpen = { link = it }) { l -> work("Ссылка отозвана") { app.links.revoke(l) } }
+            ScreenTitle("Флот", "Раздайте VPN семье и друзьям")
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (managed.isEmpty()) {
+                NeedServer(onAddServer)
+                return@Column
+            }
+            // Recommended: a fleet survives a blocked server; plain accounts do not.
+            FleetPitch(managed, busy) { p -> work("Флот создан") { app.fleet.create(p.name, WgQuick.parse(p.conf), p.ssh!!, Build.MODEL) } }
+            Group {
+                GroupRow(
+                    "Пригласить без флота", subtitle = "Каждому свой ключ ссылкой или файлом, сразу нескольким",
+                    icon = Glyph.PersonAdd, onClick = { if (!busy) accountOn = managed },
+                    trailing = { Chevron() },
+                )
+            }
+            SectionTitle("Раздача")
+            FamilyPage(state.pages[managed.first().ssh!!.host], busy, onCreate = { work { app.links.familyPage() } }, onShare = shareFamily, onOpen = openUrl)
+            LinkList(state.links, busy, onOpen = { link = it }) { l -> work("Ссылка отозвана") { app.links.revoke(l) } }
+            Spacer(Modifier.height(Space.M))
             return@Column
         }
 
         val manifest = remember(fleet.manifest) { app.fleet.manifest() }
         val isAdmin = fleet.adminSeed != null
         val me = WgKey.fromBase64(fleet.deviceKey).publicKey().toBase64()
-        Text(if (isAdmin) "Флот (вы администратор)" else "Флот", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text("Версия конфигурации: ${manifest?.version ?: "—"}", style = MaterialTheme.typography.bodySmall)
-        if (fleet.lastSync > 0) {
-            val via = when (fleet.lastSyncVia) { "tunnel" -> "с сервера"; "github" -> "через GitHub"; "tor" -> "через Tor (Orbot)"; else -> "с зеркала" }
-            Text("Проверено ${android.text.format.DateUtils.getRelativeTimeSpanString(fleet.lastSync)}, $via",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
-        }
-        if (!isAdmin && manifest?.policy != null) {
-            Text("Обход российских сайтов и блокировку рекламы настраивает администратор флота, они обновляются сами.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
-        }
+        val servers = manifest?.servers.orEmpty()
+        val devices = manifest?.devices.orEmpty()
 
-        Text("Серверы", style = MaterialTheme.typography.titleMedium)
-        manifest?.servers?.forEachIndexed { i, s ->
-            Card(Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(s.name + if (i == 0) " · основной" else " · резервный", fontWeight = FontWeight.Bold)
-                        Text("${s.host}:${s.port}", style = MaterialTheme.typography.bodySmall)
-                    }
-                    if (isAdmin && i > 0) {
-                        TextButton(enabled = !busy, onClick = { work("${s.name} теперь основной") { app.fleet.promote(s.id) } }) { Text("Сделать основным") }
-                    }
-                    if (isAdmin && manifest.servers.size > 1) {
-                        TextButton(enabled = !busy, onClick = {
-                            val bought = app.cloud.serverAt(s.host)
-                            work("Сервер удалён из флота") { app.fleet.removeServer(s.id); boughtRemoved = bought }
-                        }) { Text("Удалить") }
-                    }
-                }
-            }
+        ScreenTitle(
+            "Флот",
+            if (isAdmin) "Вы администратор · ${plural(devices.size, "устройство", "устройства", "устройств")}, ${plural(servers.size, "сервер", "сервера", "серверов")}"
+            else "Серверы и настройки приходят от администратора",
+        ) {
+            IconButton(enabled = !busy, onClick = sync) { Icon(Icons.Filled.Refresh, "Проверить обновления конфигурации") }
         }
-        if (isAdmin) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(enabled = !busy, onClick = { buying = true }) { Text("Купить у хостера") }
-            OutlinedButton(enabled = !busy, onClick = { newServer = true }) { Text("Свой VPS") }
-        }
-
-        Text("Устройства", style = MaterialTheme.typography.titleMedium)
-        manifest?.devices?.forEach { d ->
-            Card(Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(d.name + if (d.publicKey == me) " · это устройство" else "", fontWeight = FontWeight.Bold)
-                        Text(d.address, style = MaterialTheme.typography.bodySmall)
-                    }
-                    if (isAdmin && d.publicKey != me) {
-                        TextButton(enabled = !busy, onClick = { work("Устройство отключено") { app.fleet.removeDevice(d.publicKey) } }) { Text("Отключить") }
-                    }
-                }
-            }
-        }
-        if (isAdmin) Button(enabled = !busy, onClick = { newDevice = true }) { Text("Пригласить устройства") }
-        if (isAdmin) {
-            val host = remember(fleet.manifest) { app.fleet.managedServer()?.second?.host }
-            if (host != null) FamilyPage(state.pages[host], busy,
-                onCreate = { work { app.links.familyPage() } },
-                onShare = { Share.text(context, familyMessage(it), "Отправить страницу") },
-                onOpen = { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(it))) })
-        }
-        if (isAdmin) LinkList(state.links, busy, onOpen = { link = it }) { l -> work("Ссылка отозвана") { app.links.revoke(l) } }
-
-        if (isAdmin) {
-            Text("Доставка настроек", style = MaterialTheme.typography.titleMedium)
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Мои настройки на всех устройствах", fontWeight = FontWeight.Bold)
-                            Text("Обход российского, блокировка рекламы, списки «через VPN» и «напрямую»",
-                                style = MaterialTheme.typography.bodySmall)
-                        }
-                        androidx.compose.material3.Switch(fleet.sharePolicy, enabled = !busy, onCheckedChange = { on ->
-                            work(if (on) "Устройства получат ваши настройки" else "Устройства оставят свои настройки") {
-                                app.fleet.sharePolicy(state.settings, on)
-                            }
-                        })
-                    }
-                }
-            }
-            ReserveChannel(fleet.gistToken != null, fleet.gistError, busy,
-                onEnable = { token -> work("Резервный канал включён") { app.fleet.setReserveChannel(token) } },
-                onDisable = { work("Резервный канал отключён") { app.fleet.clearReserveChannel() } },
-                openTokenPage = {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(GITHUB_TOKEN_PAGE)))
-                })
-        }
-
-        OutlinedButton(enabled = !busy, onClick = {
-            work { toast(if (app.fleet.sync()) "Получена новая конфигурация" else "Конфигурация актуальна") }
-        }) { Text("Проверить обновления конфигурации") }
+        SyncStatus(fleet.lastSync, fleet.lastSyncVia)
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+
+        if (isAdmin) ActionTile(Glyph.PersonAdd, "Пригласить", "Ссылкой, файлом или QR-кодом, сразу нескольким", primary = true) {
+            if (!busy) newDevice = true
+        }
+
+        SectionTitle("Устройства") { Pill(devices.size.toString()) }
+        Group {
+            for (d in devices) {
+                val self = d.publicKey == me
+                GroupRow(
+                    d.name, subtitle = d.address.substringBefore('/'), monogram = d.name.trim().take(1).uppercase().ifEmpty { "?" },
+                    accent = if (self) Brand.Violet else MaterialTheme.colorScheme.primary,
+                    badge = if (self) "это устройство" else null,
+                    trailing = {
+                        if (isAdmin && !self) Overflow(busy, "Отключить" to { work("Устройство отключено") { app.fleet.removeDevice(d.publicKey) } })
+                    },
+                )
+            }
+        }
+
+        SectionTitle("Серверы") { Pill(servers.size.toString()) }
+        if (isAdmin && servers.size < 2) {
+            Hint("Добавьте резервный сервер: если основной заблокируют, устройства сами переключатся на него.", Icons.Filled.Warning, Brand.Amber)
+        }
+        Group {
+            servers.forEachIndexed { i, s ->
+                val actions = buildList<Pair<String, () -> Unit>> {
+                    if (isAdmin && i > 0) add("Сделать основным" to { work("${s.name} теперь основной") { app.fleet.promote(s.id) } })
+                    if (isAdmin && servers.size > 1) add("Удалить из флота" to {
+                        val bought = app.cloud.serverAt(s.host)
+                        work("Сервер удалён из флота") { app.fleet.removeServer(s.id); boughtRemoved = bought }
+                    })
+                }
+                GroupRow(
+                    s.name, subtitle = "${s.host}:${s.port}", icon = Glyph.Server,
+                    accent = if (i == 0) Brand.Mint else MaterialTheme.colorScheme.onSurfaceVariant,
+                    badge = if (i == 0) "основной" else "резервный",
+                    trailing = { if (actions.isNotEmpty()) Overflow(busy, *actions.toTypedArray()) },
+                )
+            }
+            if (isAdmin) Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
+                Row(Modifier.fillMaxWidth().padding(Space.M), horizontalArrangement = Arrangement.spacedBy(Space.S)) {
+                    FilledTonalButton(enabled = !busy, onClick = { buying = true }, modifier = Modifier.weight(1f).height(48.dp)) {
+                        Icon(Glyph.Cloud, null, Modifier.size(18.dp)); Spacer(Modifier.width(Space.S)); Text("У хостера", maxLines = 1)
+                    }
+                    OutlinedButton(enabled = !busy, onClick = { newServer = true }, modifier = Modifier.weight(1f).height(48.dp)) {
+                        Icon(Glyph.Server, null, Modifier.size(18.dp)); Spacer(Modifier.width(Space.S)); Text("Свой VPS", maxLines = 1)
+                    }
+                }
+            }
+        }
+
+        if (isAdmin) {
+            SectionTitle("Раздача")
+            val host = remember(fleet.manifest) { app.fleet.managedServer()?.second?.host }
+            if (host != null) FamilyPage(state.pages[host], busy, onCreate = { work { app.links.familyPage() } }, onShare = shareFamily, onOpen = openUrl)
+            LinkList(state.links, busy, onOpen = { link = it }) { l -> work("Ссылка отозвана") { app.links.revoke(l) } }
+
+            SectionTitle("Доставка настроек")
+            Group {
+                GroupRow(
+                    "Мои настройки на всех устройствах", subtitle = "Обход российского, блокировка рекламы, списки «через VPN» и «напрямую»",
+                    icon = Icons.Filled.Settings,
+                    onClick = { if (!busy) work(if (!fleet.sharePolicy) "Устройства получат ваши настройки" else "Устройства оставят свои настройки") {
+                        app.fleet.sharePolicy(state.settings, !fleet.sharePolicy)
+                    } },
+                    trailing = {
+                        Switch(fleet.sharePolicy, enabled = !busy, onCheckedChange = { on ->
+                            work(if (on) "Устройства получат ваши настройки" else "Устройства оставят свои настройки") { app.fleet.sharePolicy(state.settings, on) }
+                        })
+                    },
+                )
+                ReserveChannel(fleet.gistToken != null, fleet.gistError, busy, toast,
+                    onEnable = { token -> work("Резервный канал включён") { app.fleet.setReserveChannel(token) } },
+                    onDisable = { work("Резервный канал отключён") { app.fleet.clearReserveChannel() } },
+                    openTokenPage = { openUrl(GITHUB_TOKEN_PAGE) })
+            }
+        } else if (manifest?.policy != null) {
+            Hint("Обход российских сайтов и блокировку рекламы настраивает администратор флота, они обновляются сами.", Icons.Filled.Info)
+        }
+        Spacer(Modifier.height(Space.M))
     }
 
     if (newDevice) {
         PeopleDialog(
-            title = "Новые устройства флота",
+            title = "Пригласить во флот",
             hint = "Устройства флота сами получают новые серверы и ваши настройки.",
             allowQr = true,
             onDismiss = { newDevice = false },
             onQr = { name -> newDevice = false; work { invite = app.fleet.addDevice(name) } },
-        ) { names, delivery ->
+        ) { names, delivery, _ ->
             newDevice = false
             work { created = createPeople(app, names, null, delivery, toast) }
         }
     }
 
-    accountOn?.let { p ->
+    accountOn?.let { choices ->
         PeopleDialog(
-            title = "Новые пользователи «${p.name}»",
-            hint = "Каждому свой ключ на этом сервере, без флота.",
+            title = "Пригласить без флота",
+            hint = "Каждому свой ключ на выбранном сервере.",
             allowQr = false,
+            servers = choices,
             onDismiss = { accountOn = null },
             onQr = {},
-        ) { names, delivery ->
+        ) { names, delivery, server ->
             accountOn = null
-            work { created = createPeople(app, names, p, delivery, toast) }
+            work { created = createPeople(app, names, server ?: choices.first(), delivery, toast) }
         }
     }
 
     created?.let { list ->
         AlertDialog(
             onDismissRequest = { created = null },
+            icon = { Icon(Icons.Filled.CheckCircle, null, tint = Brand.Mint) },
             title = { Text(if (list.size == 1) "Готово" else "Готово: ${list.size}") },
             text = {
-                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(Space.S)) {
                     val files = list.any { it.stored.file }
                     Text(
                         if (files) "Отправьте каждому его файл. Человек открывает файл в мессенджере, и Paramnezia (или AmneziaVPN) " +
                             "сразу подключается. Файл работает без ссылки и не одноразовый: отправляйте лично."
                         else "Отправьте каждому его ссылку. Ссылка одноразовая и действует 7 дней: на Android откроет Paramnezia " +
                             "сама (или поможет установить), на iPhone выдаст ключ для AmneziaVPN.",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                     )
-                    for (c in list) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text(c.name, Modifier.weight(1f), fontWeight = FontWeight.Bold)
-                            TextButton(onClick = {
-                                if (c.stored.file) Share.file(context, c.name, c.key)
-                                else Share.text(context, inviteMessage(c.name, c.stored.url), "Отправить ссылку")
-                            }) { Text(if (c.stored.file) "Отправить файл" else "Отправить ссылку") }
-                        }
+                    Group {
+                        for (c in list) GroupRow(
+                            c.name, monogram = c.name.trim().take(1).uppercase().ifEmpty { "?" },
+                            trailing = {
+                                FilledTonalButton(onClick = {
+                                    if (c.stored.file) Share.file(context, c.name, c.key)
+                                    else Share.text(context, inviteMessage(c.name, c.stored.url), "Отправить ссылку")
+                                }) { Icon(Icons.Filled.Share, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (c.stored.file) "Файл" else "Ссылку") }
+                            },
+                        )
                     }
                 }
             },
@@ -281,24 +325,27 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
     link?.let { l ->
         AlertDialog(
             onDismissRequest = { link = null },
+            icon = { Icon(Glyph.Link, null) },
             title = { Text("Ссылка для «${l.name}»") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SelectionContainer { Text(l.url, fontWeight = FontWeight.Bold) }
-                    TextButton(onClick = {
-                        clipboard.setPrimaryClip(ClipData.newPlainText("Paramnezia", l.url))
-                        toast("Ссылка скопирована")
-                    }) { Text("Скопировать") }
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SelectionContainer {
+                        Text(l.url, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium,
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(12.dp))
+                    }
                     Text("Сработает один раз и действует 7 дней. Отправьте её в личном сообщении: кто откроет первым, тот и получит доступ.",
-                        style = MaterialTheme.typography.bodySmall)
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    Share.text(context, inviteMessage(l.name, l.url), "Отправить ссылку")
-                }) { Text("Отправить") }
+                Button(onClick = { Share.text(context, inviteMessage(l.name, l.url), "Отправить ссылку") }) { Text("Отправить") }
             },
-            dismissButton = { TextButton(onClick = { link = null }) { Text("Готово") } },
+            dismissButton = {
+                TextButton(onClick = {
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Paramnezia", l.url))
+                    toast("Ссылка скопирована")
+                }) { Text("Скопировать") }
+            },
         )
     }
 
@@ -307,7 +354,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
             onDismissRequest = { invite = null },
             title = { Text("Приглашение") },
             text = {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Space.S)) {
                     KeyQr(key)
                     Text("Отсканируйте в Paramnezia на новом устройстве. AmneziaVPN тоже примет этот ключ, но без автопереключения.",
                         style = MaterialTheme.typography.bodySmall)
@@ -337,34 +384,118 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
         )
     }
     if (newServer) {
-        var host by remember { mutableStateOf("") }
-        var password by remember { mutableStateOf("") }
-        var sshKey by remember { mutableStateOf("") }
+        val form = remember { SshFormState() }
         var master by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { newServer = false },
-            title = { Text("Новый сервер") },
+            icon = { Icon(Glyph.Server, null) },
+            title = { Text("Свой VPS во флот") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("AmneziaWG установится автоматически, все устройства флота получат к нему доступ.", style = MaterialTheme.typography.bodySmall)
-                    OutlinedTextField(host, { host = it.trim() }, label = { Text("IP или домен (логин root)") }, singleLine = true)
-                    OutlinedTextField(password, { password = it }, label = { Text("Пароль") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
-                    OutlinedTextField(sshKey, { sshKey = it }, label = { Text("или SSH-ключ") }, maxLines = 3)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.material3.Checkbox(master, { master = it })
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("AmneziaWG установится сам, все устройства флота получат доступ к серверу.", style = MaterialTheme.typography.bodyMedium)
+                    SshFields(form, enabled = true, toast = toast, showName = true)
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { master = !master }, verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(master, { master = it })
                         Text("Сразу сделать основным")
                     }
                 }
             },
             confirmButton = {
-                TextButton(enabled = host.isNotBlank() && (password.isNotEmpty() || sshKey.isNotBlank()), onClick = {
+                Button(enabled = form.ready, onClick = {
                     newServer = false
-                    work("Сервер добавлен во флот") { app.fleet.addServer(host, SshCredentials(host, password = password, privateKey = sshKey.trim()), master) {} }
+                    val creds = form.credentials()
+                    work("Сервер добавлен во флот") { app.fleet.addServer(form.name.ifBlank { creds.host }, creds, master) {} }
                 }) { Text("Развернуть") }
             },
             dismissButton = { TextButton(onClick = { newServer = false }) { Text("Отмена") } },
         )
     }
+}
+
+/** No server of one's own: nothing to share yet. Says why and leads to the «Добавить» tab. */
+@Composable
+private fun NeedServer(onAddServer: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(Space.L), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.size(56.dp).clip(CircleShape).background(Brand.Coral.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
+                Icon(Glyph.Server, null, Modifier.size(28.dp), tint = Brand.Coral)
+            }
+            Text("Сначала нужен свой сервер", style = MaterialTheme.typography.titleLarge)
+            Text("Приглашать людей и собирать флот можно на сервере, который вы купили в приложении или развернули на своём VPS.",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = onAddServer, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Добавить сервер") }
+        }
+    }
+    SectionTitle("Как это работает")
+    Group {
+        GroupRow("Свой сервер", subtitle = "Купленный у хостера из приложения или ваш VPS", icon = Glyph.Server)
+        GroupRow("Приглашения", subtitle = "Ссылкой, файлом или QR-кодом, сразу всей семье", icon = Glyph.PersonAdd)
+        GroupRow("Одна кнопка", subtitle = "Люди подключаются без настроек, при блокировке флот сам переходит на резервный сервер", icon = Glyph.Shield)
+    }
+}
+
+/** Why a fleet, and the button to make one on each own server. */
+@Composable
+private fun FleetPitch(managed: List<StoredProfile>, busy: Boolean, onCreate: (StoredProfile) -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(Space.L), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Glyph.Shield, null, Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                Spacer(Modifier.width(12.dp))
+                Text("Создать флот", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.weight(1f))
+                Pill("рекомендую", MaterialTheme.colorScheme.onSecondaryContainer)
+            }
+            for (line in listOf(
+                "Устройства сами получают новые серверы и ваши настройки",
+                "Заблокировали сервер — все переключатся на резервный",
+                "Приглашения ссылкой, файлом или QR-кодом",
+            )) Row(verticalAlignment = Alignment.Top) {
+                Text("•", color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.padding(end = Space.S))
+                Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
+            }
+            for (p in managed) Button(enabled = !busy, onClick = { onCreate(p) }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+                Text(if (managed.size == 1) "Создать флот" else "Создать флот на «${p.name}»", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+/** When this device last got the configuration, and from where. */
+@Composable
+private fun SyncStatus(lastSync: Long, via: String?) {
+    if (lastSync <= 0) {
+        Hint("Конфигурация ещё не проверялась. Нажмите ⟳ вверху.", Icons.Filled.Info)
+        return
+    }
+    val from = when (via) { "tunnel" -> "с сервера"; "github" -> "через GitHub"; "tor" -> "через Tor (Orbot)"; else -> "с зеркала" }
+    Hint("Конфигурация актуальна: проверено ${ago(System.currentTimeMillis() - lastSync)}, $from",
+        Icons.Filled.CheckCircle, Brand.Mint)
+}
+
+@Composable
+private fun Chevron() = Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+
+/** «⋮» with the row's less frequent (and destructive) actions. */
+@Composable
+private fun Overflow(busy: Boolean, vararg actions: Pair<String, () -> Unit>) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(enabled = !busy, onClick = { open = true }) { Icon(Icons.Filled.MoreVert, "Действия") }
+        DropdownMenu(open, onDismissRequest = { open = false }) {
+            for ((label, action) in actions) DropdownMenuItem(text = { Text(label) }, onClick = { open = false; action() })
+        }
+    }
+}
+
+/** 1 устройство, 2 устройства, 5 устройств. */
+private fun plural(n: Int, one: String, few: String, many: String): String {
+    val m10 = n % 10; val m100 = n % 100
+    val w = when {
+        m10 == 1 && m100 != 11 -> one
+        m10 in 2..4 && m100 !in 12..14 -> few
+        else -> many
+    }
+    return "$n $w"
 }
 
 private fun familyMessage(url: String) =
@@ -376,18 +507,31 @@ private fun familyMessage(url: String) =
  */
 @Composable
 private fun FamilyPage(url: String?, busy: Boolean, onCreate: () -> Unit, onShare: (String) -> Unit, onOpen: (String) -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Страница для семьи и друзей", fontWeight = FontWeight.Bold)
-            Text("Красивая страница на вашем сервере: скачать приложение, скриншоты и как подключиться. Отправьте её всем, " +
-                "а личные настройки пришлите ссылкой или файлом.", style = MaterialTheme.typography.bodySmall)
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(Space.M), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
+                    Icon(Glyph.Globe, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+                }
+                Spacer(Modifier.width(Space.M))
+                Column(Modifier.weight(1f)) {
+                    Text("Страница для семьи и друзей", style = MaterialTheme.typography.titleMedium)
+                    Text("Приложение, скриншоты и как подключиться. Одна на всех, а личные настройки — ссылкой или файлом.",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
             if (url == null) {
-                OutlinedButton(enabled = !busy, onClick = onCreate) { Text("Создать страницу") }
+                FilledTonalButton(enabled = !busy, onClick = onCreate, modifier = Modifier.fillMaxWidth().height(48.dp)) { Text("Создать страницу") }
             } else {
-                SelectionContainer { Text(url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { onShare(url) }) { Text("Отправить") }
-                    OutlinedButton(onClick = { onOpen(url) }) { Text("Открыть") }
+                SelectionContainer {
+                    Text(url, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(horizontal = 12.dp, vertical = 10.dp))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(Space.S)) {
+                    Button(onClick = { onShare(url) }, modifier = Modifier.weight(1f).height(48.dp)) {
+                        Icon(Icons.Filled.Share, null, Modifier.size(18.dp)); Spacer(Modifier.width(Space.S)); Text("Отправить")
+                    }
+                    OutlinedButton(onClick = { onOpen(url) }, modifier = Modifier.weight(1f).height(48.dp)) { Text("Открыть") }
                 }
             }
         }
@@ -405,8 +549,8 @@ private suspend fun createPeople(app: App, names: List<String>, profile: StoredP
 }
 
 /**
- * Names of the people to add (one per line, so a whole family goes in one step) and how they get
- * their settings: a one-time link or a file sent through a messenger.
+ * Names of the people to add (one per line or comma-separated, so a whole family goes in one step;
+ * a list pasted from a chat works too) and how they get their settings: a one-time link or a file.
  */
 @Composable
 private fun PeopleDialog(
@@ -415,41 +559,56 @@ private fun PeopleDialog(
     allowQr: Boolean,
     onDismiss: () -> Unit,
     onQr: (String) -> Unit,
-    onCreate: (List<String>, Links.Delivery) -> Unit,
+    servers: List<StoredProfile> = emptyList(),
+    onCreate: (List<String>, Links.Delivery, StoredProfile?) -> Unit,
 ) {
     var text by remember { mutableStateOf("") }
-    val names = text.lines().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+    val names = text.split('\n', ',', ';').map { it.trim().trimStart('-', '•', '*', ' ') }.filter { it.isNotEmpty() }.distinct()
     var delivery by remember { mutableStateOf(Links.Delivery.LINK) }
+    var server by remember { mutableStateOf(servers.firstOrNull()) }
     AlertDialog(
         onDismissRequest = onDismiss,
+        icon = { Icon(Glyph.PersonAdd, null) },
         title = { Text(title) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(text, { text = it }, label = { Text("Имена, по одному на строку") },
-                    placeholder = { Text("Мама\nПапа\nВика") }, minLines = 3, maxLines = 8, modifier = Modifier.fillMaxWidth())
-                Text(hint, style = MaterialTheme.typography.bodySmall)
-                for ((d, label, about) in listOf(
-                    Triple(Links.Delivery.LINK, "Ссылки", "одноразовые, через ваш сервер; помогут установить приложение"),
-                    Triple(Links.Delivery.FILE, "Файлы", "файл настроек каждому; открывается прямо из мессенджера"),
-                )) {
-                    Row(Modifier.fillMaxWidth().clickable { delivery = d }, verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.material3.RadioButton(delivery == d, { delivery = d })
-                        Column {
-                            Text(label)
-                            Text(about, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(hint, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                PasteField(text, { text = it }, "Кого пригласить", placeholder = "Мама, Папа, Вика", singleLine = false, minLines = 2, maxLines = 8,
+                    supporting = if (names.size > 1) "${names.size}: ${names.joinToString(", ")}" else "По одному на строку или через запятую")
+                if (servers.size > 1) {
+                    Text("Сервер", style = MaterialTheme.typography.labelLarge)
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        servers.forEachIndexed { i, p ->
+                            SegmentedButton(server == p, { server = p }, SegmentedButtonDefaults.itemShape(i, servers.size)) {
+                                Text(p.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                     }
                 }
+                Text("Как отправить", style = MaterialTheme.typography.labelLarge)
+                val options = listOf(Links.Delivery.LINK to "Ссылки", Links.Delivery.FILE to "Файлы")
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    options.forEachIndexed { i, (d, label) ->
+                        SegmentedButton(delivery == d, { delivery = d }, SegmentedButtonDefaults.itemShape(i, options.size)) { Text(label) }
+                    }
+                }
+                Text(
+                    if (delivery == Links.Delivery.LINK) "Одноразовые ссылки через ваш сервер: помогут установить приложение и сразу подключат."
+                    else "Файл настроек каждому: открывается прямо из мессенджера, работает и без вашего сервера.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         },
         confirmButton = {
-            TextButton(enabled = names.isNotEmpty(), onClick = { onCreate(names, delivery) }) {
+            Button(enabled = names.isNotEmpty(), onClick = { onCreate(names, delivery, server) }) {
                 Text(if (names.size > 1) "Создать (${names.size})" else "Создать")
             }
         },
         dismissButton = {
-            if (allowQr && names.size == 1) TextButton(onClick = { onQr(names.single()) }) { Text("QR-код") }
-            else TextButton(onClick = onDismiss) { Text("Отмена") }
+            Row {
+                if (allowQr && names.size == 1) TextButton(onClick = { onQr(names.single()) }) { Text("QR-код") }
+                TextButton(onClick = onDismiss) { Text("Отмена") }
+            }
         },
     )
 }
@@ -460,33 +619,53 @@ private const val GITHUB_TOKEN_PAGE = "https://github.com/settings/tokens/new?sc
 /**
  * The reserve channel: a secret GitHub gist with the encrypted manifest. Devices read it when no
  * fleet server is reachable, so they learn about new servers even after every old one was banned.
+ * A row in the «delivery» group; its setup opens in place with one tap.
  */
 @Composable
-private fun ReserveChannel(on: Boolean, error: String?, busy: Boolean, onEnable: (String) -> Unit, onDisable: () -> Unit, openTokenPage: () -> Unit) {
+private fun ReserveChannel(on: Boolean, error: String?, busy: Boolean, toast: (String) -> Unit, onEnable: (String) -> Unit, onDisable: () -> Unit, openTokenPage: () -> Unit) {
     var token by remember { mutableStateOf("") }
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Резервный канал: GitHub" + if (on) " · включён" else "", fontWeight = FontWeight.Bold)
-            if (on) {
-                Text("Если заблокируют все серверы, устройства найдут новые настройки на GitHub. Там лежит только " +
-                    "зашифрованная и подписанная конфигурация: GitHub не может ни прочитать, ни подменить её.",
-                    style = MaterialTheme.typography.bodySmall)
-                if (error != null) {
-                    Text("Не удалось обновить: $error. Вставьте новый токен.", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error)
+    var open by remember { mutableStateOf(false) }
+    val needsToken = !on || error != null
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
+        Column {
+            GroupRow(
+                "Резервный канал GitHub",
+                subtitle = when {
+                    error != null -> "Не обновляется: $error"
+                    on -> "Флот переживёт блокировку всех серверов сразу"
+                    else -> "Выключен: устройства узнают о новых серверах только через старые"
+                },
+                icon = Glyph.Globe,
+                accent = when { error != null -> MaterialTheme.colorScheme.error; on -> Brand.Mint; else -> MaterialTheme.colorScheme.onSurfaceVariant },
+                badge = if (on && error == null) "включён" else null,
+                onClick = { open = !open },
+                trailing = {
+                    Icon(if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, if (open) "Свернуть" else "Настроить",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 12.dp))
+                },
+            )
+            AnimatedVisibility(open || error != null) {
+                Column(Modifier.padding(start = Space.M, end = Space.M, bottom = Space.M), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        if (on) "Если заблокируют все серверы, устройства найдут новые настройки на GitHub. Там лежит только " +
+                            "зашифрованная и подписанная конфигурация: GitHub не может ни прочитать, ни подменить её."
+                        else "Нужен один раз токен GitHub с правом «gist»; срок действия выберите «No expiration». На GitHub лежит только " +
+                            "зашифрованная и подписанная конфигурация.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (needsToken) {
+                        OutlinedButton(onClick = openTokenPage, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Glyph.Link, null, Modifier.size(18.dp)); Spacer(Modifier.width(Space.S)); Text("1. Получить токен на GitHub")
+                        }
+                        PasteField(token, { token = it.trim() }, "2. Токен GitHub", placeholder = "ghp_…", secret = true, enabled = !busy,
+                            onEmptyClipboard = { toast("Буфер обмена пуст: скопируйте токен на GitHub") })
+                        Button(enabled = !busy && token.length >= 20, onClick = { onEnable(token); token = "" }, modifier = Modifier.fillMaxWidth().height(48.dp)) {
+                            Text("3. Включить")
+                        }
+                    }
+                    if (on) TextButton(enabled = !busy, onClick = onDisable) { Text("Отключить резервный канал") }
                 }
-            } else {
-                Text("Сейчас устройства узнают о новых серверах только через уже известные. Включите канал, чтобы флот " +
-                    "пережил блокировку всех серверов сразу. Нужен один раз токен GitHub с правом «gist»; срок действия " +
-                    "выберите «No expiration».", style = MaterialTheme.typography.bodySmall)
             }
-            if (!on || error != null) {
-                TextButton(onClick = openTokenPage) { Text("1. Получить токен на GitHub") }
-                OutlinedTextField(token, { token = it.trim() }, label = { Text("2. Вставьте токен") }, singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-                Button(enabled = !busy && token.length >= 20, onClick = { onEnable(token); token = "" }) { Text("Включить") }
-            }
-            if (on) TextButton(enabled = !busy, onClick = onDisable) { Text("Отключить") }
         }
     }
 }
@@ -495,20 +674,26 @@ private fun ReserveChannel(on: Boolean, error: String?, busy: Boolean, onEnable:
 @Composable
 private fun LinkList(links: List<StoredLink>, busy: Boolean, onOpen: (StoredLink) -> Unit, onRevoke: (StoredLink) -> Unit) {
     if (links.isEmpty()) return
-    Text("Приглашения", style = MaterialTheme.typography.titleMedium)
     val now = System.currentTimeMillis()
-    for (l in links.take(10)) {
-        val open = !l.file && !l.used && l.expiresAt > now
-        Row(Modifier.fillMaxWidth().clickable(enabled = open) { onOpen(l) }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(l.name)
-                Text(when { l.file -> "файл настроек"; l.used -> "использована"; !open -> "истекла"; else -> "ждёт" }, style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline)
-            }
-            if (open) TextButton(onClick = { onOpen(l) }) { Text("Отправить") }
-            if (open || (l.file && !l.fleetDevice)) {
-                TextButton(enabled = !busy, onClick = { onRevoke(l) }) { Text(if (l.file) "Отключить" else "Отозвать") }
-            }
+    SectionTitle("Приглашения") { Pill(links.size.coerceAtMost(10).toString()) }
+    Group {
+        for (l in links.take(10)) {
+            val open = !l.file && !l.used && l.expiresAt > now
+            val status = when { l.file -> "файл настроек"; l.used -> "использована"; !open -> "истекла"; else -> "ждёт, ${expiresIn(l.expiresAt - now)}" }
+            GroupRow(
+                l.name, subtitle = status, icon = if (l.file) Glyph.File else Glyph.Link,
+                accent = when { open -> Brand.Amber; l.used || l.file -> Brand.Mint; else -> MaterialTheme.colorScheme.onSurfaceVariant },
+                onClick = if (open) ({ onOpen(l) }) else null,
+                trailing = {
+                    if (open) TextButton(onClick = { onOpen(l) }) { Text("Отправить") }
+                    if (open || (l.file && !l.fleetDevice)) Overflow(busy, (if (l.file) "Отключить доступ" else "Отозвать ссылку") to { onRevoke(l) })
+                },
+            )
         }
     }
+}
+
+private fun expiresIn(ms: Long): String {
+    val h = ms / 3_600_000
+    return if (h >= 24) "ещё ${plural((h / 24).toInt(), "день", "дня", "дней")}" else "ещё ${plural(h.toInt().coerceAtLeast(1), "час", "часа", "часов")}"
 }

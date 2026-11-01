@@ -10,6 +10,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Home
@@ -171,11 +172,12 @@ private fun Root(app: App, incoming: MutableSharedFlow<String>, onConnect: () ->
             }
         },
     ) { padding ->
-        val m = Modifier.padding(padding)
+        // Consumed, so the screens' imePadding() adds only the part of the keyboard above the bottom bar.
+        val m = Modifier.padding(padding).consumeWindowInsets(padding)
         when (tab) {
             Tab.HOME -> HomeScreen(app, m, onConnect, onAddServer = { tab = Tab.ADD })
             Tab.ADD -> AddScreen(app, m, pending, onConsumed = { pending = null }, toast = toast, onDone = { tab = Tab.HOME }, onConnect = onConnect)
-            Tab.FLEET -> FleetScreen(app, m, toast)
+            Tab.FLEET -> FleetScreen(app, m, toast, onAddServer = { tab = Tab.ADD })
             Tab.SETTINGS -> SettingsScreen(app, m, toast)
         }
     }

@@ -15,7 +15,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -31,7 +30,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import net.paramnezia.app.App
@@ -176,8 +174,8 @@ private fun TokenForm(app: App, initial: String?, busy: Boolean, onBusy: (Boolea
     }
     Text(info.tokenHint, style = MaterialTheme.typography.bodySmall)
     TextButton(onClick = { runCatching { uri.openUri(info.tokenUrl) } }) { Text("Открыть панель ${info.name}") }
-    OutlinedTextField(token, { token = it.trim() }, Modifier.fillMaxWidth(), label = { Text("Токен API") }, singleLine = true,
-        visualTransformation = PasswordVisualTransformation())
+    PasteField(token, { token = it.trim(); error = null }, "Токен API ${info.name}", secret = true, enabled = !busy,
+        onEmptyClipboard = { error = "Буфер обмена пуст: скопируйте токен в панели ${info.name}" })
     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

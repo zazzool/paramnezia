@@ -1,6 +1,13 @@
 package net.paramnezia.app.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material3.Icon
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -9,14 +16,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -28,9 +31,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -38,7 +38,6 @@ import net.paramnezia.app.App
 import net.paramnezia.app.data.Cloud
 import net.paramnezia.app.data.Servers
 import net.paramnezia.core.amnezia.AmneziaQr
-import net.paramnezia.core.profile.SshCredentials
 import net.paramnezia.deploy.ServerManager
 import net.paramnezia.deploy.SshException
 import kotlinx.coroutines.launch
@@ -52,10 +51,17 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
     var busy by remember { mutableStateOf(false) }
     val assembler = remember { AmneziaQr.Assembler() }
     var qrProgress by remember { mutableStateOf<String?>(null) }
+    /** The key field is shown: asked for with «Ввести», or a paste that did not work. */
+    var manual by remember { mutableStateOf(false) }
+    var typeNow by remember { mutableStateOf(false) }
+    var keyError by remember { mutableStateOf<String?>(null) }
 
-    /** [connectAfter]: settings opened from a link or file connect at once, as the person expects. */
-    fun runImport(connectAfter: Boolean = false, block: suspend () -> Servers.Imported) {
-        busy = true
+    /**
+     * [connectAfter]: settings opened from a link or file connect at once, as the person expects.
+     * [source]: the text that was imported; on failure it stays in the field to be fixed.
+     */
+    fun runImport(connectAfter: Boolean = false, source: String? = null, block: suspend () -> Servers.Imported) {
+        busy = true; keyError = null
         scope.launch {
             runCatching { block() }
                 .onSuccess {
@@ -63,11 +69,14 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
                         Servers.Imported.JoinedFleet -> "Устройство добавлено во флот"
                         is Servers.Imported.Profiles -> "Добавлено: ${it.names.joinToString()}"
                     })
-                    text = ""
+                    text = ""; manual = false
                     onDone()
                     if (connectAfter) onConnect()
                 }
-                .onFailure { toast(it.message ?: "Не удалось импортировать") }
+                .onFailure {
+                    val msg = it.message ?: "Не удалось импортировать"
+                    if (source != null) { text = source; manual = true; typeNow = false; keyError = msg } else toast(msg)
+                }
             busy = false
         }
     }
@@ -91,23 +100,51 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
         if (content != null) runImport { app.servers.import(content) }
     }
 
-    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Ключ или конфиг", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Text("Подходят ключи vpn:// из AmneziaVPN, приглашения во флот и конфиги WireGuard/AmneziaWG.",
-            style = MaterialTheme.typography.bodySmall)
-        OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), label = { Text("vpn://…") }, minLines = 3, maxLines = 6)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(enabled = !busy && text.isNotBlank(), onClick = { runImport { app.servers.import(text) } }) { Text("Добавить") }
-            OutlinedButton(enabled = !busy, onClick = { clipboard.getText()?.text?.let { text = it } }) { Text("Вставить") }
+    Column(
+        modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = Space.M, vertical = Space.S),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        ScreenTitle("Добавить", "Ключ, который вам прислали, или свой сервер")
+
+        // 1. Someone sent a key: the most common case, one tap from the clipboard.
+        SectionTitle("Мне прислали ключ")
+        ActionTile(Glyph.Paste, "Вставить ключ", "vpn://, приглашение или конфиг из буфера", primary = true) {
+            if (busy) return@ActionTile
+            val clip = clipboard.getText()?.text?.trim()
+            if (clip.isNullOrEmpty()) { toast("Буфер обмена пуст: скопируйте ключ в мессенджере"); return@ActionTile }
+            runImport(source = clip) { app.servers.import(clip) }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(enabled = !busy, onClick = { scanLauncher.launch(scanOptions()) }) { Text("Сканировать QR") }
-            OutlinedButton(enabled = !busy, onClick = { fileLauncher.launch(arrayOf("*/*")) }) { Text("Из файла") }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            SmallTile(Glyph.Qr, "QR-код", Modifier.weight(1f), enabled = !busy) { scanLauncher.launch(scanOptions()) }
+            SmallTile(Glyph.File, "Файл", Modifier.weight(1f), enabled = !busy) { fileLauncher.launch(arrayOf("*/*")) }
+            SmallTile(Glyph.Keyboard, "Ввести", Modifier.weight(1f), selected = manual, enabled = !busy) {
+                manual = !manual; typeNow = manual; keyError = null
+            }
         }
-        qrProgress?.let { Text(it) }
+        qrProgress?.let { Hint(it, Glyph.Qr, MaterialTheme.colorScheme.primary) }
+        AnimatedVisibility(manual) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                PasteField(
+                    text, { text = it; keyError = null }, "Ключ или конфиг",
+                    placeholder = "vpn://… или [Interface]…", singleLine = false, minLines = 3, maxLines = 6, mono = true,
+                    supporting = keyError ?: "Ключи AmneziaVPN, приглашения во флот, конфиги WireGuard и AmneziaWG",
+                    isError = keyError != null, enabled = !busy, startTyping = typeNow,
+                    onEmptyClipboard = { toast("Буфер обмена пуст") },
+                )
+                Button(
+                    enabled = !busy && text.isNotBlank(),
+                    onClick = { val t = text; runImport(source = t) { app.servers.import(t) } },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                ) { Text("Добавить") }
+            }
+        }
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
 
+        // 2. An admin: a server of their own, bought in the app or an existing VPS.
+        Spacer(Modifier.height(Space.S))
+        SectionTitle("Свой сервер")
         DeployCard(app, toast, onDone)
+        Spacer(Modifier.height(Space.M))
     }
 }
 
@@ -118,62 +155,48 @@ private fun scanOptions() = ScanOptions().apply {
     setPrompt("Наведите камеру на QR-код")
 }
 
-/** One-click VPS: SSH access in, a working AmneziaWG server out. */
+/** Own server: bought from a hoster through its API, or an existing VPS over SSH. */
 @Composable
 private fun DeployCard(app: App, toast: (String) -> Unit, onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
-    var host by remember { mutableStateOf("") }
-    var port by remember { mutableStateOf("22") }
-    var user by remember { mutableStateOf("root") }
-    var password by remember { mutableStateOf("") }
-    var key by remember { mutableStateOf("") }
-    var name by remember { mutableStateOf("") }
+    val form = remember { SshFormState() }
     var step by remember { mutableStateOf<ServerManager.Step?>(null) }
     var running by remember { mutableStateOf(false) }
     var buying by remember { mutableStateOf(false) }
+    var vps by remember { mutableStateOf(false) }
 
     if (buying) CloudBuyDialog(app, onDismiss = { buying = false }, toast = toast) { n, ssh, onStep -> app.servers.deploy(n, ssh, onStep) }
 
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Новый сервер у хостера", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Cloudzy или Timeweb Cloud: приложение само закажет VPS по API и установит на него AmneziaWG. Нужен только токен API хостера.",
-                style = MaterialTheme.typography.bodySmall)
-            Button(enabled = !running, onClick = { buying = true }) { Text("Купить сервер у хостера") }
-        }
+    Group {
+        GroupRow(
+            "Купить у хостера", subtitle = "Cloudzy или Timeweb: готов за 3–8 минут, нужен токен API",
+            icon = Glyph.Cloud, onClick = { if (!running) buying = true },
+            trailing = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+        )
     }
-
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Свой сервер на VPS", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Нужен чистый VPS с Linux и доступ по SSH. Установка займёт 2–5 минут; сервер совместим с AmneziaVPN.",
-                style = MaterialTheme.typography.bodySmall)
-            OutlinedTextField(host, { host = it.trim() }, Modifier.fillMaxWidth(), label = { Text("IP или домен") }, singleLine = true)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(user, { user = it.trim() }, Modifier.weight(2f), label = { Text("Логин") }, singleLine = true)
-                OutlinedTextField(port, { port = it.filter(Char::isDigit) }, Modifier.weight(1f), label = { Text("Порт") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+    ExpandTile(Glyph.Server, "Свой VPS", "Есть IP и пароль от хостера: установка 2–5 минут", vps, onToggle = { vps = !vps }) {
+        SshFields(form, enabled = !running, toast = toast)
+        if (running || step != null) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                step?.let { Text(stepLabel(it), style = MaterialTheme.typography.bodyMedium) }
+                if (running) LinearProgressIndicator(Modifier.fillMaxWidth())
             }
-            OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("Пароль") }, singleLine = true,
-                visualTransformation = PasswordVisualTransformation())
-            OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), label = { Text("или приватный SSH-ключ") }, maxLines = 4)
-            OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("Название (необязательно)") }, singleLine = true)
-            step?.let { Text(stepLabel(it)) }
-            if (running) LinearProgressIndicator(Modifier.fillMaxWidth())
-            Button(
-                enabled = !running && host.isNotBlank() && (password.isNotEmpty() || key.isNotBlank()),
-                onClick = {
-                    running = true
-                    scope.launch {
-                        val creds = SshCredentials(host, port.toIntOrNull() ?: 22, user.ifBlank { "root" }, password, key.trim())
-                        runCatching { app.servers.deploy(name, creds) { s -> step = s } }
-                            .onSuccess { toast("Сервер ${it.name} готов"); onDone() }
-                            .onFailure { toast(deployError(it)) }
-                        running = false
-                    }
-                },
-            ) { Text("Развернуть") }
         }
+        Button(
+            enabled = !running && form.ready,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            onClick = {
+                running = true
+                scope.launch {
+                    runCatching { app.servers.deploy(form.name, form.credentials()) { s -> step = s } }
+                        .onSuccess { toast("Сервер ${it.name} готов"); form.clear(); step = null; onDone() }
+                        .onFailure { toast(deployError(it)) }
+                    running = false
+                }
+            },
+        ) { Text(if (running) "Устанавливаю…" else "Развернуть сервер") }
+        Text("Совместим с AmneziaVPN. Пароль хранится зашифрованным только на этом телефоне.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
