@@ -78,18 +78,22 @@ dump >/dev/null
 # Screenshots of the one-button screen that family devices show (used on the server's family page,
 # deploy/src/main/resources/net/paramnezia/deploy/invite/shot-*.webp). Best effort, never fails the run.
 shot() { adb exec-out screencap -p > "screen-$tag-$1.png" || true; }
+# A phone-sized, sharp screen for the pictures (the emulator's default is 320x640).
+adb shell wm size 1080x2340; adb shell wm density 440; sleep 4
 if tap "Настройки"; then
   sleep 2
   found=""
   for _ in 1 2 3 4 5 6; do
     if tap "Простой"; then found=1; break; fi
-    adb shell input swipe 540 1600 540 600 300; sleep 1
+    adb shell input swipe 540 1900 540 700 300; sleep 1
   done
   if [ -n "$found" ]; then
     sleep 4; shot simple-on
     tap "VPN" && { sleep 5; shot simple-off; }
   else
     echo "::warning::[$tag] could not switch to the simple screen for screenshots"
+    adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "ui-$tag-settings.xml" >/dev/null 2>&1
   fi
 fi
+adb shell wm size reset; adb shell wm density reset
 echo "[$tag] VPN end-to-end: OK"
