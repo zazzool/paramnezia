@@ -20,7 +20,7 @@ fail() { echo "::error::[$tag] $*"; dump; exit 1; }
 
 # Taps the node whose text or content description is $1 (waits up to 20 s for it).
 tap() {
-  for _ in $(seq 1 20); do
+  for _ in $(seq 1 ${TAP_WAIT:-20}); do
     adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
     adb pull /sdcard/ui.xml ui.xml >/dev/null 2>&1
     if xy=$(python3 "$here/ui.py" find ui.xml "$1"); then adb shell input tap $xy; return 0; fi
@@ -80,20 +80,23 @@ dump >/dev/null
 shot() { adb exec-out screencap -p > "screen-$tag-$1.png" || true; }
 # A phone-sized, sharp screen for the pictures (the emulator's default is 320x640).
 adb shell wm size 1080x2340; adb shell wm density 440; sleep 4
+adb shell am start -n net.paramnezia/net.paramnezia.app.ui.MainActivity >/dev/null 2>&1; sleep 4
 if tap "Настройки"; then
-  sleep 2
+  sleep 3
   found=""
-  for _ in 1 2 3 4 5 6; do
+  for _ in 1 2 3 4; do
     if tap "Простой"; then found=1; break; fi
-    adb shell input swipe 540 1900 540 700 300; sleep 1
+    adb shell input swipe 540 1500 540 800 400; sleep 2
   done
   if [ -n "$found" ]; then
-    sleep 4; shot simple-on
-    tap "VPN" && { sleep 5; shot simple-off; }
+    sleep 5; shot simple-on
+    tap "VPN" && { sleep 6; shot simple-off; }
   else
     echo "::warning::[$tag] could not switch to the simple screen for screenshots"
     adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "ui-$tag-settings.xml" >/dev/null 2>&1
   fi
+else
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "ui-$tag-settings.xml" >/dev/null 2>&1
 fi
 adb shell wm size reset; adb shell wm density reset
 echo "[$tag] VPN end-to-end: OK"
