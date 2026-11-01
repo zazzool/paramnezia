@@ -5,14 +5,14 @@
 | Ключ | Что подписывает | Где хранить | Если потерять |
 |---|---|---|---|
 | **Ключ подписи APK** (keystore) | сам APK | секреты репозитория + офлайн-копия | обновить установленные приложения будет нельзя, только переустановка |
-| **Ключ релизов** (Ed25519, `PN_RELEASE_SEED`) | манифест релиза для OTA | секрет репозитория + офлайн-копия | новый ключ = новая сборка, которую придётся поставить вручную |
+| **Ключ релизов** (Ed25519, `PN_RELEASE_SEED`) | `release.json` (проверка обновлений) | секрет репозитория + офлайн-копия | новый ключ = новая сборка, которую придётся поставить вручную |
 
 Оба ключа созданы заново 1.11.2026 (версия 2.0.0, пакет `net.paramnezia`; ключи 1.x с пакетом
 `io.paramnezia` больше не используются) и лежат в репозитории зашифрованными: `keys/release-keys.enc` (AES-256, PBKDF2
 600 000 итераций). Внутри `paramnezia.jks` (ключ подписи, алиас `paramnezia`) и `release.env`
 (`PN_KEYSTORE_PASSWORD`, `PN_KEY_ALIAS`, `PN_RELEASE_SEED`). Пароль от архива — секрет репозитория
-`PN_KEYS_PASSWORD`; держите его копию офлайн (менеджер паролей). Публичные половины ключа релизов —
-в `gradle.properties` (`paramnezia.releaseKey`, `paramnezia.releaseNostr`), их вшивает каждая сборка.
+`PN_KEYS_PASSWORD`; держите его копию офлайн (менеджер паролей). Публичная половина ключа релизов —
+в `gradle.properties` (`paramnezia.releaseKey`), её вшивает каждая сборка.
 
 Открыть ключи локально:
 
@@ -40,15 +40,15 @@ openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in keys/release-keys.enc | tar
 ```sh
 keytool -genkeypair -keystore paramnezia.jks -storetype PKCS12 -alias paramnezia -keyalg EC -groupname secp256r1 -validity 36500
 ./gradlew -Pparamnezia.jvmOnly=true :releasetool:installDist
-releasetool/build/install/releasetool/bin/releasetool keygen      # печатает PN_RELEASE_SEED и публичные ключи
+releasetool/build/install/releasetool/bin/releasetool keygen      # печатает PN_RELEASE_SEED и публичный ключ
 printf 'PN_KEYSTORE_PASSWORD=…\nPN_KEY_ALIAS=paramnezia\nPN_RELEASE_SEED=…\n' > release.env
 tar c paramnezia.jks release.env | openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt -out keys/release-keys.enc
 ```
 
 Затем обновите публичные ключи в `gradle.properties` и секрет `PN_KEYS_PASSWORD`. Новый ключ подписи
 означает переустановку приложения на всех устройствах; новый ключ релизов — ручную установку одной сборки.
-Шаг `Open the keys` в `release.yml` сверяет ключ релизов из архива с `gradle.properties` и останавливает выпуск,
-если они не совпадают (иначе устройства молча перестали бы принимать обновления).
+Шаг `Check that the release key matches` в `release.yml` сверяет ключ релизов из архива с `gradle.properties` и останавливает выпуск,
+если они не совпадают (иначе устройства молча перестали бы видеть обновления).
 
 Если нужно разорвать связь с прошлыми сборками совсем (как в 2.0.0 из-за Play Protect), меняется и `applicationId`
 вместе с пакетами кода: `app/build.gradle.kts`, каталоги `*/src/*/kotlin|java/net/paramnezia`, `jni.c` (имена
@@ -68,15 +68,18 @@ git push origin main:release/v2.1.0
 
 `release.yml`:
 
-1. Собирает APK, подписанный вашим ключом, с вшитыми `PN_RELEASE_KEY`/`PN_RELEASE_NOSTR`; `versionCode` —
-   номер запуска workflow, `versionName` — тег.
+1. Собирает APK, подписанный вашим ключом, с вшитыми `PN_RELEASE_KEY` и `UPDATE_URL`; `versionCode` — номер
+   запуска workflow, `versionName` — тег.
 2. Создаёт GitHub Release с APK.
-3. `releasetool publish`: подписывает манифест релиза, загружает APK на Blossom-серверы, публикует событие в
-   Nostr и прикладывает `release.json` к релизу.
+3. `releasetool sign`: подписывает `release.json` (ссылка на APK в этом же релизе) и прикладывает его к релизу.
 
-Дальше устройства находят релиз в Nostr или через gossip, скачивают его заранее и показывают «Установить»:
-ставится после нажатия и подтверждения Android. Админ-устройство после обновления просит серверы флота скачать
-релиз самим (доступно внутри туннеля даже при блокировке всего остального).
+Дальше приложения при запуске (не чаще раза в 12 часов) видят новую версию и показывают «Скачать». Админ-устройство
+при открытом приложении просит серверы флота скачать релиз самим (доступно внутри туннеля даже при блокировке
+всего остального).
+
+Приложение проверяет `https://github.com/zazzool/paramnezia/releases/latest/download/release.json`. Для этого
+релизы должны открываться без входа в GitHub, то есть репозиторий должен быть публичным. В закрытом репозитории
+проверка обновлений молча не находит ничего: настройки флота это не затрагивает, APK раздаётся вручную.
 
 Перед публикацией `apk-audit.sh --release` проверяет APK по правилам из [PLAY-PROTECT.md](PLAY-PROTECT.md); APK
 публикуется ровно таким, каким его подписал apksigner. Описание релиза берётся из `docs/releases/vX.Y.Z.md`, если
@@ -85,9 +88,9 @@ git push origin main:release/v2.1.0
 ## `releasetool`
 
 ```
-releasetool keygen
-releasetool publish --apk F --version-code N --version-name S [--blossom URL]… [--relay URL]… [--url URL]…
-                    [--signer-sha256 HEX] [--notes S] [--out release.json]      # нужен PN_RELEASE_SEED
+releasetool keygen                                   # новый PN_RELEASE_SEED и публичный ключ
+releasetool pubkey                                   # публичный ключ из PN_RELEASE_SEED (проверка при выпуске)
+releasetool sign --apk F --version-code N --version-name S --url URL… [--signer-sha256 HEX] [--notes S] --out release.json
 ```
 
 ## Сборки без релиза

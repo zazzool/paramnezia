@@ -1,45 +1,7 @@
 package net.paramnezia.core.fleet
 
-import net.paramnezia.core.amnezia.AmneziaKey
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-
-/**
- * Messages trusted devices exchange through the tunnel (UDP to each other's tunnel address).
- * The server only forwards packets whose source address belongs to the sender's key, so the source
- * address identifies the device. Manifests carry their own signature and need no further trust.
- */
-@Serializable
-sealed interface GossipMessage {
-    /** "Here is the newest manifest I know." Sent when a device learns a newer version. */
-    @Serializable @SerialName("manifest")
-    data class Manifest(val signed: String) : GossipMessage
-
-    /** "My newest version is [version]." Peers that know a newer one answer with [Manifest]. */
-    @Serializable @SerialName("version")
-    data class Version(val fleetId: String, val version: Long) : GossipMessage
-
-    /** Reachability of a server as seen by the sender. Collected by the admin device. */
-    @Serializable @SerialName("health")
-    data class Health(val serverId: String, val reachable: Boolean, val at: Long) : GossipMessage
-
-    /** "Here is the newest app release I verified" (SignedRelease wire form). */
-    @Serializable @SerialName("release")
-    data class Release(val signed: String) : GossipMessage
-
-    companion object {
-        const val PORT = 51999
-        private val json = Json { ignoreUnknownKeys = true; classDiscriminator = "t" }
-
-        fun encode(m: GossipMessage): ByteArray = AmneziaKey.qCompress(json.encodeToString(serializer(), m).toByteArray(), 9)
-
-        fun decode(bytes: ByteArray): GossipMessage? = runCatching {
-            val raw = AmneziaKey.qUncompressOrNull(bytes) ?: return null
-            json.decodeFromString(serializer(), raw.decodeToString())
-        }.getOrNull()
-    }
-}
+/** Reachability of a server as one device saw it. Collected by the admin device. */
+data class HealthReport(val serverId: String, val reachable: Boolean, val at: Long)
 
 /**
  * Picks which fleet server a device should use. A server is considered blocked after
@@ -70,9 +32,9 @@ class FailoverPolicy(
  * should be promoted. Reports older than [windowMs] are forgotten.
  */
 class HealthBook(private val windowMs: Long = 15 * 60_000L, private val quorum: Int = 2) {
-    private val reports = HashMap<String, HashMap<String, GossipMessage.Health>>() // server -> reporter -> report
+    private val reports = HashMap<String, HashMap<String, HealthReport>>() // server -> reporter -> report
 
-    fun record(reporter: String, h: GossipMessage.Health) {
+    fun record(reporter: String, h: HealthReport) {
         reports.getOrPut(h.serverId) { HashMap() }[reporter] = h
     }
 

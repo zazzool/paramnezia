@@ -1,6 +1,6 @@
 name: Rotate keys
 
-# Creates a brand-new APK signing keystore and OTA release key inside GitHub Actions, so no secret ever leaves it.
+# Creates a brand-new APK signing keystore and release key inside GitHub Actions, so no secret ever leaves it.
 # 1. Put a new random value into the secret PN_KEYS_PASSWORD (keep a copy offline).
 # 2. Push any commit to a branch named keys/rotate-<anything>.
 # The job commits the new keys/release-keys.enc and the public halves in gradle.properties to that branch;
@@ -46,7 +46,7 @@ jobs:
           cmp check/release.env release.env && cmp check/paramnezia.jks paramnezia.jks
           fp=$(keytool -list -v -keystore paramnezia.jks -storepass "$ks" 2>/dev/null | sed -n 's/.*SHA256: //p' | head -1)
           cd "$GITHUB_WORKSPACE"
-          sed -i "s#^paramnezia.releaseKey=.*#$(grep releaseKey= "$k/pub.txt")#; s#^paramnezia.releaseNostr=.*#$(grep releaseNostr= "$k/pub.txt")#" gradle.properties
+          sed -i "s#^paramnezia.releaseKey=.*#$(grep releaseKey= "$k/pub.txt")#" gradle.properties
           echo "$fp" > keys/signing-cert-sha256.txt
           rm -rf "$k"
           { echo "### New keys"; echo "Signing certificate SHA-256: \`$fp\`"; echo '```'; grep '^paramnezia.release' gradle.properties; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

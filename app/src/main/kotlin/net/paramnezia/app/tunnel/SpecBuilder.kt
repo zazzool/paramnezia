@@ -38,11 +38,10 @@ class SpecBuilder(private val context: Context) {
         serverName: String,
         config: TunnelConfig,
         settings: Settings,
-        gossipPeers: List<String> = emptyList(),
     ): TunnelSpec {
         val dnsServers = config.iface.dns.filter { it.first().isDigit() || ':' in it }.ifEmpty { listOf("1.1.1.1", "1.0.0.1") }
         val useDns = settings.blockTrackers || settings.bypassRussia
-        // The tunnel subnet (gossip, the in-tunnel mirror) and its DNS always stay inside.
+        // The tunnel subnet (the in-tunnel manifest URL) and its DNS always stay inside.
         val keep = config.iface.addresses.map { a -> if (!a.isV6 && a.length > 24) IpPrefix.parse("${a.address.hostAddress}/24") else a } +
             dnsServers.mapNotNull { IpPrefix.parseOrNull(if (':' in it) "$it/128" else "$it/32") }
 
@@ -67,7 +66,6 @@ class SpecBuilder(private val context: Context) {
             excludedApps = excludedApps,
             keepaliveScreenOn = settings.battery.screenOn,
             keepaliveScreenOff = settings.battery.screenOff,
-            gossipPeers = gossipPeers,
             dns = if (useDns) DnsPolicy(tunnel = dnsServers, direct = settings.directDns.ifEmpty { DnsPolicy(emptyList()).direct }) else null,
         )
     }

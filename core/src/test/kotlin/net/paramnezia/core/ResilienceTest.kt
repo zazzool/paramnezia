@@ -4,7 +4,7 @@ import net.paramnezia.core.fleet.FailoverPolicy
 import net.paramnezia.core.fleet.FleetDevice
 import net.paramnezia.core.fleet.FleetManifest
 import net.paramnezia.core.fleet.FleetServer
-import net.paramnezia.core.fleet.GossipMessage
+import net.paramnezia.core.fleet.HealthReport
 import net.paramnezia.core.fleet.HealthBook
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -16,14 +16,6 @@ class ResilienceTest {
     private fun s(id: String) = FleetServer(id, id, "$id.example", 1, "k")
     private val manifest = FleetManifest("f", 1, 0, listOf(s("a"), s("b"), s("c")),
         listOf(FleetDevice("p", "x", "10.8.1.2/32"), FleetDevice("t", "y", "10.8.1.3/32")), emptyList())
-
-    @Test
-    fun gossipRoundTrip() {
-        for (m in listOf(GossipMessage.Manifest("{}"), GossipMessage.Version("f", 7), GossipMessage.Health("a", false, 5))) {
-            assertEquals(m, GossipMessage.decode(GossipMessage.encode(m)))
-        }
-        assertNull(GossipMessage.decode(byteArrayOf(1, 2, 3)))
-    }
 
     @Test
     fun failoverSkipsBlockedServers() {
@@ -42,12 +34,12 @@ class ResilienceTest {
     @Test
     fun adminPromotesStandbyOnlyWithQuorum() {
         val book = HealthBook(windowMs = 1000, quorum = 2)
-        book.record("p", GossipMessage.Health("a", false, 100))
+        book.record("p", HealthReport("a", false, 100))
         assertNull(book.promotion(manifest, now = 200))
-        book.record("t", GossipMessage.Health("a", false, 150))
+        book.record("t", HealthReport("a", false, 150))
         assertEquals(listOf("b", "c", "a"), book.promotion(manifest, now = 200)!!.map { it.id })
-        book.record("t", GossipMessage.Health("a", true, 180))
+        book.record("t", HealthReport("a", true, 180))
         assertNull(book.promotion(manifest, now = 200))
-        assertNull(HealthBook(1000).apply { record("p", GossipMessage.Health("a", false, 0)) }.promotion(manifest, now = 5000))
+        assertNull(HealthBook(1000).apply { record("p", HealthReport("a", false, 0)) }.promotion(manifest, now = 5000))
     }
 }

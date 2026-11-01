@@ -8,9 +8,8 @@ import java.security.MessageDigest
 import java.util.Base64
 
 /**
- * One app release. The APK is addressed by its SHA-256, so any server can carry it: Blossom media
- * servers (BUD-01, `GET /<sha256>`), our own VPS, GitHub Releases or another device. Where the bytes
- * came from does not matter, only that the hash matches a manifest signed by the release key.
+ * One app release, as published in `release.json` (attached to the GitHub release; the fleet servers keep
+ * copies). Signed by the release key; the APK is identified by its SHA-256.
  */
 @Serializable
 data class Release(
@@ -21,26 +20,15 @@ data class Release(
     /** Lowercase hex SHA-256 of the APK. */
     val sha256: String,
     val size: Long,
-    /** Full download URLs, tried in order after the Blossom servers. */
+    /** Download URLs of the APK, preferred first. */
     val urls: List<String> = emptyList(),
-    /** Blossom servers that hold the blob (base URLs, the hash is appended). */
-    val blossom: List<String> = emptyList(),
     /** SHA-256 of the APK signing certificate, so a device can refuse a foreign build before downloading. */
     val signerSha256: String = "",
     val notes: String = "",
     val publishedAt: Long = 0,
 ) {
-    /** Candidate download URLs, content-addressed ones first. */
-    fun downloadUrls(extraMirrors: List<String> = emptyList()): List<String> =
-        (blossom + extraMirrors).map { it.trimEnd('/') + "/" + sha256 } + urls
-
-    /**
-     * URLs anyone can open in a browser, for people who do not have the app yet: Blossom blobs with
-     * the `.apk` extension (BUD-01 allows it; the browser then saves a proper `.apk` file), HTTPS only.
-     */
-    fun publicApkUrls(): List<String> =
-        blossom.filter { it.startsWith("https://") }.map { it.trimEnd('/') + "/" + sha256 + ".apk" } +
-            urls.filter { it.startsWith("https://") }
+    /** URLs anyone can open in a browser (HTTPS only), for the update button and invite pages. */
+    fun publicApkUrls(): List<String> = urls.filter { it.startsWith("https://") }
 }
 
 /** Wire form: the release JSON and an Ed25519 signature over it. */
@@ -78,7 +66,7 @@ object ReleaseCodec {
 
 /**
  * Device-side decision logic. Keeps the newest verified release it has seen, from whatever channel
- * (Nostr, gossip, the VPS), and says whether it is worth installing.
+ * (the public release.json, the fleet server), and says whether it is worth installing.
  */
 class UpdateChecker(
     private val packageName: String,

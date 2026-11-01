@@ -1,8 +1,6 @@
 package net.paramnezia.core
 
 import net.paramnezia.core.fleet.Ed25519
-import net.paramnezia.core.fleet.GossipMessage
-import net.paramnezia.core.nostr.NostrRelease
 import net.paramnezia.core.ota.Release
 import net.paramnezia.core.ota.ReleaseCodec
 import net.paramnezia.core.ota.UpdateChecker
@@ -25,7 +23,7 @@ class OtaTest {
     private val pinned = listOf(Base64.getEncoder().encodeToString(key.second))
 
     private fun release(code: Long, pkg: String = "net.paramnezia", minSdk: Int = 26) =
-        Release(pkg, code, "1.$code", minSdk, sha, apk.size.toLong(), blossom = listOf("https://blossom.example/"))
+        Release(pkg, code, "1.$code", minSdk, sha, apk.size.toLong(), urls = listOf("https://github.com/zazzool/paramnezia/releases/download/v9/a.apk"))
 
     private fun signed(r: Release, seed: ByteArray = key.first) = ReleaseCodec.encode(ReleaseCodec.sign(r, seed, ed))
 
@@ -37,7 +35,7 @@ class OtaTest {
         assertEquals(6L, c.best!!.first.versionCode)
         assertTrue(c.offer(signed(release(8))))
         assertFalse("older than best", c.offer(signed(release(7))))
-        assertEquals("https://blossom.example/$sha", c.best!!.first.downloadUrls().first())
+        assertEquals("https://github.com/zazzool/paramnezia/releases/download/v9/a.apk", c.best!!.first.publicApkUrls().first())
     }
 
     @Test fun rejectsDowngradesForeignKeysAndTampering() {
@@ -59,9 +57,7 @@ class OtaTest {
         assertFalse("same version is not an update", c.offer(signed(release(5))))
         assertEquals(5L, c.installed!!.first.versionCode)
         assertNull(c.best)
-        assertEquals(listOf("https://blossom.example/$sha.apk"), c.installed!!.first.publicApkUrls())
-        val plain = release(5).copy(blossom = listOf("http://insecure.example"), urls = listOf("https://github.example/a.apk"))
-        assertEquals(listOf("https://github.example/a.apk"), plain.publicApkUrls())
+        assertEquals(listOf("https://github.com/zazzool/paramnezia/releases/download/v9/a.apk"), c.installed!!.first.publicApkUrls())
     }
 
     @Test fun verifiesDownloadedBytes() {
@@ -74,14 +70,8 @@ class OtaTest {
         assertFalse(verifyingCopy(ByteArrayInputStream(apk + 1), { _, _ -> }, r))
     }
 
-    @Test fun travelsOverNostrAndGossip() {
-        val text = signed(release(7))
-        val secret = NostrRelease.secretFromSeed(key.first)
-        val ev = NostrRelease.event(text, secret, 7)
-        val forged = NostrRelease.event(signed(release(99)), NostrRelease.secretFromSeed(ed.generate().first), 99)
-        val got = NostrRelease.candidates(listOf(ev, forged), setOf(NostrRelease.publisherPubkey(key.first)))
-        assertEquals(listOf(text), got)
-        val g = GossipMessage.decode(GossipMessage.encode(GossipMessage.Release(text))) as GossipMessage.Release
-        assertTrue(checker().offer(g.signed))
+    @Test fun publicUrlsAreHttpsOnly() {
+        val r = release(7).copy(urls = listOf("https://github.com/zazzool/paramnezia/releases/download/v9/paramnezia-v7.apk", "http://10.8.1.1:8080/apk/x"))
+        assertEquals(listOf("https://github.com/zazzool/paramnezia/releases/download/v9/paramnezia-v7.apk"), r.publicApkUrls())
     }
 }
