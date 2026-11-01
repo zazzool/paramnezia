@@ -71,14 +71,14 @@ VPN, фильтра не видят (для них есть системный �
 `Release`: пакет, versionCode, minSdk, SHA-256 и размер APK, сертификат подписи и URL. Подпись
 Ed25519 ставится ключом релизов. Публичный ключ вшит в сборку (`BuildConfig.RELEASE_KEY`).
 
-Приложение читает `https://paramnezia.psync.ru/release.json` (и во флоте `release.json` внутри туннеля) при
+Приложение читает `https://github.com/zazzool/paramnezia/releases/latest/download/release.json` (и во флоте `release.json` внутри туннеля) при
 запуске, не чаще раза в 12 часов, и по кнопке. «Скачать» открывает APK в браузере; ставит его Android, как при
 первой установке. У приложения нет разрешения на установку пакетов. Почему так: [PLAY-PROTECT.md](PLAY-PROTECT.md).
 
 ## Одноразовые ссылки
 
 APK один и тот же для всех: официальный релиз, байт в байт как его подписал apksigner. Страница на Android в два
-шага: «Скачать Paramnezia» (первым — `https://paramnezia.psync.ru/…apk`, запасным — копия на этом
+шага: «Скачать Paramnezia» (первым — APK из GitHub Releases, запасным — копия на этом
 сервере, которую сервер скачал и проверил сам) и «Открыть приглашение в Paramnezia» (intent-ссылка
 `intent://…#Intent;scheme=vpn;package=net.paramnezia`, то есть открывается именно Paramnezia, а не другое
 приложение с `vpn://`). Ключ на странице можно и скопировать. Сведения о версии для страницы (`app.json`) берутся

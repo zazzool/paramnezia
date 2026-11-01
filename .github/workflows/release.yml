@@ -2,8 +2,8 @@ name: Release
 
 # Push a tag like v1.2.0, or a branch like release/v1.2.0, to publish (docs/RELEASE.md).
 # Keys: keys/release-keys.enc (APK keystore + release seed), opened with the secret PN_KEYS_PASSWORD.
-# The public half of the release key is in gradle.properties. The APK and the signed release.json go
-# to https://paramnezia.psync.ru/ (secrets PN_DEPLOY_KEY, PN_DEPLOY_HOST) and to the GitHub release.
+# The public half of the release key is in gradle.properties. The APK and the signed release.json are
+# attached to the GitHub release; the app checks releases/latest/download/release.json.
 on:
   push:
     tags: ["v*"]
@@ -73,30 +73,8 @@ jobs:
             --signer-sha256 "$signer" \
             --url "${PUBLIC_BASE}/$apk" \
             --out release.json
-        env: { PUBLIC_BASE: "https://paramnezia.psync.ru" }
+        env: { PUBLIC_BASE: "https://github.com/${{ github.repository }}/releases/download/${{ env.VERSION }}" }
         shell: bash
-      - name: Publish to psync.ru
-        env:
-          PN_DEPLOY_KEY: ${{ secrets.PN_DEPLOY_KEY }}
-          PN_DEPLOY_HOST: ${{ secrets.PN_DEPLOY_HOST }}
-        run: |
-          set -euo pipefail
-          if [ -z "$PN_DEPLOY_KEY" ] || [ -z "$PN_DEPLOY_HOST" ]; then
-            echo "::error::Secrets PN_DEPLOY_KEY / PN_DEPLOY_HOST are not set (docs/RELEASE.md)"; exit 1
-          fi
-          key="$RUNNER_TEMP/deploy_key"; printf '%s\n' "$PN_DEPLOY_KEY" > "$key"; chmod 600 "$key"
-          dest="$PN_DEPLOY_HOST"; port=22
-          case "$dest" in *:*) port="${dest##*:}"; dest="${dest%:*}" ;; esac
-          ssh="ssh -i $key -p $port -o StrictHostKeyChecking=accept-new -o BatchMode=yes"
-          # The key is limited to the download folder on the server (rrsync), so paths are relative to it.
-          # The APK goes first: release.json never points at a file that is not there yet.
-          rsync -e "$ssh" --chmod=F644 "paramnezia-${VERSION}.apk" "$dest:./"
-          cp "paramnezia-${VERSION}.apk" paramnezia.apk
-          rsync -e "$ssh" --chmod=F644 paramnezia.apk release.json "$dest:./"
-          rm -f "$key"
-          sleep 5
-          curl -fsS https://paramnezia.psync.ru/release.json | cmp - release.json \
-            || { echo "::error::https://paramnezia.psync.ru/release.json does not serve the new release (nginx, see docs/RELEASE.md)"; exit 1; }
       - name: Attach release.json to the GitHub release
         env: { GH_TOKEN: "${{ github.token }}" }
         run: gh release upload "$VERSION" release.json --clobber

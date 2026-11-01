@@ -8,8 +8,8 @@ import java.security.MessageDigest
 import java.util.Base64
 
 /**
- * One app release, as published in `release.json` (https://paramnezia.psync.ru/release.json and the
- * fleet servers' copies). Signed by the release key; the APK is identified by its SHA-256.
+ * One app release, as published in `release.json` (attached to the GitHub release; the fleet servers keep
+ * copies). Signed by the release key; the APK is identified by its SHA-256.
  */
 @Serializable
 data class Release(

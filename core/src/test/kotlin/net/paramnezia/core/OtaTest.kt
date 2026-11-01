@@ -23,7 +23,7 @@ class OtaTest {
     private val pinned = listOf(Base64.getEncoder().encodeToString(key.second))
 
     private fun release(code: Long, pkg: String = "net.paramnezia", minSdk: Int = 26) =
-        Release(pkg, code, "1.$code", minSdk, sha, apk.size.toLong(), urls = listOf("https://paramnezia.psync.ru/a.apk"))
+        Release(pkg, code, "1.$code", minSdk, sha, apk.size.toLong(), urls = listOf("https://github.com/zazzool/paramnezia/releases/download/v9/a.apk"))
 
     private fun signed(r: Release, seed: ByteArray = key.first) = ReleaseCodec.encode(ReleaseCodec.sign(r, seed, ed))
 
@@ -35,7 +35,7 @@ class OtaTest {
         assertEquals(6L, c.best!!.first.versionCode)
         assertTrue(c.offer(signed(release(8))))
         assertFalse("older than best", c.offer(signed(release(7))))
-        assertEquals("https://paramnezia.psync.ru/a.apk", c.best!!.first.publicApkUrls().first())
+        assertEquals("https://github.com/zazzool/paramnezia/releases/download/v9/a.apk", c.best!!.first.publicApkUrls().first())
     }
 
     @Test fun rejectsDowngradesForeignKeysAndTampering() {
@@ -57,7 +57,7 @@ class OtaTest {
         assertFalse("same version is not an update", c.offer(signed(release(5))))
         assertEquals(5L, c.installed!!.first.versionCode)
         assertNull(c.best)
-        assertEquals(listOf("https://paramnezia.psync.ru/a.apk"), c.installed!!.first.publicApkUrls())
+        assertEquals(listOf("https://github.com/zazzool/paramnezia/releases/download/v9/a.apk"), c.installed!!.first.publicApkUrls())
     }
 
     @Test fun verifiesDownloadedBytes() {
@@ -71,7 +71,7 @@ class OtaTest {
     }
 
     @Test fun publicUrlsAreHttpsOnly() {
-        val r = release(7).copy(urls = listOf("https://paramnezia.psync.ru/paramnezia-v7.apk", "http://10.8.1.1:8080/apk/x"))
-        assertEquals(listOf("https://paramnezia.psync.ru/paramnezia-v7.apk"), r.publicApkUrls())
+        val r = release(7).copy(urls = listOf("https://github.com/zazzool/paramnezia/releases/download/v9/paramnezia-v7.apk", "http://10.8.1.1:8080/apk/x"))
+        assertEquals(listOf("https://github.com/zazzool/paramnezia/releases/download/v9/paramnezia-v7.apk"), r.publicApkUrls())
     }
 }

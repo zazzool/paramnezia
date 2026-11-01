@@ -134,7 +134,7 @@ class DeployE2ETest {
 
         val bytes = ByteArray(300_000) { (it * 13).toByte() }
         val sha = putInCache(bytes)
-        val app = InviteLinks.AppDownload("v9.9.9", sha, listOf("https://paramnezia.psync.ru/paramnezia-v9.9.9.apk", "http://plain.example/x.apk"))
+        val app = InviteLinks.AppDownload("v9.9.9", sha, listOf("https://github.com/zazzool/paramnezia/releases/download/v9/paramnezia-v9.9.9.apk", "http://plain.example/x.apk"))
 
         val link = links.create(creds, invite, "Мама", app, preferredPort = 18080)
         assertTrue(link.url, link.url.startsWith("http://127.0.0.1:18080/#"))
@@ -144,7 +144,7 @@ class DeployE2ETest {
         // Nothing downloads by itself, and the APK is never personalised.
         assertTrue("no automatic download", "setTimeout" !in page)
         val appJson = http("$base/app.json").second
-        assertTrue(appJson, sha in appJson && "https://paramnezia.psync.ru/" in appJson && "plain.example" !in appJson)
+        assertTrue(appJson, sha in appJson && "https://github.com/zazzool/paramnezia/releases/download/v9/" in appJson && "plain.example" !in appJson)
         assertEquals(setOf<String>(), links.claimed(creds, listOf(link.token)))
 
         val (code, key) = http("$base/cgi-bin/get?${link.token}&key")

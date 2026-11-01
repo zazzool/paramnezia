@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Puts an app release on this server. The server downloads the APK itself from public HTTPS mirrors
-# (psync.ru) and keeps it only if its SHA-256 matches the signed release: phones never upload
+# (GitHub Releases) and keeps it only if its SHA-256 matches the signed release: phones never upload
 # APK files anywhere.
 #
 # Inputs (environment): PN_SHA256, PN_URLS (one per line), optional PN_RELEASE (signed release JSON

@@ -88,13 +88,13 @@ SignedRelease(body = json(Release), sig = Ed25519(releaseSeed, "paramnezia-relea
 ```
 
 Публичный ключ релизов вшит в APK (`BuildConfig.RELEASE_KEY`), адрес проверки тоже (`BuildConfig.UPDATE_URL`,
-сейчас `https://paramnezia.psync.ru/release.json`). Устройство читает `release.json` оттуда и, во флоте, с
+сейчас `https://github.com/zazzool/paramnezia/releases/latest/download/release.json`). Устройство читает `release.json` оттуда и, во флоте, с
 `http://10.8.1.1:8080/release.json`. Релиз принимается, если подпись верна, пакет совпадает, версия больше,
 `minSdk` подходит и `signerSha256` равен сертификату установленного APK. Проверка: при запуске приложения не чаще
 раза в 12 часов и по кнопке в настройках.
 
 Приложение не скачивает и не ставит APK само. «Скачать» открывает в браузере первый HTTPS-адрес из `urls`
-(`https://paramnezia.psync.ru/paramnezia-vX.Y.Z.apk`), дальше обычная установка Android. Админ при открытом
+(`https://github.com/zazzool/paramnezia/releases/download/vX.Y.Z/paramnezia-vX.Y.Z.apk`), дальше обычная установка Android. Админ при открытом
 приложении раз в сутки просит серверы скачать релиз самим (`release-mirror.sh`: HTTPS-адреса из релиза, проверка
 SHA-256) и положить его в `apk/<sha256>` и `release.json` внутри туннеля и на страницу приглашений.
 

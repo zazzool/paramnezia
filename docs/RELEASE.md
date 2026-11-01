@@ -71,26 +71,15 @@ git push origin main:release/v2.1.0
 1. Собирает APK, подписанный вашим ключом, с вшитыми `PN_RELEASE_KEY` и `UPDATE_URL`; `versionCode` — номер
    запуска workflow, `versionName` — тег.
 2. Создаёт GitHub Release с APK.
-3. `releasetool sign`: подписывает `release.json` (ссылка на APK: `https://paramnezia.psync.ru/paramnezia-vX.Y.Z.apk`).
-4. Выкладывает на psync.ru по rsync: сначала APK, потом `paramnezia.apk` (последняя версия) и `release.json`,
-   затем проверяет, что `https://paramnezia.psync.ru/release.json` отдаёт новый релиз.
+3. `releasetool sign`: подписывает `release.json` (ссылка на APK в этом же релизе) и прикладывает его к релизу.
 
 Дальше приложения при запуске (не чаще раза в 12 часов) видят новую версию и показывают «Скачать». Админ-устройство
 при открытом приложении просит серверы флота скачать релиз самим (доступно внутри туннеля даже при блокировке
 всего остального).
 
-### Раздача с psync.ru (настраивается один раз)
-
-- На сервере: ключ только для выкладки, ограниченный папкой через `rrsync`:
-  ```sh
-  ssh-keygen -t ed25519 -N '' -f /root/pn-deploy
-  mkdir -p /root/psync.ru/paramnezia-dl
-  echo "command=\"rrsync /root/psync.ru/paramnezia-dl\",restrict $(cat /root/pn-deploy.pub)" >> /root/.ssh/authorized_keys
-  ```
-- Секреты репозитория: `PN_DEPLOY_KEY` (приватный ключ `/root/pn-deploy`) и `PN_DEPLOY_HOST` (`root@psync.ru`
-  или `root@psync.ru:порт`).
-- nginx в репозитории psync.ru отдаёт папку как `https://paramnezia.psync.ru/` (отдельный `server` с wildcard-сертификатом
-  `*.psync.ru` и том `./paramnezia-dl:/var/www/paramnezia:ro` в `docker-compose.yml`).
+Приложение проверяет `https://github.com/zazzool/paramnezia/releases/latest/download/release.json`. Для этого
+релизы должны открываться без входа в GitHub, то есть репозиторий должен быть публичным. В закрытом репозитории
+проверка обновлений молча не находит ничего: настройки флота это не затрагивает, APK раздаётся вручную.
 
 Перед публикацией `apk-audit.sh --release` проверяет APK по правилам из [PLAY-PROTECT.md](PLAY-PROTECT.md); APK
 публикуется ровно таким, каким его подписал apksigner. Описание релиза берётся из `docs/releases/vX.Y.Z.md`, если
