@@ -1,7 +1,6 @@
 package net.paramnezia.app.ui
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -22,40 +21,30 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import net.paramnezia.app.App
-import net.paramnezia.app.net.SeenAddress
-import net.paramnezia.app.net.Visibility
-import net.paramnezia.app.net.VisibilityCheck
 import net.paramnezia.app.ota.Updater
 import net.paramnezia.tunnel.TunnelRuntime
 import net.paramnezia.tunnel.TunnelState
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import net.paramnezia.tunnel.TunnelStats
 
 fun TunnelState.power(): PowerState = when (this) {
@@ -65,23 +54,37 @@ fun TunnelState.power(): PowerState = when (this) {
 }
 
 @Composable
-fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
+fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer: () -> Unit) {
     val tunnel by TunnelRuntime.state.collectAsState()
     val state by app.repo.state.collectAsState()
     val update by app.updater.status.collectAsState()
-    val scope = rememberCoroutineScope()
+    val servers = rememberServerCount(app)
+    val p = protection(tunnel, servers)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val paste = rememberPasteKey(app) { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show() }
 
     Column(
         modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Header(tunnel)
-        PowerButton(tunnel.power(), onClick = { if (tunnel.power() == PowerState.OFF) onConnect() else app.disconnect() })
-        StatusLine(tunnel)
+        Header(tunnel, servers)
+        ProtectionPill(p)
+        PowerButton(
+            tunnel.power(),
+            onClick = {
+                when {
+                    tunnel.power() != PowerState.OFF -> app.disconnect()
+                    servers == 0 -> onAddServer()
+                    else -> onConnect()
+                }
+            },
+            dimmed = p == Protection.NO_SERVER,
+        )
+        StatusLine(tunnel, p)
+        if (p == Protection.NO_SERVER) NoServersCard(follower = false, onAdd = onAddServer, onPaste = paste)
         if (tunnel is TunnelState.Up) LiveStats(state.settings.blockTrackers)
-
-        VisibilityCard(app, tunnel)
+        if (p != Protection.NO_SERVER) VisibilityCard(app, tunnel)
 
         when (val u = update) {
             is Updater.Status.Available -> ActionCard("Доступна версия ${u.release.versionName}", "Скачать") {
@@ -95,64 +98,65 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
             Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceContainer)) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Сервер", style = MaterialTheme.typography.titleMedium)
-                    for (p in state.profiles) {
+                    for (pr in state.profiles) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected = p.id == (state.activeProfile ?: state.profiles.first().id), onClick = {
-                                app.repo.update { it.copy(activeProfile = p.id) }
+                            RadioButton(selected = pr.id == (state.activeProfile ?: state.profiles.first().id), onClick = {
+                                app.repo.update { it.copy(activeProfile = pr.id) }
                                 app.reconnectIfUp()
                             })
-                            Text(p.name)
+                            Text(pr.name)
                         }
                     }
                 }
             }
-        }
-        if (state.fleet == null && state.profiles.isEmpty()) {
-            Text("Добавьте сервер: вставьте ключ vpn://, отсканируйте QR или разверните свой VPS на вкладке «Добавить».",
-                style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Spacer(Modifier.height(8.dp))
     }
 }
 
 @Composable
-private fun Header(tunnel: TunnelState) {
+private fun Header(tunnel: TunnelState, servers: Int) {
     Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text("Paramnezia", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
         val server = when (tunnel) { is TunnelState.Up -> tunnel.serverName; is TunnelState.Connecting -> tunnel.serverName; else -> null }
-        if (server != null) {
-            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(8.dp).clip(CircleShape).background(if (tunnel is TunnelState.Up) Brand.Mint else Brand.Amber))
-                    Spacer(Modifier.width(8.dp))
-                    Text(server, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
+        val (label, dot) = when {
+            server != null -> server to (if (tunnel is TunnelState.Up) Brand.Mint else Brand.Amber)
+            servers == 0 -> "нет сервера" to Brand.Coral
+            else -> "серверов: $servers" to MaterialTheme.colorScheme.outline
+        }
+        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+            Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
+                Spacer(Modifier.width(8.dp))
+                Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
 }
 
 @Composable
-private fun StatusLine(tunnel: TunnelState) {
+private fun StatusLine(tunnel: TunnelState, p: Protection) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(tunnel) { while (tunnel is TunnelState.Up) { now = System.currentTimeMillis(); delay(1_000) } }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        AnimatedContent(tunnel.power(), transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "status") { p ->
+        AnimatedContent(p, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "status") { s ->
             Text(
-                when (p) { PowerState.ON -> "Защищено"; PowerState.CONNECTING -> "Подключаюсь…"; PowerState.OFF -> if (tunnel is TunnelState.Failed) "Нет соединения" else "Отключено" },
+                when (s) {
+                    Protection.ON -> "VPN включён"
+                    Protection.CONNECTING -> "Подключаюсь…"
+                    Protection.FAILED -> "Нет соединения"
+                    Protection.OFF -> "VPN выключен"
+                    Protection.NO_SERVER -> "Сервер не добавлен"
+                },
                 style = MaterialTheme.typography.headlineMedium,
-                color = when (p) { PowerState.ON -> Brand.Mint; PowerState.CONNECTING -> Brand.Amber; PowerState.OFF -> MaterialTheme.colorScheme.onSurface },
+                color = if (s == Protection.ON || s == Protection.CONNECTING) protectionColor(s) else MaterialTheme.colorScheme.onSurface,
             )
         }
         Text(
-            when (tunnel) {
-                is TunnelState.Up -> formatDuration(now - tunnel.since)
-                is TunnelState.Failed -> "Нажмите кнопку, чтобы попробовать ещё раз"
-                is TunnelState.Connecting -> "Устанавливаю защищённое соединение"
-                TunnelState.Down -> "Нажмите кнопку, чтобы включить VPN"
-            },
+            if (tunnel is TunnelState.Up) "${tunnel.serverName} · ${formatDuration(now - tunnel.since)}" else tapHint(p),
             style = MaterialTheme.typography.bodyLarge.merge(TabularNumbers),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
         )
     }
 }
@@ -201,76 +205,6 @@ private fun StatTile(title: String, value: String, sub: String, accent: Color, m
             }
             Text(value, style = MaterialTheme.typography.titleLarge.merge(TabularNumbers), maxLines = 1)
             Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-        }
-    }
-}
-
-/**
- * "How sites see you": the address foreign sites get (the server's, through the tunnel) and the one
- * Russian sites get (your own, direct). Refreshed after every (re)connect while on screen.
- */
-@Composable
-private fun VisibilityCard(app: App, tunnel: TunnelState) {
-    val generation by TunnelRuntime.generation.collectAsState()
-    val v by app.visibility.collectAsState()
-    var loading by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    fun refresh() { if (!loading) scope.launch { loading = true; app.refreshVisibility(); loading = false } }
-    val settled = tunnel is TunnelState.Up || tunnel == TunnelState.Down
-    LaunchedEffect(generation, settled) { if (settled) { delay(1_200); refresh() } }
-
-    Card(
-        Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(Color.Transparent),
-    ) {
-        Column(
-            Modifier
-                .background(Brush.linearGradient(listOf(Brand.Violet.copy(alpha = 0.22f), Brand.Cyan.copy(alpha = 0.14f))))
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Как вас видят сайты", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                else TextButton(onClick = ::refresh) { Text("Обновить") }
-            }
-            SeenRow("🌍", "Зарубежные", v?.foreign, loading && v == null)
-            SeenRow("🇷🇺", "Российские", v?.russian, loading && v == null)
-            val verdict = verdict(v, tunnel)
-            AnimatedVisibility(verdict != null) {
-                Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                    Text(verdict.orEmpty(), Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        }
-    }
-}
-
-private fun verdict(v: Visibility?, tunnel: TunnelState): String? = when {
-    v == null -> null
-    tunnel !is TunnelState.Up -> "VPN выключен: все сайты видят ваш настоящий адрес."
-    v.split -> "Раздельный туннель работает: зарубежные сайты видят адрес сервера, российские сервисы и банки видят ваш обычный российский адрес."
-    v.foreign != null && v.russian != null -> "Оба вида сайтов видят один адрес. Проверьте, включено ли «Российское напрямую» в настройках."
-    else -> "Не удалось проверить один из адресов. Нажмите «Обновить»."
-}
-
-@Composable
-private fun SeenRow(emoji: String, who: String, a: SeenAddress?, loading: Boolean) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainerHigh), contentAlignment = Alignment.Center) {
-            Text(emoji, style = MaterialTheme.typography.titleLarge)
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text("$who сайты видят", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(
-                when { a != null -> a.ip; loading -> "проверяю…"; else -> "не удалось узнать" },
-                style = MaterialTheme.typography.titleMedium.merge(TabularNumbers), fontWeight = FontWeight.Bold,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
-            val place = listOfNotNull(a?.let { VisibilityCheck.flag(it.countryCode) }, a?.country, a?.city).joinToString(" ").takeIf { it.isNotBlank() && a?.country != null }
-            val line = listOfNotNull(place, a?.org).joinToString(" · ")
-            if (line.isNotBlank()) Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
         }
     }
 }

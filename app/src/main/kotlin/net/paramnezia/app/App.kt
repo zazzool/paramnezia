@@ -12,6 +12,7 @@ import net.paramnezia.app.tunnel.Net
 import net.paramnezia.app.tunnel.SpecBuilder
 import net.paramnezia.app.ui.WidgetProvider
 import net.paramnezia.app.work.SyncWorker
+import net.paramnezia.core.config.Uapi
 import net.paramnezia.core.config.WgQuick
 import net.paramnezia.core.fleet.FailoverPolicy
 import net.paramnezia.tunnel.NativeEd25519
@@ -56,7 +57,31 @@ class App : Application(), TunnelHost {
     /** What foreign and Russian sites last saw; refreshed by the home screen. */
     val visibility: kotlinx.coroutines.flow.StateFlow<Visibility?> = _visibility
 
-    suspend fun refreshVisibility() { _visibility.value = visibilityCheck.run() }
+    /** Which tunnel state a visibility check belongs to (a check made in another state is stale). */
+    fun visibilityKey(): String = when (val s = TunnelRuntime.state.value) {
+        is TunnelState.Up -> "up:${s.serverId}:${TunnelRuntime.generation.value}"
+        TunnelState.Down, is TunnelState.Failed -> "down"
+        is TunnelState.Connecting -> "connecting"
+    }
+
+    suspend fun refreshVisibility() {
+        val key = visibilityKey()
+        val host = (TunnelRuntime.state.value as? TunnelState.Up)?.let { serverHost(it.serverId) }
+        val v = visibilityCheck.run(key, host)
+        // The tunnel may have changed while the check ran; a result for an old state is dropped.
+        if (key == visibilityKey()) _visibility.value = v
+    }
+
+    /** Host (name or address) of a fleet server or a standalone profile. */
+    fun serverHost(id: String): String? =
+        runCatching { fleet.manifest()?.servers?.firstOrNull { it.id == id }?.host }.getOrNull()
+            ?: repo.current.profiles.firstOrNull { it.id == id }?.let { p ->
+                runCatching { WgQuick.parse(p.conf).peers.firstOrNull()?.endpoint?.let { Uapi.splitEndpoint(it).first } }.getOrNull()
+            }
+
+    /** Servers this device can connect to: fleet servers it has a config for, plus standalone ones. */
+    fun serverCount(): Int =
+        (runCatching { fleet.member()?.tunnels()?.size }.getOrNull() ?: 0) + repo.current.profiles.size
     private val failover = FailoverPolicy()
 
     override fun onCreate() {

@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -28,7 +30,6 @@ import net.paramnezia.tunnel.TunnelState
 import net.paramnezia.tunnel.TunnelStats
 import net.paramnezia.app.ota.Updater
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 /**
  * One button for follower devices: servers, routing, updates and failover are handled by the fleet.
@@ -42,7 +43,6 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
     var blocked by remember { mutableLongStateOf(0L) }
     var askFull by remember { mutableStateOf(false) }
     val update by app.updater.status.collectAsState()
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     LaunchedEffect(tunnel) {
         while (tunnel is TunnelState.Up) {
@@ -50,21 +50,42 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
         }
     }
 
-    Column(modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterVertically)) {
+    val servers = rememberServerCount(app)
+    val p = protection(tunnel, servers)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val paste = rememberPasteKey(app) { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show() }
+
+    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(18.dp, Alignment.CenterVertically)) {
         Text("Paramnezia", style = MaterialTheme.typography.headlineMedium,
             modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { askFull = true }))
-        PowerButton(tunnel.power(), onClick = { if (tunnel.power() == PowerState.OFF) onConnect() else app.disconnect() }, size = 232.dp)
-        Text(when (val t = tunnel) {
-            is TunnelState.Up -> "Защищено"
-            is TunnelState.Connecting -> "Подключаюсь…"
-            is TunnelState.Failed -> "Не удалось подключиться"
-            TunnelState.Down -> "Нажмите, чтобы включить"
-        }, style = MaterialTheme.typography.headlineMedium, color = when (tunnel.power()) {
-            PowerState.ON -> Brand.Mint; PowerState.CONNECTING -> Brand.Amber; PowerState.OFF -> MaterialTheme.colorScheme.onSurface
+        ProtectionPill(p)
+        PowerButton(
+            tunnel.power(),
+            onClick = {
+                when {
+                    tunnel.power() != PowerState.OFF -> app.disconnect()
+                    servers == 0 -> paste()
+                    else -> onConnect()
+                }
+            },
+            size = 232.dp,
+            dimmed = p == Protection.NO_SERVER,
+        )
+        Text(when (p) {
+            Protection.ON -> "VPN включён"
+            Protection.CONNECTING -> "Подключаюсь…"
+            Protection.FAILED -> "Не удалось подключиться"
+            Protection.OFF -> "Нажмите, чтобы включить"
+            Protection.NO_SERVER -> "Сервер не добавлен"
+        }, style = MaterialTheme.typography.headlineMedium, color = when (p) {
+            Protection.ON, Protection.CONNECTING -> protectionColor(p); else -> MaterialTheme.colorScheme.onSurface
         })
+        if (p == Protection.NO_SERVER) NoServersCard(follower = true, onAdd = null, onPaste = paste)
+        else CompactVisibility(app, tunnel)
         stats?.takeIf { tunnel is TunnelState.Up }?.let {
-            Text("↓ ${formatBytes(it.rxBytes)}   ↑ ${formatBytes(it.txBytes)}   трекеров: $blocked", style = MaterialTheme.typography.bodyMedium)
+            Text("↓ ${formatBytes(it.rxBytes)}   ↑ ${formatBytes(it.txBytes)}   трекеров: $blocked", style = MaterialTheme.typography.bodyMedium.merge(TabularNumbers),
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         // The browser downloads the APK; Android's installer asks the user, as with the first install.
         (update as? Updater.Status.Available)?.let { u ->

@@ -160,7 +160,7 @@ private fun Root(app: App, incoming: MutableSharedFlow<String>, onConnect: () ->
     ) { padding ->
         val m = Modifier.padding(padding)
         when (tab) {
-            Tab.HOME -> HomeScreen(app, m, onConnect)
+            Tab.HOME -> HomeScreen(app, m, onConnect, onAddServer = { tab = Tab.ADD })
             Tab.ADD -> AddScreen(app, m, pending, onConsumed = { pending = null }, toast = toast, onDone = { tab = Tab.HOME })
             Tab.FLEET -> FleetScreen(app, m, toast)
             Tab.SETTINGS -> SettingsScreen(app, m, toast)

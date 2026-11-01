@@ -35,9 +35,21 @@ adb shell monkey -p net.paramnezia -c android.intent.category.LAUNCHER 1 >/dev/n
 sleep 10
 adb shell pidof net.paramnezia >/dev/null || fail "the app is not running after launch"
 
+# Screenshot of a screen state for the PR (uploaded with the job's artifacts).
+shot() {
+  sleep "${2:-0}"
+  adb exec-out screencap -p > "screen-$tag-$1.png" || true
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "ui-$tag-$1.xml" >/dev/null 2>&1
+  echo "--- screen: $1 ---"; python3 "$here/ui.py" list "ui-$tag-$1.xml" 2>/dev/null | head -40
+}
+# Fresh install, no servers: the home screen must say so plainly.
+shot empty
+python3 "$here/ui.py" find "ui-$tag-empty.xml" "Нет ни одного сервера" >/dev/null || fail "no 'no servers' indicator on a fresh install"
+
 adb push "$conf" /data/local/tmp/c.conf >/dev/null
 adb shell 'am start -n net.paramnezia/net.paramnezia.app.ui.MainActivity -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "$(cat /data/local/tmp/c.conf)"' >/dev/null
 sleep 6
+shot ready
 
 tap "VPN" || fail "no power button on the home screen"
 sleep 3
@@ -67,6 +79,9 @@ sudo wg show wg0
 # Traffic really flows through the tunnel: the server's tunnel address answers.
 adb shell ping -c 3 -W 2 10.9.0.1 || echo "::warning::[$tag] ping 10.9.0.1 through the tunnel failed"
 adb shell pidof net.paramnezia >/dev/null || fail "the app died"
+# The "how sites see you" card checks the addresses a few seconds after connecting.
+shot connected 15
+adb shell input swipe 540 1800 540 700 300; shot connected-scrolled 2
 grep -q "FATAL EXCEPTION" <(adb logcat -d) && fail "crash in the log"
 dump >/dev/null
 echo "[$tag] VPN end-to-end: OK"
