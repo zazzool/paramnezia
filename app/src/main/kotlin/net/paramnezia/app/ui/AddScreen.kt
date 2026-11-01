@@ -43,7 +43,7 @@ import net.paramnezia.deploy.SshException
 import kotlinx.coroutines.launch
 
 @Composable
-fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> Unit, toast: (String) -> Unit, onDone: () -> Unit) {
+fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> Unit, toast: (String) -> Unit, onDone: () -> Unit, onConnect: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -52,7 +52,8 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
     val assembler = remember { AmneziaQr.Assembler() }
     var qrProgress by remember { mutableStateOf<String?>(null) }
 
-    fun runImport(block: suspend () -> Servers.Imported) {
+    /** [connectAfter]: settings opened from a link or file connect at once, as the person expects. */
+    fun runImport(connectAfter: Boolean = false, block: suspend () -> Servers.Imported) {
         busy = true
         scope.launch {
             runCatching { block() }
@@ -63,6 +64,7 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
                     })
                     text = ""
                     onDone()
+                    if (connectAfter) onConnect()
                 }
                 .onFailure { toast(it.message ?: "Не удалось импортировать") }
             busy = false
@@ -70,7 +72,7 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
     }
 
     LaunchedEffect(pending) {
-        if (pending != null) { onConsumed(); runImport { app.servers.import(pending) } }
+        if (pending != null) { onConsumed(); runImport(connectAfter = true) { app.servers.import(pending) } }
     }
 
     lateinit var scanLauncher: androidx.activity.result.ActivityResultLauncher<ScanOptions>

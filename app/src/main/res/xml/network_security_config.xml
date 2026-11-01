@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Plain HTTP only to the fleet server inside our own (encrypted) tunnel: the signed manifest and
+     release info at http://10.8.1.1:8080/. Everything else must be HTTPS. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.8.1.1</domain>
+    </domain-config>
+</network-security-config>

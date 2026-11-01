@@ -114,4 +114,6 @@ data class StoredLink(
     /** The key the link hands out, so taking the link back also takes the access back. */
     val peerPublicKey: String? = null,
     val fleetDevice: Boolean = false,
+    /** Sent as a settings file rather than a link (no page on the server, never "used"). */
+    val file: Boolean = false,
 )

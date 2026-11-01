@@ -36,11 +36,38 @@ class Links(
     private val manager = ServerManager(repo.hostKeys)
     private val publisher = FleetPublisher(repo.hostKeys)
 
-    /** Fleet admin: a new trusted device, joined through a link. */
-    suspend fun forFleetDevice(name: String): StoredLink = withContext(Dispatchers.IO) {
+    /** How a new person gets their settings. */
+    enum class Delivery {
+        /** One-time link to a page on our server (installs the app, then opens the invite in it). */
+        LINK,
+        /** A settings file sent straight from the app; needs no link page, but works more than once. */
+        FILE,
+    }
+
+    /** A person just added: their link (for [Delivery.LINK]) and the settings themselves. */
+    data class Created(val name: String, val stored: StoredLink, val key: String)
+
+    /**
+     * Several people at once. Each name gets its own key; failures do not stop the rest and come
+     * back as (name, error). Fleet devices when [profile] is null, else accounts on that server.
+     */
+    suspend fun createMany(names: List<String>, profile: StoredProfile?, delivery: Delivery): Pair<List<Created>, List<Pair<String, String>>> {
+        val ok = ArrayList<Created>()
+        val failed = ArrayList<Pair<String, String>>()
+        for (name in names.map { it.trim() }.filter { it.isNotEmpty() }.distinct()) {
+            runCatching { if (profile == null) forFleetDevice(name, delivery) else forProfile(profile, name, delivery) }
+                .onSuccess { ok += it }
+                .onFailure { failed += name to (it.message ?: it.toString()) }
+        }
+        return ok to failed
+    }
+
+    /** Fleet admin: a new trusted device, joined through a link or a file. */
+    suspend fun forFleetDevice(name: String, delivery: Delivery = Delivery.LINK): Created = withContext(Dispatchers.IO) {
         val (server, ssh) = fleet.managedServer() ?: error("Нет SSH-доступа ни к одному серверу флота")
         val invite = fleet.addDevice(name)
         val pub = Invite.read(invite)?.let { WgKey.fromBase64(it.privateKey).publicKey().toBase64() }
+        if (delivery == Delivery.FILE) return@withContext Created(name, storeFile(name, server.id, pub, fleetDevice = true), invite)
         val link = try {
             links.create(ssh, invite, name, appDownload())
         } catch (e: Exception) {
@@ -49,16 +76,17 @@ class Links(
             throw friendly(e)
         }
         mirrorForInvites(ssh)
-        store(link, name, server.id, pub, fleetDevice = true)
+        Created(name, store(link, name, server.id, pub, fleetDevice = true), invite)
     }
 
     /** Without a fleet: a separate account (its own key) on a server we manage. */
-    suspend fun forProfile(profile: StoredProfile, name: String): StoredLink = withContext(Dispatchers.IO) {
+    suspend fun forProfile(profile: StoredProfile, name: String, delivery: Delivery = Delivery.LINK): Created = withContext(Dispatchers.IO) {
         val ssh = profile.ssh ?: error("Нет SSH-доступа к этому серверу")
         val protocol = runCatching { Protocol.valueOf(profile.protocol) }.getOrDefault(Protocol.AWG)
         val client = WgKey.generatePrivate()
         val tunnel = try { manager.addClient(ssh, client, name, protocol) } catch (e: Exception) { throw friendly(e) }
         val key = AmneziaFormat.export(profile.name, tunnel).let(AmneziaKey::encode)
+        if (delivery == Delivery.FILE) return@withContext Created(name, storeFile(name, profile.id, client.publicKey().toBase64()), key)
         val link = try {
             links.create(ssh, key, name, appDownload())
         } catch (e: Exception) {
@@ -66,7 +94,7 @@ class Links(
             throw friendly(e)
         }
         mirrorForInvites(ssh)
-        store(link, name, profile.id, client.publicKey().toBase64())
+        Created(name, store(link, name, profile.id, client.publicKey().toBase64()), key)
     }
 
     /** What went wrong, in words the admin can act on. */
@@ -124,7 +152,7 @@ class Links(
 
     /** Asks the servers which links have been used. */
     suspend fun refresh() = withContext(Dispatchers.IO) {
-        val open = repo.current.links.filter { !it.used && it.expiresAt > System.currentTimeMillis() }
+        val open = repo.current.links.filter { !it.file && !it.used && it.expiresAt > System.currentTimeMillis() }
         val used = open.groupBy { it.serverRef }.flatMap { (ref, list) ->
             val ssh = access(ref) ?: return@flatMap emptyList()
             runCatching { links.claimed(ssh, list.map { it.token }) }.getOrDefault(emptySet())
@@ -135,7 +163,7 @@ class Links(
     /** Takes back an unused link and the access it carried. */
     suspend fun revoke(link: StoredLink) = withContext(Dispatchers.IO) {
         val ssh = access(link.serverRef)
-        ssh?.let { links.revoke(it, link.token) }
+        if (!link.file) ssh?.let { links.revoke(it, link.token) }
         link.peerPublicKey?.let { pub ->
             if (link.fleetDevice) fleet.removeDevice(pub)
             else if (ssh != null) {
@@ -152,6 +180,15 @@ class Links(
 
     private fun store(link: InviteLinks.Link, name: String, ref: String, peer: String?, fleetDevice: Boolean = false): StoredLink {
         val stored = StoredLink(link.token, link.url, name, ref, System.currentTimeMillis(), link.expiresAt, peerPublicKey = peer, fleetDevice = fleetDevice)
+        repo.update { s -> s.copy(links = (listOf(stored) + s.links).take(50)) }
+        return stored
+    }
+
+    /** A person who got a file: kept so their access can be taken back like a link's. */
+    private fun storeFile(name: String, ref: String, peer: String?, fleetDevice: Boolean = false): StoredLink {
+        val now = System.currentTimeMillis()
+        val stored = StoredLink("file-" + java.util.UUID.randomUUID(), "", name, ref, now, Long.MAX_VALUE,
+            used = true, peerPublicKey = peer, fleetDevice = fleetDevice, file = true)
         repo.update { s -> s.copy(links = (listOf(stored) + s.links).take(50)) }
         return stored
     }

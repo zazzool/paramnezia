@@ -29,7 +29,7 @@ class Servers(private val repo: Repo, private val fleet: FleetManager) {
      * full access), fleet invites, wg-quick/awg-quick configs and assembled multi-QR payloads.
      */
     suspend fun import(text: String): Imported = withContext(Dispatchers.IO) {
-        val t = text.trim()
+        val t = net.paramnezia.core.amnezia.KeyText.extract(text)
         if (Invite.read(t) != null) {
             if (!fleet.join(t, Build.MODEL)) throw ConfigException("Приглашение повреждено или устарело")
             return@withContext Imported.JoinedFleet

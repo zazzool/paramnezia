@@ -83,8 +83,16 @@
     x.onerror = function () { fail(0); };
     x.send();
   }
+  // The invite, once fetched, stays in this browser: installing the app may take longer than the
+  // server's 30-minute retry window, and the person must not lose their access because of that.
+  var store = null; try { store = window.localStorage; } catch (e) {}
   function fetchText(what, done) {
-    get(url(what), done, function (status) {
+    var cached = what === 'app' && store && store.getItem('pn-' + t);
+    if (cached) { done(cached); return; }
+    get(url(what), function (k) {
+      if (what === 'app' && store) try { store.setItem('pn-' + t, k); } catch (e) {}
+      done(k);
+    }, function (status) {
       if (status === 0) { alert('Нет связи с сервером, попробуйте ещё раз.'); return; }
       show(null); $('gone').hidden = false;
     });
@@ -129,23 +137,29 @@
   $('getkey2').onclick = keyFlow;
   $('copy').onclick = function () { copy('key', this); };
   $('copyapp').onclick = function () { copy('appkey', this); };
-  $('have').onclick = function () {
-    fetchText('app', function (k) {
-      // An intent link opens exactly Paramnezia (not another app that also handles vpn://) and,
-      // if it is not installed yet, comes back here instead of going to a store.
-      var rest = k.replace(/^vpn:\/\//, '');
-      var intent = 'intent://' + rest + '#Intent;scheme=vpn;package=net.paramnezia;S.browser_fallback_url=' +
-        encodeURIComponent(location.href) + ';end';
-      $('open').href = intent; $('appkey').value = k;
-      $('appbox').hidden = false; $('have').hidden = true;
-      location.href = intent;
-    });
-  };
+  // An intent link opens exactly Paramnezia (not another app that also handles vpn://) and, if it
+  // is not installed yet, comes back to this page marked ?noapp (install steps, no new attempt).
+  function openApp(k) {
+    var rest = k.replace(/^vpn:\/\//, '');
+    var back = location.origin + location.pathname + '?noapp#' + t;
+    var intent = 'intent://' + rest + '#Intent;scheme=vpn;package=net.paramnezia;S.browser_fallback_url=' +
+      encodeURIComponent(back) + ';end';
+    $('open').href = intent; $('appkey').value = k;
+    $('appbox').hidden = false; $('have').hidden = true;
+    location.href = intent;
+  }
+  $('have').onclick = function () { fetchText('app', openApp); };
 
   var ua = navigator.userAgent || '';
   var android = /Android/i.test(ua);
   var ios = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-  if (android) show('android');
+  if (android) {
+    show('android');
+    // Paramnezia already installed: open the invite in it right away, no taps needed. Without the
+    // app the browser comes back with ?noapp and the page shows how to install it.
+    if (!/noapp/.test(location.search)) fetchText('app', openApp);
+    else $('have').textContent = 'Я установил(а) Paramnezia — открыть приглашение';
+  }
   else if (ios) show('ios');
   else show('choose');
 })();
