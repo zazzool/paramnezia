@@ -125,7 +125,9 @@ jobs:
           target: google_apis
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: bash .github/scripts/vpn-e2e.sh "$(find apk -name '*release*.apk' | head -1)" client.conf ${{ matrix.api }}
+          script: |
+            bash .github/scripts/vpn-e2e.sh "$(find apk -name '*release*.apk' | head -1)" client.conf ${{ matrix.api }}
+            bash .github/scripts/ui-shots.sh "$(find apk -name '*debug*.apk' | head -1)" ${{ matrix.api }}
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: "smoke-${{ matrix.api }}", path: "logcat-*.txt\nscreen-*.png\nui-*.xml", if-no-files-found: ignore }

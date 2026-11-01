@@ -84,6 +84,7 @@ tools/bypass-lists/  генератор списков «российское н
 | `net/Visibility.kt` | «как вас видят сайты»: зарубежный и российский адрес |
 | `work/SyncWorker.kt` | синхронизация раз в 12 часов |
 | `ui/*` | Compose: `MainActivity`, `HomeScreen`, `PowerButton`, `Theme`, `AddScreen`, `FleetScreen`, `SettingsScreen`, `SimpleScreen`, `Qr`, `QuickTile`, `WidgetProvider` (+ `ToggleActivity` для кнопки виджета) |
+| `ui/FormKit.kt`, `ui/SshForm.kt` | общие блоки экранов «Добавить» и «Флот»: `PasteField` (поле для вставки: клавиатура открывается только кнопкой ⌨, «Вставить» кладёт буфер сразу), группы строк, плитки; форма SSH-доступа, которая из вставленного письма хостера сама заполняет IP, логин, пароль и порт (`core/profile/SshPaste`) |
 
 ## 3. Сборка и проверка
 
@@ -119,6 +120,9 @@ OTA в нём выключены (нет `RELEASE_KEY`). Debug имеет `appli
    для проверки) принудительно кладутся в ветку `apk-builds`; lint как отчёт.
 4. **Starts on an emulator (29, 34)** — ставит release APK на эмуляторы Android 10 и 14, запускает, падает
    при `FATAL EXCEPTION` или если процесс умер. Журнал падения печатается прямо в лог задачи.
+   Затем `ui-shots.sh` ставит debug APK, заполняет его демо-данными (`app/src/debug/…/DemoActivity`: флот с двумя
+   серверами, устройства, приглашения; адреса из TEST-NET) и снимает экраны «Добавить» и «Флот» на экране телефона
+   1080×2340. Скриншоты `screen-<api>-ui-*.png` лежат в артефакте `smoke-<api>`; задача падает, если приложение упало.
 
 Еженедельно `bypass-lists.yml` обновляет списки и открывает PR (сначала прогоняя `RoutingTest`).
 
