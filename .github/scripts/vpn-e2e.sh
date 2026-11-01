@@ -74,4 +74,22 @@ adb shell ping -c 3 -W 2 10.9.0.1 || echo "::warning::[$tag] ping 10.9.0.1 throu
 adb shell pidof net.paramnezia >/dev/null || fail "the app died"
 grep -q "FATAL EXCEPTION" <(adb logcat -d) && fail "crash in the log"
 dump >/dev/null
+
+# Screenshots of the one-button screen that family devices show (used on the server's family page,
+# deploy/src/main/resources/net/paramnezia/deploy/invite/shot-*.webp). Best effort, never fails the run.
+shot() { adb exec-out screencap -p > "screen-$tag-$1.png" || true; }
+if tap "Настройки"; then
+  sleep 2
+  found=""
+  for _ in 1 2 3 4 5 6; do
+    if tap "Простой"; then found=1; break; fi
+    adb shell input swipe 540 1600 540 600 300; sleep 1
+  done
+  if [ -n "$found" ]; then
+    sleep 4; shot simple-on
+    tap "VPN" && { sleep 5; shot simple-off; }
+  else
+    echo "::warning::[$tag] could not switch to the simple screen for screenshots"
+  fi
+fi
 echo "[$tag] VPN end-to-end: OK"
