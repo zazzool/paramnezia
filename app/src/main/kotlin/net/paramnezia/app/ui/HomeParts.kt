@@ -201,7 +201,9 @@ fun VisibilityCard(app: App, tunnel: TunnelState) {
                 }
             }
             SeenRow("Зарубежные сайты", if (up) Route.TUNNEL else Route.DIRECT, v?.foreign, loading)
-            SeenRow("Российские сайты", if (up && v?.split != false) Route.DIRECT else if (up) Route.TUNNEL else Route.DIRECT, v?.russian, loading)
+            // "Through VPN" only when the check proved it (both sides saw the same address).
+            val ruRoute = if (up && v?.russian != null && v.foreign != null && !v.split) Route.TUNNEL else Route.DIRECT
+            SeenRow("Российские сайты", ruRoute, v?.russian, loading)
             val notes = notes(v, tunnel)
             AnimatedVisibility(notes.isNotEmpty()) {
                 Column(Modifier.padding(end = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { notes.forEach { NoteRow(it) } }
