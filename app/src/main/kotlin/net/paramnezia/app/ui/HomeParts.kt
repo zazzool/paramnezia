@@ -54,6 +54,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import net.paramnezia.app.App
@@ -175,8 +176,8 @@ private fun SeenRow(who: String, route: Route, a: SeenAddress?, loading: Boolean
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(who, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                FitText(who, MaterialTheme.typography.labelMedium, Modifier.weight(1f, fill = false),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, min = 8.sp)
                 Spacer(Modifier.width(8.dp))
                 RouteBadge(route)
             }

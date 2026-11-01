@@ -253,14 +253,14 @@ fun InfoPanel(app: App, tunnel: TunnelState, onMore: () -> Unit) {
         modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large).tactile(onClick = onMore),
     ) {
         Column(Modifier.padding(horizontal = Space.M, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(Space.S)) {
-            PlaceLine("Зарубежные", v?.foreign?.let { VisibilityCheck.flag(it.countryCode) to listOfNotNull(it.country ?: "?", it.ip).joinToString(" · ") }, loading, if (up) Brand.Mint else null)
-            PlaceLine("Российские", v?.russian?.let { VisibilityCheck.flag(it.countryCode) to listOfNotNull(it.country ?: "?", it.ip).joinToString(" · ") }, loading, null)
+            PlaceLine("Зарубежные сайты", v?.foreign, loading, if (up) Brand.Mint else null)
+            PlaceLine("Российские сайты", v?.russian, loading, null)
             if (up) {
                 Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)))
                 Row(Modifier.fillMaxWidth()) {
                     Metric("↓", "${formatBytes(live.down)}/с", Brand.Cyan, Modifier.weight(1f))
                     Metric("↑", "${formatBytes(live.up)}/с", Brand.Violet, Modifier.weight(1f))
-                    Metric("◷", health.rttMs?.let { "$it мс" } ?: "—", Brand.Mint, Modifier.weight(1f))
+                    Metric("пинг", health.rttMs?.let { "$it мс" } ?: "—", Brand.Mint, Modifier.weight(1f))
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
@@ -272,21 +272,25 @@ fun InfoPanel(app: App, tunnel: TunnelState, onMore: () -> Unit) {
     }
 }
 
+/** Flag, "who · address" in small type, and the country in body type: the country is what people read. */
 @Composable
-private fun PlaceLine(who: String, value: Pair<String, String>?, loading: Boolean, accent: Color?) {
+private fun PlaceLine(who: String, a: net.paramnezia.app.net.SeenAddress?, loading: Boolean, accent: Color?) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(value?.first ?: "🌐", style = MaterialTheme.typography.titleLarge)
+        Text(a?.let { VisibilityCheck.flag(it.countryCode) } ?: "🌐", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                FitText("$who сайты видят", MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, min = 8.sp)
+                FitText(listOfNotNull(who, a?.ip).joinToString(" · "), MaterialTheme.typography.labelSmall.merge(TabularNumbers),
+                    Modifier.weight(1f, fill = false), color = MaterialTheme.colorScheme.onSurfaceVariant, min = 8.sp)
                 if (accent != null) {
                     Spacer(Modifier.width(6.dp))
                     Box(Modifier.size(6.dp).clip(CircleShape).background(accent))
                 }
             }
-            FitText(value?.second ?: if (loading) "проверяю…" else "не удалось узнать",
-                MaterialTheme.typography.bodyLarge.merge(TabularNumbers), min = 11.sp)
+            FitText(
+                when { a != null -> a.country ?: "страна не определена"; loading -> "проверяю…"; else -> "не удалось узнать" },
+                MaterialTheme.typography.bodyLarge, min = 12.sp,
+            )
         }
     }
 }
@@ -294,7 +298,7 @@ private fun PlaceLine(who: String, value: Pair<String, String>?, loading: Boolea
 @Composable
 private fun Metric(icon: String, value: String, accent: Color, modifier: Modifier) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-        Text(icon, style = MaterialTheme.typography.labelLarge, color = accent)
+        Text(icon, style = MaterialTheme.typography.labelMedium, color = accent, maxLines = 1, softWrap = false)
         Spacer(Modifier.width(6.dp))
         FitText(value, MaterialTheme.typography.labelLarge.merge(TabularNumbers), min = 9.sp)
     }
