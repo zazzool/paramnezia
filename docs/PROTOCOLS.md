@@ -143,7 +143,7 @@ Blossom с расширением `.apk` (BUD-01) и HTTPS-адреса из `ur
 
 **Страница** (`index.html`) определяет платформу по User-Agent. Android: кнопка «Скачать Paramnezia» (адрес из
 `app.json`, иначе `/paramnezia.apk` этого сервера; ничего не скачивается само) и кнопка «Открыть приглашение»
-(`intent://<ключ без vpn://>#Intent;scheme=vpn;package=io.paramnezia;S.browser_fallback_url=<страница>;end`,
+(`intent://<ключ без vpn://>#Intent;scheme=vpn;package=net.paramnezia;S.browser_fallback_url=<страница>;end`,
 плюс ключ для копирования). iPhone/iPad получает ключ и `.conf` для AmneziaVPN; прочее — выбор.
 
 **`app.json`** (пишет `invite-server.sh` из `PN_APP_JSON`): `{"version", "sha256", "urls": [только https]}`.

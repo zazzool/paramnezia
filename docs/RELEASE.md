@@ -7,7 +7,8 @@
 | **Ключ подписи APK** (keystore) | сам APK | секреты репозитория + офлайн-копия | обновить установленные приложения будет нельзя, только переустановка |
 | **Ключ релизов** (Ed25519, `PN_RELEASE_SEED`) | манифест релиза для OTA | секрет репозитория + офлайн-копия | новый ключ = новая сборка, которую придётся поставить вручную |
 
-Оба ключа созданы 31.10.2026 и лежат в репозитории зашифрованными: `keys/release-keys.enc` (AES-256, PBKDF2
+Оба ключа созданы заново 1.11.2026 (версия 2.0.0, пакет `net.paramnezia`; ключи 1.x с пакетом
+`io.paramnezia` больше не используются) и лежат в репозитории зашифрованными: `keys/release-keys.enc` (AES-256, PBKDF2
 600 000 итераций). Внутри `paramnezia.jks` (ключ подписи, алиас `paramnezia`) и `release.env`
 (`PN_KEYSTORE_PASSWORD`, `PN_KEY_ALIAS`, `PN_RELEASE_SEED`). Пароль от архива — секрет репозитория
 `PN_KEYS_PASSWORD`; держите его копию офлайн (менеджер паролей). Публичные половины ключа релизов —
@@ -21,7 +22,20 @@ openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in keys/release-keys.enc | tar
 
 Сборки CI из PR и `main` подписаны debug-ключом раннера; поверх них релиз ставится только после удаления.
 
+Отпечаток сертификата подписи (SHA-256) — в `keys/signing-cert-sha256.txt`.
+
 ## Если нужно заменить ключи
+
+Проще всего в GitHub Actions (так созданы ключи 2.0.0, они никогда не покидали Actions):
+
+1. Задайте новое случайное значение секрета `PN_KEYS_PASSWORD` (Settings → Secrets and variables → Actions) и
+   сохраните копию офлайн.
+2. Запушьте ветку `keys/rotate-<что угодно>`. Workflow `rotate-keys.yml` создаст keystore и ключ релизов,
+   зашифрует их этим паролем, проверит расшифровку и закоммитит в ту же ветку `keys/release-keys.enc`,
+   `keys/signing-cert-sha256.txt` и публичные ключи в `gradle.properties`.
+3. Смёржите ветку.
+
+Вручную:
 
 ```sh
 keytool -genkeypair -keystore paramnezia.jks -storetype PKCS12 -alias paramnezia -keyalg EC -groupname secp256r1 -validity 36500
@@ -33,13 +47,21 @@ tar c paramnezia.jks release.env | openssl enc -aes-256-cbc -pbkdf2 -iter 600000
 
 Затем обновите публичные ключи в `gradle.properties` и секрет `PN_KEYS_PASSWORD`. Новый ключ подписи
 означает переустановку приложения на всех устройствах; новый ключ релизов — ручную установку одной сборки.
+Шаг `Open the keys` в `release.yml` сверяет ключ релизов из архива с `gradle.properties` и останавливает выпуск,
+если они не совпадают (иначе устройства молча перестали бы принимать обновления).
+
+Если нужно разорвать связь с прошлыми сборками совсем (как в 2.0.0 из-за Play Protect), меняется и `applicationId`
+вместе с пакетами кода: `app/build.gradle.kts`, каталоги `*/src/*/kotlin|java/net/paramnezia`, `jni.c` (имена
+`Java_net_paramnezia_…`), `go.mod`, proguard-правила, `baseline-prof.txt`, `apk-audit.sh`, `vpn-e2e.sh`,
+`intent://…;package=` на странице приглашения и `--package` по умолчанию в `releasetool`. Старые установки такую
+сборку как обновление не получат: удалить старое приложение, поставить новое.
 
 ## Выпуск
 
 ```sh
-git tag v1.2.0 && git push origin v1.2.0
+git tag v2.1.0 && git push origin v2.1.0
 # или, если теги пушить нельзя (так выпускает Claude):
-git push origin main:release/v1.2.0
+git push origin main:release/v2.1.0
 ```
 
 Тег релиза при выпуске из ветки создаёт сам `gh release create`.

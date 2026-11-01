@@ -31,12 +31,12 @@ tap() {
 
 adb install -r "$apk" || fail "install failed"
 adb logcat -c
-adb shell monkey -p io.paramnezia -c android.intent.category.LAUNCHER 1 >/dev/null
+adb shell monkey -p net.paramnezia -c android.intent.category.LAUNCHER 1 >/dev/null
 sleep 10
-adb shell pidof io.paramnezia >/dev/null || fail "the app is not running after launch"
+adb shell pidof net.paramnezia >/dev/null || fail "the app is not running after launch"
 
 adb push "$conf" /data/local/tmp/c.conf >/dev/null
-adb shell 'am start -n io.paramnezia/io.paramnezia.app.ui.MainActivity -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "$(cat /data/local/tmp/c.conf)"' >/dev/null
+adb shell 'am start -n net.paramnezia/net.paramnezia.app.ui.MainActivity -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "$(cat /data/local/tmp/c.conf)"' >/dev/null
 sleep 6
 
 tap "VPN" || fail "no power button on the home screen"
@@ -54,7 +54,7 @@ for _ in $(seq 1 30); do
 done
 adb shell ip addr show tun0 2>/dev/null | grep -q "inet " || fail "no tun0 interface: the VPN did not come up"
 echo "[$tag] tun0 is up:"; adb shell ip addr show tun0
-adb shell appops get io.paramnezia ACTIVATE_VPN
+adb shell appops get net.paramnezia ACTIVATE_VPN
 
 for _ in $(seq 1 20); do
   hs=$(sudo wg show wg0 latest-handshakes | awk '{print $2}')
@@ -66,7 +66,7 @@ sudo wg show wg0
 
 # Traffic really flows through the tunnel: the server's tunnel address answers.
 adb shell ping -c 3 -W 2 10.9.0.1 || echo "::warning::[$tag] ping 10.9.0.1 through the tunnel failed"
-adb shell pidof io.paramnezia >/dev/null || fail "the app died"
+adb shell pidof net.paramnezia >/dev/null || fail "the app died"
 grep -q "FATAL EXCEPTION" <(adb logcat -d) && fail "crash in the log"
 dump >/dev/null
 echo "[$tag] VPN end-to-end: OK"

@@ -8,7 +8,7 @@ val minSdkVersion = 26
 val goOut = layout.projectDirectory.dir("src/main/jniLibs")
 
 android {
-    namespace = "io.paramnezia.tunnel"
+    namespace = "net.paramnezia.tunnel"
     compileSdk = 36
 
     defaultConfig {

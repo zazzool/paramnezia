@@ -1,11 +1,11 @@
 # kotlinx.serialization: keep generated serializers of our models.
 -keepattributes *Annotation*, InnerClasses
--keepclassmembers @kotlinx.serialization.Serializable class io.paramnezia.** {
+-keepclassmembers @kotlinx.serialization.Serializable class net.paramnezia.** {
     *** Companion;
     *** INSTANCE;
     kotlinx.serialization.KSerializer serializer(...);
 }
--keep,includedescriptorclasses class io.paramnezia.**$$serializer { *; }
+-keep,includedescriptorclasses class net.paramnezia.**$$serializer { *; }
 
 # JSch loads its algorithms by class name.
 -keep class com.jcraft.jsch.** { *; }
