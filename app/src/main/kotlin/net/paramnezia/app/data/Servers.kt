@@ -16,7 +16,12 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /** Importing keys and deploying servers: the two ways a server gets into the app. */
-class Servers(private val repo: Repo, private val fleet: FleetManager) {
+class Servers(
+    private val repo: Repo,
+    private val fleet: FleetManager,
+    /** A server was just deployed: put the family page on it (see Links.preparePage). */
+    private val onServerReady: (SshCredentials) -> Unit = {},
+) {
     private val manager = ServerManager(repo.hostKeys)
 
     sealed interface Imported {
@@ -71,6 +76,7 @@ class Servers(private val repo: Repo, private val fleet: FleetManager) {
         onStep(ServerManager.Step.DONE)
         val profile = StoredProfile(UUID.randomUUID().toString(), name.ifBlank { ssh.host }, WgQuick.write(tunnel), protocol.name, ssh)
         repo.update { s -> s.copy(profiles = s.profiles + profile, activeProfile = profile.id) }
+        onServerReady(ssh)
         profile
     }
 

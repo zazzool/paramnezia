@@ -3,7 +3,7 @@
 # no capabilities, unprivileged user, 32 MB of memory. Idempotent; keeps the port it got first.
 #
 # Inputs (environment): PN_INVITE_PORT (preferred port), PN_INVITE_INDEX, PN_INVITE_CGI (file
-#   contents), PN_APP_JSON (where to download the app: {"version","sha256","urls"}; empty keeps the
+#   contents), PN_INVITE_ASSETS (lines "<name> <base64>": screenshots for the page), PN_APP_JSON (where to download the app: {"version","sha256","urls"}; empty keeps the
 #   current one).
 # Output: "::result::port=<port>".
 set -eu
@@ -19,6 +19,12 @@ put() { printf '%s' "$2" | $SUDO tee "$1.new" >/dev/null && $SUDO mv "$1.new" "$
 put "$ROOT/www/index.html" "$PN_INVITE_INDEX"
 put "$ROOT/www/cgi-bin/get" "$PN_INVITE_CGI"
 $SUDO chmod 755 "$ROOT/www/cgi-bin/get"
+# Images for the page, and their types (busybox httpd reads httpd.conf from its home directory).
+printf '%s\n' "${PN_INVITE_ASSETS:-}" | while read -r name data; do
+  case "$name" in ''|*[!A-Za-z0-9._-]*|.*) continue ;; esac
+  printf '%s' "$data" | base64 -d | $SUDO tee "$ROOT/www/$name.new" >/dev/null && $SUDO mv "$ROOT/www/$name.new" "$ROOT/www/$name"
+done
+put "$ROOT/www/httpd.conf" "$(printf '.webp:image/webp\n.svg:image/svg+xml\n.apk:application/vnd.android.package-archive\n')"
 if [ -n "${PN_APP_JSON:-}" ]; then put "$ROOT/www/app.json" "$PN_APP_JSON"; fi
 # Version 1.0 kept a personalised APK template here; links no longer carry an APK.
 $SUDO rm -f "$ROOT/data/app.apk" "$ROOT/data/app.slot" "$ROOT/data/app.sha" "$ROOT/data/app.apk.new" "$ROOT/data/app.slot.new"

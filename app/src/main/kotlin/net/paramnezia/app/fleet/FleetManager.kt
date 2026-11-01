@@ -53,6 +53,9 @@ class FleetManager(
     private val publisher = FleetPublisher(repo.hostKeys)
     private val health = HealthBook()
 
+    /** A server joined the fleet (deployed or bought): put the family page on it. Set by App. */
+    var onServerReady: (SshCredentials) -> Unit = {}
+
     val stored: StoredFleet? get() = repo.current.fleet
 
     fun member(): FleetMember? {
@@ -196,6 +199,7 @@ class FleetManager(
         }
         publish(signed)
         onManifestChanged()
+        onServerReady(ssh)
     }
 
     /** Admin: a new trusted device. Returns its invite (a vpn:// key, also readable by AmneziaVPN). */
@@ -288,6 +292,7 @@ class FleetManager(
         accept(FleetCrypto.encode(admin.seal(admin.next(current) {
             it.copy(servers = if (makeMaster) listOf(server) + it.servers else it.servers + server)
         })))
+        onServerReady(ssh)
     }
 
     /** Admin: makes [serverId] the master. Devices follow at their next manifest read. */

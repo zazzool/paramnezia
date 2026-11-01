@@ -71,7 +71,10 @@ class App : Application(), TunnelHost {
         }
         specs = SpecBuilder(this)
         fleet = FleetManager(repo, net, NativeEd25519, scope) { reconnectIfUp() }
-        servers = Servers(repo, fleet)
+        // Every new server gets the page to share with family and friends, in the background.
+        val pageOn: (net.paramnezia.core.profile.SshCredentials) -> Unit = { ssh -> scope.launch { runCatching { links.preparePage(ssh) } } }
+        fleet.onServerReady = pageOn
+        servers = Servers(repo, fleet, pageOn)
 
         // DNS rules follow the settings; loading them is a one-off ~1 ms parse in Go.
         scope.launch(Dispatchers.IO) {

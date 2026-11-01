@@ -124,7 +124,8 @@ class Links(
             val key = "${ssh.host}:${ssh.port}:${app?.sha256}"
             if (key in prepared) continue
             runCatching {
-                links.prepare(ssh, app)
+                val url = links.prepare(ssh, app)
+                repo.update { s -> s.copy(pages = s.pages + (ssh.host to url)) }
                 app?.let { publisher.mirrorRelease(ssh, it.sha256, it.urls, null, forInvites = true, protocol = null) }
             }.onSuccess { prepared += key }.onFailure { Log.w(TAG, "prepare ${ssh.host}: ${it.message}") }
         }
@@ -148,6 +149,24 @@ class Links(
         val shared = updater().shareable()?.second
         runCatching { publisher.mirrorRelease(ssh, app.sha256, app.urls, shared, forInvites = true, protocol = protocol) }
             .onFailure { Log.w(TAG, "mirror to ${ssh.host}: ${it.message}") }
+    }
+
+    /**
+     * The page to share with family and friends (download, screenshots, how to connect) on [ssh];
+     * the same small web server as the invite links. Remembers its address for the fleet screen.
+     */
+    suspend fun preparePage(ssh: SshCredentials): String = withContext(Dispatchers.IO) {
+        val url = try { links.prepare(ssh, appDownload()) } catch (e: Exception) { throw friendly(e) }
+        repo.update { s -> s.copy(pages = s.pages + (ssh.host to url)) }
+        mirrorForInvites(ssh)
+        url
+    }
+
+    /** The family page of the main server (fleet master, else the first own server); deploys it if needed. */
+    suspend fun familyPage(): String = withContext(Dispatchers.IO) {
+        val ssh = fleet.managedServer()?.second ?: repo.current.profiles.firstOrNull { it.ssh != null }?.ssh
+            ?: error("Сначала разверните свой сервер")
+        repo.current.pages[ssh.host] ?: preparePage(ssh)
     }
 
     /** Asks the servers which links have been used. */

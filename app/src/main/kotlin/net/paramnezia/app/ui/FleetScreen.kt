@@ -105,6 +105,12 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
                     OutlinedButton(enabled = !busy, onClick = { accountOn = p }) { Text("Новые пользователи «${p.name}»") }
                 }
             }
+            if (managed.isNotEmpty()) {
+                FamilyPage(state.pages[managed.first().ssh!!.host], busy,
+                    onCreate = { work { app.links.familyPage() } },
+                    onShare = { Share.text(context, familyMessage(it), "Отправить страницу") },
+                    onOpen = { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(it))) })
+            }
             LinkList(state.links, busy, onOpen = { link = it }) { l -> work("Ссылка отозвана") { app.links.revoke(l) } }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             return@Column
@@ -159,6 +165,13 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
             }
         }
         if (isAdmin) Button(enabled = !busy, onClick = { newDevice = true }) { Text("Пригласить устройства") }
+        if (isAdmin) {
+            val host = remember(fleet.manifest) { app.fleet.managedServer()?.second?.host }
+            if (host != null) FamilyPage(state.pages[host], busy,
+                onCreate = { work { app.links.familyPage() } },
+                onShare = { Share.text(context, familyMessage(it), "Отправить страницу") },
+                onOpen = { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(it))) })
+        }
         if (isAdmin) LinkList(state.links, busy, onOpen = { link = it }) { l -> work("Ссылка отозвана") { app.links.revoke(l) } }
 
         if (isAdmin) {
@@ -326,6 +339,33 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
             },
             dismissButton = { TextButton(onClick = { newServer = false }) { Text("Отмена") } },
         )
+    }
+}
+
+private fun familyMessage(url: String) =
+    "Paramnezia — наш VPN. Здесь приложение и инструкция: $url\nНастройки пришлю отдельно, их достаточно открыть."
+
+/**
+ * The page on the admin's server to share with family and friends: the app, screenshots and how to
+ * connect. Deployed with every new server; here it can be sent or opened.
+ */
+@Composable
+private fun FamilyPage(url: String?, busy: Boolean, onCreate: () -> Unit, onShare: (String) -> Unit, onOpen: (String) -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Страница для семьи и друзей", fontWeight = FontWeight.Bold)
+            Text("Красивая страница на вашем сервере: скачать приложение, скриншоты и как подключиться. Отправьте её всем, " +
+                "а личные настройки пришлите ссылкой или файлом.", style = MaterialTheme.typography.bodySmall)
+            if (url == null) {
+                OutlinedButton(enabled = !busy, onClick = onCreate) { Text("Создать страницу") }
+            } else {
+                SelectionContainer { Text(url, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { onShare(url) }) { Text("Отправить") }
+                    OutlinedButton(onClick = { onOpen(url) }) { Text("Открыть") }
+                }
+            }
+        }
     }
 }
 

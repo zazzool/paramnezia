@@ -22,6 +22,8 @@ data class AppState(
     val uiMode: UiMode = UiMode.AUTO,
     /** Admin: one-time links handed out, newest first. */
     val links: List<StoredLink> = emptyList(),
+    /** Admin: the family page on each own server, host → URL (see Links.preparePage). */
+    val pages: Map<String, String> = emptyMap(),
 ) {
     /** Follower devices of a fleet get the one-button screen; the admin and standalone users get everything. */
     val simpleUi: Boolean get() = when (uiMode) {
