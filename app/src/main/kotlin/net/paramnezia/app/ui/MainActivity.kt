@@ -1,5 +1,7 @@
 package net.paramnezia.app.ui
 
+import net.paramnezia.app.tunnel.readUpTo
+
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings as AndroidSettings
@@ -80,6 +82,8 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         // Admin: the daily server check runs while the admin is looking at the app, not in the background.
         app.scope.launch { app.healServers() }
+        // Everyone in a fleet: opening the app looks for a newer configuration (at most every 15 min).
+        app.fleet.syncIfDue(15 * 60_000L)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -91,13 +95,22 @@ class MainActivity : ComponentActivity() {
         val text = when (intent?.action) {
             Intent.ACTION_VIEW -> intent.data?.let { uri ->
                 if (uri.scheme == "vpn") uri.toString()
-                else runCatching { contentResolver.openInputStream(uri)?.use { it.reader().readText() } }.getOrNull()
+                // A settings file is a few KB; anything big is not ours.
+                else runCatching { contentResolver.openInputStream(uri)?.use { it.readUpTo(256 * 1024).decodeToString() } }.getOrNull()
             }
-            Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
+            // Shared to Paramnezia: a message with a key, or a settings file.
+            Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { "vpn://" in it || "[Interface]" in it }
+                ?: streamOf(intent)?.let { uri -> runCatching { contentResolver.openInputStream(uri)?.use { it.readUpTo(256 * 1024).decodeToString() } }.getOrNull() }
+                ?: intent.getStringExtra(Intent.EXTRA_TEXT)
             else -> null
         } ?: return
         incoming.tryEmit(text)
     }
+
+    @Suppress("DEPRECATION")
+    private fun streamOf(intent: Intent): android.net.Uri? =
+        if (android.os.Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
+        else intent.getParcelableExtra(Intent.EXTRA_STREAM)
 
     fun connect() {
         val prepare = app.vpnPermissionIntent()
@@ -127,7 +140,7 @@ private fun Root(app: App, incoming: MutableSharedFlow<String>, onConnect: () ->
         LaunchedEffect(pending) {
             val key = pending ?: return@LaunchedEffect
             pending = null
-            runCatching { app.servers.import(key) }.onSuccess { toast("Готово") }.onFailure { toast(it.message ?: "Ошибка") }
+            runCatching { app.servers.import(key) }.onSuccess { toast("Готово"); onConnect() }.onFailure { toast(it.message ?: "Ошибка") }
         }
         Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding -> SimpleScreen(app, Modifier.padding(padding), onConnect) }
         return
@@ -161,7 +174,7 @@ private fun Root(app: App, incoming: MutableSharedFlow<String>, onConnect: () ->
         val m = Modifier.padding(padding)
         when (tab) {
             Tab.HOME -> HomeScreen(app, m, onConnect, onAddServer = { tab = Tab.ADD })
-            Tab.ADD -> AddScreen(app, m, pending, onConsumed = { pending = null }, toast = toast, onDone = { tab = Tab.HOME })
+            Tab.ADD -> AddScreen(app, m, pending, onConsumed = { pending = null }, toast = toast, onDone = { tab = Tab.HOME }, onConnect = onConnect)
             Tab.FLEET -> FleetScreen(app, m, toast)
             Tab.SETTINGS -> SettingsScreen(app, m, toast)
         }

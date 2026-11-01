@@ -82,9 +82,8 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
     }
 
     /** Gets a server ready for links ahead of time (page container, image pull, download info). */
-    fun prepare(creds: SshCredentials, app: AppDownload?, preferredPort: Int = 80) {
-        SshConnection.open(creds, hostKeys).use { ssh -> ensurePage(ssh, preferredPort, app) }
-    }
+    fun prepare(creds: SshCredentials, app: AppDownload?, preferredPort: Int = 80): String =
+        SshConnection.open(creds, hostKeys).use { ssh -> pageUrl(creds.host, ensurePage(ssh, preferredPort, app)) }
 
     private fun ensurePage(ssh: SshConnection, preferredPort: Int, app: AppDownload?): Int {
         val page = ssh.run(
@@ -93,6 +92,7 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
                 "PN_INVITE_PORT" to preferredPort.toString(),
                 "PN_INVITE_INDEX" to ServerManager.script("invite/index.html"),
                 "PN_INVITE_CGI" to ServerManager.script("invite/get.cgi"),
+                "PN_INVITE_ASSETS" to PAGE_ASSETS.joinToString("\n") { "$it ${asset(it)}" },
                 "PN_APP_JSON" to (app?.json() ?: ""),
             ),
             timeoutMs = 5 * 60_000,
@@ -124,6 +124,19 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
         private val TOKEN = Regex("[A-Za-z0-9_-]{16,64}")
         private val HEX64 = Regex("[0-9a-f]{64}")
         private val random = SecureRandom()
+
+        /** Screenshots on the page (from the CI emulator run), shipped with the deploy module. */
+        val PAGE_ASSETS = listOf("shot-off.webp", "shot-on.webp")
+
+        private fun asset(name: String): String = Base64.getEncoder().encodeToString(
+            InviteLinks::class.java.getResourceAsStream("/net/paramnezia/deploy/invite/$name")!!.readBytes(),
+        )
+
+        /** The page to share with family and friends: download, screenshots, how to connect. */
+        fun pageUrl(host: String, port: Int): String {
+            val h = if (':' in host && !host.startsWith("[")) "[$host]" else host
+            return "http://$h" + (if (port == 80) "" else ":$port") + "/"
+        }
 
         fun newToken(): String = ByteArray(16).also(random::nextBytes).let { Base64.getUrlEncoder().withoutPadding().encodeToString(it) }
 

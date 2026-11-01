@@ -32,6 +32,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Paramnezia"
         android:localeConfig="@xml/locales_config"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:enableOnBackInvokedCallback="true"
         tools:targetApi="36">
 
@@ -56,15 +57,30 @@
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
+                <data android:mimeType="application/octet-stream" />
             </intent-filter>
+            <!-- Settings files (.vpn with a key, .conf) opened from a messenger, file manager or browser
+                 downloads. Messengers label unknown extensions application/octet-stream. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="content" />
                 <data android:mimeType="application/octet-stream" />
                 <data android:mimeType="text/plain" />
+                <data android:mimeType="application/x-paramnezia" />
+                <data android:mimeType="application/x-wireguard-config" />
             </intent-filter>
         </activity>
+
+        <!-- Settings files the admin sends to people through a messenger (user-initiated share). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.share"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/share_paths" />
+        </provider>
 
         <!-- zxing's scanner in portrait. -->
         <activity

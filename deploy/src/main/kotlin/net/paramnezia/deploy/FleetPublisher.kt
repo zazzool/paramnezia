@@ -75,34 +75,65 @@ class FleetPublisher(private val hostKeys: HostKeyStore) {
     /** In-tunnel URL of the newest signed release. */
     val tunnelReleaseUrl = TUNNEL_RELEASE_URL
 
+    /** Where a gist can be read without credentials: the raw file and the API (two hosts). */
+    data class Gist(val id: String, val owner: String) {
+        val rawUrl get() = "https://gist.githubusercontent.com/$owner/$id/raw/fleet.json"
+        val apiUrl get() = "https://api.github.com/gists/$id"
+        val mirrors get() = listOf(rawUrl, apiUrl)
+    }
+
     /**
-     * Updates a GitHub gist (create it once, secret is fine) and returns its raw URL, which devices
-     * can read without any credentials.
+     * Stores [manifest] in a secret GitHub gist: updates [gistId], or creates a new gist when it is
+     * null or gone. The token needs only the `gist` scope. The manifest is encrypted and signed, so
+     * GitHub learns nothing and cannot change it.
      */
-    fun publishToGist(token: String, gistId: String, manifest: String): String {
+    fun publishToGist(token: String, gistId: String?, manifest: String): Gist {
         val body = buildJsonObject {
+            put("description", "Paramnezia fleet (encrypted)")
+            if (gistId == null) put("public", false)
             putJsonObject("files") { putJsonObject("fleet.json") { put("content", manifest) } }
         }.toString()
-        val conn = (URL("https://api.github.com/gists/$gistId").openConnection() as HttpURLConnection).apply {
+        if (gistId != null) {
+            val (code, text) = github(token, "https://api.github.com/gists/$gistId", "PATCH", body)
+            if (code in 200..299) return gistOf(text) ?: Gist(gistId, "-")
+            if (code != 404) throw SshException("gist_failed", gistError(code))
+        }
+        val (code, text) = github(token, "https://api.github.com/gists", "POST", body)
+        if (code !in 200..299) throw SshException("gist_failed", gistError(code))
+        return gistOf(text) ?: throw SshException("gist_failed", "GitHub не вернул адрес gist")
+    }
+
+    private fun gistOf(text: String): Gist? = runCatching {
+        val o = Json.parseToJsonElement(text).jsonObject
+        Gist(o["id"]!!.jsonPrimitive.content, o["owner"]?.jsonObject?.get("login")?.jsonPrimitive?.content ?: "-")
+    }.getOrNull()
+
+    private fun gistError(code: Int) = when (code) {
+        401 -> "GitHub не принял токен (неверный или истёк)"
+        403, 404 -> "У токена нет права «gist»"
+        else -> "GitHub ответил $code"
+    }
+
+    private fun github(token: String, url: String, method: String, body: String): Pair<Int, String> {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             // Android's HttpURLConnection speaks PATCH; the desktop JDK one does not.
-            runCatching { requestMethod = "PATCH" }.onFailure {
+            runCatching { requestMethod = method }.onFailure {
                 requestMethod = "POST"
-                setRequestProperty("X-HTTP-Method-Override", "PATCH")
+                setRequestProperty("X-HTTP-Method-Override", method)
             }
             setRequestProperty("Authorization", "Bearer $token")
             setRequestProperty("Accept", "application/vnd.github+json")
             setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("User-Agent", "paramnezia")
             connectTimeout = 15_000; readTimeout = 30_000
             doOutput = true
         }
-        conn.outputStream.use { it.write(body.toByteArray()) }
-        val code = conn.responseCode
-        val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.readText().orEmpty()
-        if (code !in 200..299) throw SshException("gist_failed", "GitHub answered $code")
-        val owner = runCatching {
-            Json.parseToJsonElement(text).jsonObject["owner"]?.jsonObject?.get("login")?.jsonPrimitive?.content
-        }.getOrNull()
-        return "https://gist.githubusercontent.com/${owner ?: "-"}/$gistId/raw/fleet.json"
+        try {
+            conn.outputStream.use { it.write(body.toByteArray()) }
+            val code = conn.responseCode
+            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.readText().orEmpty()
+            return code to text
+        } finally { conn.disconnect() }
     }
 
     companion object {

@@ -20,7 +20,7 @@ fail() { echo "::error::[$tag] $*"; dump; exit 1; }
 
 # Taps the node whose text or content description is $1 (waits up to 20 s for it).
 tap() {
-  for _ in $(seq 1 20); do
+  for _ in $(seq 1 ${TAP_WAIT:-20}); do
     adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
     adb pull /sdcard/ui.xml ui.xml >/dev/null 2>&1
     if xy=$(python3 "$here/ui.py" find ui.xml "$1"); then adb shell input tap $xy; return 0; fi
@@ -58,13 +58,18 @@ adb shell 'am start -n net.paramnezia/net.paramnezia.app.ui.MainActivity -a andr
 sleep 6
 shot ready
 
-tap "VPN" || fail "no power button on the home screen"
-sleep 3
+# Settings opened from a message connect at once (2.2.0), so the system's VPN consent dialog comes
+# up by itself; otherwise press the power button first.
+vpn_dialog() { adb shell dumpsys window | grep -qE "mCurrentFocus.*vpndialogs"; }
+if ! vpn_dialog; then
+  tap "VPN" || fail "no power button on the home screen"
+  sleep 3
+fi
 # The system asks once whether the app may set up a VPN.
-if adb shell dumpsys window | grep -qE "mCurrentFocus.*vpndialogs"; then
+if vpn_dialog; then
   tap "OK" || tap "ОК" || fail "could not accept the VPN dialog"
 else
-  echo "::warning::[$tag] no VPN consent dialog after pressing the button"
+  echo "::warning::[$tag] no VPN consent dialog"
 fi
 
 for _ in $(seq 1 30); do
@@ -97,4 +102,29 @@ adb shell input keyevent KEYCODE_BACK
 grep -A1 "FATAL EXCEPTION" <(adb logcat -d) | grep -q "Process: net.paramnezia" && fail "crash in the log"
 grep -A1 "FATAL EXCEPTION" <(adb logcat -d) | grep "Process:" | sort -u | sed "s/^/::warning::[$tag] another app crashed: /"
 dump >/dev/null
+
+# Screenshots of the one-button screen that family devices show (used on the server's family page,
+# deploy/src/main/resources/net/paramnezia/deploy/invite/shot-*.webp). Best effort, never fails the run.
+shot() { adb exec-out screencap -p > "screen-$tag-$1.png" || true; }
+# A phone-sized, sharp screen for the pictures (the emulator's default is 320x640).
+adb shell wm size 1080x2340; adb shell wm density 440; sleep 4
+adb shell am start -n net.paramnezia/net.paramnezia.app.ui.MainActivity >/dev/null 2>&1; sleep 4
+if tap "Настройки"; then
+  sleep 3
+  found=""
+  for _ in 1 2 3 4; do
+    if tap "Простой"; then found=1; break; fi
+    adb shell input swipe 540 1500 540 800 400; sleep 2
+  done
+  if [ -n "$found" ]; then
+    sleep 5; shot simple-on
+    tap "VPN" && { sleep 6; shot simple-off; }
+  else
+    echo "::warning::[$tag] could not switch to the simple screen for screenshots"
+    adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "ui-$tag-settings.xml" >/dev/null 2>&1
+  fi
+else
+  adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "ui-$tag-settings.xml" >/dev/null 2>&1
+fi
+adb shell wm size reset; adb shell wm density reset
 echo "[$tag] VPN end-to-end: OK"

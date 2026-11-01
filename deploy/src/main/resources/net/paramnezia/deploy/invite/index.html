@@ -2,80 +2,194 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex">
 <meta name="referrer" content="no-referrer">
-<title>Приглашение</title>
+<meta name="theme-color" content="#0b1020">
+<title>Paramnezia — VPN для своих</title>
 <style>
-  :root { color-scheme: light dark; --a: #3b6cf6; }
-  body { font: 16px/1.45 system-ui, sans-serif; max-width: 30rem; margin: 0 auto; padding: 1.5rem 1rem; }
-  h1 { font-size: 1.4rem; margin: 0 0 1rem; }
-  .card { border: 1px solid #8884; border-radius: 14px; padding: 1rem; margin: 1rem 0; }
-  .btn { display: block; width: 100%; box-sizing: border-box; text-align: center; padding: .85rem; margin: .5rem 0;
-         border-radius: 12px; border: 0; background: var(--a); color: #fff; font: inherit; font-weight: 600; text-decoration: none; cursor: pointer; }
-  .btn.alt { background: transparent; color: var(--a); border: 1px solid var(--a); }
-  textarea { width: 100%; box-sizing: border-box; height: 7rem; font: 12px monospace; border-radius: 8px; }
-  small, .muted { opacity: .7; }
+  :root {
+    --bg: #0b1020; --card: rgba(255,255,255,.06); --line: rgba(255,255,255,.12);
+    --text: #eef1ff; --muted: #a9b0d6; --violet: #7c3aed; --indigo: #4338ca; --cyan: #0ea5e9; --mint: #10e0b0;
+    --grad: linear-gradient(135deg, var(--violet), var(--indigo) 60%, var(--cyan));
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0; color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background:
+      radial-gradient(60rem 40rem at 110% -10%, rgba(14,165,233,.22), transparent 60%),
+      radial-gradient(50rem 40rem at -20% 10%, rgba(124,58,237,.30), transparent 60%),
+      radial-gradient(40rem 30rem at 50% 120%, rgba(16,224,176,.12), transparent 60%),
+      var(--bg);
+    min-height: 100vh;
+  }
+  main { max-width: 34rem; margin: 0 auto; padding: 2rem 1.1rem 3rem; }
+  .hero { text-align: center; padding: 1rem 0 .5rem; }
+  .logo { width: 96px; height: 96px; border-radius: 26px; box-shadow: 0 12px 40px rgba(124,58,237,.45), 0 0 0 1px var(--line); }
+  h1 { font-size: 2.1rem; letter-spacing: -.02em; margin: 1rem 0 .25rem; }
+  h1 span { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  h2 { font-size: 1.25rem; margin: 0 0 .75rem; }
+  .tag { color: var(--muted); margin: 0 auto; max-width: 26rem; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 1.2rem; margin: 1.2rem 0;
+          backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+  .card.invite { border-color: rgba(16,224,176,.45); box-shadow: 0 0 0 1px rgba(16,224,176,.15), 0 20px 50px rgba(16,224,176,.10); }
+  .btn { display: block; width: 100%; text-align: center; padding: .95rem 1rem; margin: .6rem 0; border-radius: 14px; border: 0;
+         background: var(--grad); color: #fff; font: inherit; font-weight: 650; text-decoration: none; cursor: pointer;
+         box-shadow: 0 8px 24px rgba(67,56,202,.35); }
+  .btn:active { transform: scale(.985); }
+  .btn.alt { background: transparent; color: var(--text); border: 1px solid var(--line); box-shadow: none; }
+  .btn.mint { background: linear-gradient(135deg, #10b981, var(--mint)); color: #04221a; box-shadow: 0 8px 24px rgba(16,224,176,.30); }
+  .muted, small { color: var(--muted); }
+  small { font-size: .85rem; }
+  .phones { display: flex; justify-content: center; gap: 1rem; margin: 1.6rem 0 .6rem; perspective: 900px; }
+  .phone { width: 46%; max-width: 190px; border-radius: 28px; padding: 8px; background: #05070f;
+           box-shadow: 0 0 0 1px var(--line), 0 24px 60px rgba(0,0,0,.55); }
+  .phone img { display: block; width: 100%; height: auto; border-radius: 21px; }
+  .phone.l { transform: rotateY(12deg) rotateZ(-2deg); }
+  .phone.r { transform: rotateY(-12deg) rotateZ(2deg) translateY(18px); }
+  .caption { text-align: center; color: var(--muted); font-size: .9rem; margin-top: 2rem; }
+  ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 0; }
+  ol.steps li { counter-increment: s; position: relative; padding: 0 0 1rem 3rem; min-height: 2.2rem; }
+  ol.steps li::before { content: counter(s); position: absolute; left: 0; top: -.1rem; width: 2.1rem; height: 2.1rem; border-radius: 50%;
+                        display: grid; place-items: center; font-weight: 700; background: var(--grad); }
+  ul.feat { list-style: none; padding: 0; margin: 0; display: grid; gap: .7rem; }
+  ul.feat li { display: flex; gap: .75rem; align-items: flex-start; }
+  ul.feat b { display: block; }
+  .dot { flex: none; width: .65rem; height: .65rem; margin-top: .45rem; border-radius: 50%; background: var(--mint); box-shadow: 0 0 12px var(--mint); }
+  .dot.v { background: #a78bfa; box-shadow: 0 0 12px #a78bfa; } .dot.c { background: #38bdf8; box-shadow: 0 0 12px #38bdf8; }
+  textarea { width: 100%; height: 6.5rem; font: 12px/1.35 ui-monospace, monospace; border-radius: 12px; padding: .6rem;
+             background: rgba(0,0,0,.35); color: var(--text); border: 1px solid var(--line); }
+  details { border-top: 1px solid var(--line); padding: .7rem 0; }
+  details:first-of-type { border-top: 0; }
+  summary { cursor: pointer; font-weight: 600; }
+  details p { margin: .5rem 0 0; color: var(--muted); }
+  .seg { display: flex; gap: .5rem; margin: .4rem 0 .8rem; }
+  .seg button { flex: 1; padding: .55rem; border-radius: 12px; border: 1px solid var(--line); background: transparent; color: var(--text);
+                font: inherit; cursor: pointer; }
+  .seg button.on { background: rgba(255,255,255,.10); border-color: rgba(255,255,255,.3); }
+  footer { text-align: center; color: var(--muted); font-size: .8rem; margin-top: 2rem; }
+  a { color: #93c5fd; }
   [hidden] { display: none !important; }
 </style>
 </head>
 <body>
-<h1>Вас пригласили в VPN</h1>
-<p id="bad" hidden>Ссылка неполная. Откройте её целиком из сообщения.</p>
-<p id="gone" hidden><b>Эта ссылка уже использована или устарела.</b> Попросите прислать новую.</p>
+<main>
+  <section class="hero">
+    <svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="96" height="96" role="img" aria-label="Paramnezia"><defs><linearGradient id="bgB" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7C3AED"/><stop offset="0.6" stop-color="#4338CA"/><stop offset="1" stop-color="#0EA5E9"/></linearGradient><clipPath id="faceB"><path d="M110.00,0.00 L52.80,0.00 L52.80,24.00 L52.80,27.60 L52.80,27.60 L52.80,31.20 L52.80,31.20 L52.80,34.80 L52.80,34.80 L52.80,38.40 L45.60,38.40 L45.60,42.00 L45.60,42.00 L45.60,45.60 L49.20,45.60 L49.20,49.20 L49.20,49.20 L49.20,52.80 L52.80,52.80 L52.80,56.40 L52.80,56.40 L52.80,60.00 L49.20,60.00 L49.20,63.60 L49.20,63.60 L49.20,67.20 L45.60,67.20 L45.60,70.80 L45.60,70.80 L45.60,74.40 L52.80,74.40 L52.80,78.00 L49.20,78.00 L49.20,81.60 L52.80,81.60 L52.80,85.20 L52.80,85.20 L52.80,88.80 L45.60,88.80 L45.60,92.40 L49.20,92.40 L49.20,96.00 L49.20,96.00 L49.20,99.60 L49.20,99.60 L49.20,103.20 L56.40,103.20 L56.40,106.80 L52.80,106.80 L52.80,110.40 L49.20,110.40 L49.20,114.00 L49.20,114.00 L49.20,117.60 L45.60,117.60 L45.60,121.20 L49.20,121.20 L49.20,124.80 L52.80,124.80 L52.80,128.40 L49.20,128.40 L49.20,132.00 L56.40,132.00 L56.40,135.60 L52.80,135.60 L52.80,139.20 L52.80,110.00 L110.00,110.00 Z"/></clipPath></defs><rect width="108" height="108" fill="url(#bgB)"/><g clip-path="url(#faceB)"><path d="M 38.50 111.30 L 38.50 84.10 C 38.50 77.30 34.25 73.90 32.97 67.10 C 30.00 53.50 32.55 34.80 50.40 30.98 C 64.00 28.43 72.50 37.35 72.50 48.40 C 72.50 50.95 73.35 52.65 75.47 56.47 C 76.33 58.17 75.47 59.03 72.92 59.45 L 72.92 62.00 C 73.35 62.85 72.50 63.70 71.82 64.12 C 72.50 64.97 72.08 66.25 71.65 67.53 C 71.22 70.50 68.25 71.78 64.00 71.35 L 62.73 84.10 L 62.73 111.30 Z" fill="#FFFFFF"/></g><rect x="45.37" y="31.47" width="3.05" height="3.05" rx="0.5" fill="#00E5FF" fill-opacity="0.75"/><rect x="49.16" y="31.27" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/><rect x="37.06" y="33.31" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.50"/><rect x="48.88" y="34.46" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/><rect x="36.93" y="38.54" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.75"/><rect x="38.19" y="41.85" width="3.05" height="3.05" rx="0.5" fill="#00E5FF" fill-opacity="0.75"/><rect x="41.78" y="42.16" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/><rect x="37.74" y="44.51" width="3.05" height="3.05" rx="0.5" fill="#00E5FF" fill-opacity="0.62"/><rect x="41.04" y="45.59" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.75"/><rect x="45.42" y="45.98" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/><rect x="41.87" y="48.84" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.75"/><rect x="45.32" y="49.01" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/><rect x="29.78" y="52.39" width="3.05" height="3.05" rx="0.5" fill="#C4B5FD" fill-opacity="0.30"/><rect x="44.41" y="52.93" width="3.05" height="3.05" rx="0.5" fill="#C4B5FD" fill-opacity="0.75"/><rect x="49.06" y="52.80" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/><rect x="45.50" y="56.82" width="3.05" height="3.05" rx="0.5" fill="#C4B5FD" fill-opacity="0.75"/><rect x="48.81" y="56.69" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/><rect x="38.32" y="59.90" width="3.05" height="3.05" rx="0.5" fill="#FF4FB0" fill-opacity="0.62"/><rect x="41.23" y="59.49" width="3.05" height="3.05" rx="0.5" fill="#C4B5FD" fill-opacity="0.75"/><rect x="38.12" y="63.46" width="3.05" height="3.05" rx="0.5" fill="#C4B5FD" fill-opacity="0.62"/><rect x="40.73" y="64.26" width="3.05" height="3.05" rx="0.5" fill="#C4B5FD" fill-opacity="0.75"/><rect x="45.22" y="63.76" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/><rect x="38.38" y="71.40" width="3.05" height="3.05" rx="0.5" fill="#FF4FB0" fill-opacity="0.75"/><rect x="42.00" y="70.73" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/><rect x="39.58" y="74.44" width="3.05" height="3.05" rx="0.5" fill="#00E5FF" fill-opacity="0.62"/><rect x="44.25" y="75.21" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.75"/><rect x="49.05" y="74.38" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/><rect x="45.43" y="77.65" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/><rect x="37.76" y="81.84" width="3.05" height="3.05" rx="0.5" fill="#00E5FF" fill-opacity="0.50"/><rect x="39.85" y="80.44" width="3.05" height="3.05" rx="0.5" fill="#FF4FB0" fill-opacity="0.62"/><rect x="45.37" y="81.15" width="3.05" height="3.05" rx="0.5" fill="#C4B5FD" fill-opacity="0.75"/><rect x="49.02" y="81.25" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/><rect x="40.32" y="84.69" width="3.05" height="3.05" rx="0.5" fill="#FF4FB0" fill-opacity="0.62"/><rect x="49.10" y="85.50" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/><rect x="36.55" y="91.45" width="3.05" height="3.05" rx="0.5" fill="#00E5FF" fill-opacity="0.62"/><rect x="41.54" y="92.66" width="3.05" height="3.05" rx="0.5" fill="#00E5FF" fill-opacity="0.75"/><rect x="45.50" y="92.28" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/><rect x="41.17" y="96.50" width="3.05" height="3.05" rx="0.5" fill="#C4B5FD" fill-opacity="0.75"/><rect x="45.36" y="96.26" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/><rect x="37.72" y="98.90" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.62"/><rect x="41.65" y="99.63" width="3.05" height="3.05" rx="0.5" fill="#C4B5FD" fill-opacity="0.75"/><rect x="45.22" y="99.86" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/><rect x="44.40" y="104.03" width="3.05" height="3.05" rx="0.5" fill="#C4B5FD" fill-opacity="0.62"/><rect x="48.63" y="102.70" width="3.05" height="3.05" rx="0.5" fill="#FF4FB0" fill-opacity="0.75"/><rect x="52.67" y="103.18" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/><rect x="34.60" y="105.01" width="3.05" height="3.05" rx="0.5" fill="#C4B5FD" fill-opacity="0.50"/><rect x="41.70" y="107.23" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.62"/><rect x="44.43" y="106.76" width="3.05" height="3.05" rx="0.5" fill="#FF4FB0" fill-opacity="0.75"/><rect x="48.95" y="106.43" width="3.05" height="3.05" rx="0.5" fill="#FFFFFF" fill-opacity="0.87"/></svg>
+    <h1><span>Paramnezia</span></h1>
+    <p class="tag">VPN, который для вас настроил близкий человек. Включается одной кнопкой, а российские сайты и приложения при этом работают как обычно.</p>
+  </section>
 
-<div id="choose" class="card" hidden>
-  <p>На каком устройстве вы открыли ссылку?</p>
-  <button class="btn" data-show="android">Android</button>
-  <button class="btn" data-show="ios">iPhone или iPad</button>
-  <button class="btn alt" data-show="other">Другое (компьютер)</button>
-</div>
+  <!-- Personal part: only when the page was opened from an invite link (#token). -->
+  <section id="invite" class="card invite" hidden>
+    <h2>Вас пригласили 🎉</h2>
+    <p id="bad" hidden>Ссылка неполная. Откройте её целиком из сообщения.</p>
+    <p id="gone" hidden><b>Эта ссылка уже использована или устарела.</b> Попросите прислать новую.</p>
 
-<div id="android" class="card" hidden>
-  <p><b>1. Установите Paramnezia.</b> Это обычное приложение VPN, одинаковое для всех.</p>
-  <a class="btn" id="apk" hidden>Скачать Paramnezia</a>
-  <a class="btn alt" id="apkhere" href="/paramnezia.apk" hidden>Скачать с этого сервера</a>
-  <p id="noapk" hidden><small>Ссылка на приложение пока не готова. Попросите пригласившего прислать файл Paramnezia.</small></p>
-  <p><small>Откройте скачанный файл и установите. Если телефон спросит, разрешите установку из браузера.
-    <span id="ver"></span></small></p>
-  <p><b>2. Подключитесь.</b> Вернитесь на эту страницу и нажмите:</p>
-  <button class="btn" id="have">Открыть приглашение в Paramnezia</button>
-  <div id="appbox" hidden>
-    <a class="btn" id="open">Открыть ещё раз</a>
-    <p><small>Не открылось? Скопируйте ключ и вставьте его в Paramnezia на вкладке «Добавить».</small></p>
-    <textarea id="appkey" readonly></textarea>
-    <button class="btn alt" id="copyapp">Скопировать ключ</button>
+    <div id="choose" hidden>
+      <p>На каком устройстве вы открыли ссылку?</p>
+      <div class="seg">
+        <button data-show="android">Android</button>
+        <button data-show="ios">iPhone</button>
+        <button data-show="other">Компьютер</button>
+      </div>
+    </div>
+
+    <div id="android" hidden>
+      <ol class="steps">
+        <li><b>Установите Paramnezia</b><br><small>Если приложение уже есть, этот шаг пропустите.</small>
+          <a class="btn" data-apk hidden>Скачать Paramnezia</a></li>
+        <li><b>Откройте приглашение</b><br><small>Приложение подключится само.</small>
+          <button class="btn mint" id="have">Открыть приглашение в Paramnezia</button></li>
+      </ol>
+      <div id="appbox" hidden>
+        <a class="btn alt" id="open">Открыть ещё раз</a>
+        <p><small>Не открылось? Скопируйте ключ и вставьте его в Paramnezia на вкладке «Добавить».</small></p>
+        <textarea id="appkey" readonly></textarea>
+        <button class="btn alt" id="copyapp">Скопировать ключ</button>
+      </div>
+    </div>
+
+    <div id="ios" hidden>
+      <ol class="steps">
+        <li><b>Установите AmneziaVPN</b> из App Store, если её ещё нет.
+          <a class="btn alt" href="https://apps.apple.com/app/id1600529900" rel="noreferrer">AmneziaVPN в App Store</a></li>
+        <li><b>Получите ключ</b>, скопируйте и в AmneziaVPN нажмите «Вставить».
+          <button class="btn mint" id="getkey">Получить ключ</button>
+          <div id="keybox" hidden>
+            <textarea id="key" readonly></textarea>
+            <button class="btn" id="copy">Скопировать</button>
+          </div>
+          <a class="btn alt" id="conf">Или скачать файл настроек</a></li>
+      </ol>
+    </div>
+
+    <div id="other" hidden>
+      <p>Установите <a href="https://amnezia.org/downloads" rel="noreferrer">AmneziaVPN</a> и добавьте ключ или файл настроек.</p>
+      <button class="btn mint" id="getkey2">Получить ключ</button>
+      <a class="btn alt" id="conf2">Скачать файл настроек</a>
+      <a class="btn alt" data-apk hidden>Скачать Paramnezia для Android</a>
+    </div>
+  </section>
+
+  <!-- Public part: the page to share with family and friends. One story: what it is, how to get
+       it, why it is convenient, what if something goes wrong. -->
+  <div class="phones" aria-hidden="true">
+    <div class="phone l"><img src="/shot-off.webp" alt="" loading="lazy" width="540" height="920"></div>
+    <div class="phone r"><img src="/shot-on.webp" alt="" loading="lazy" width="540" height="920"></div>
   </div>
-</div>
+  <p class="caption">Так выглядит приложение. Нажали кнопку — защищено.</p>
 
-<div id="ios" class="card" hidden>
-  <p><b>1.</b> Установите AmneziaVPN, если её ещё нет:</p>
-  <a class="btn alt" href="https://apps.apple.com/app/id1600529900" rel="noreferrer">AmneziaVPN в App Store</a>
-  <p><b>2.</b> Получите ключ, скопируйте его и в AmneziaVPN нажмите «Вставить» на экране добавления сервера.</p>
-  <button class="btn" id="getkey">Получить ключ</button>
-  <div id="keybox" hidden>
-    <textarea id="key" readonly></textarea>
-    <button class="btn" id="copy">Скопировать</button>
-  </div>
-  <a class="btn alt" id="conf">Или скачать файл настроек</a>
-</div>
+  <section class="card" id="get">
+    <h2>Как подключиться</h2>
+    <ol class="steps">
+      <li><b>Скачайте приложение</b>
+        <a class="btn" data-apk hidden>Скачать для Android</a>
+        <a class="btn alt" id="apkhere" href="/paramnezia.apk" hidden>Скачать с этого сервера</a>
+        <small id="noapk" hidden>Ссылка на приложение пока не готова. Попросите прислать файл Paramnezia.<br></small>
+        <small>Откройте скачанный файл и установите. <span id="ver"></span></small><br>
+        <small>На iPhone вместо него поставьте <a href="https://apps.apple.com/app/id1600529900" rel="noreferrer">AmneziaVPN</a> из App Store.</small></li>
+      <li><b>Получите свои настройки</b><br>
+        <small>Тот, кто прислал вам эту страницу, отправит личную ссылку или файл. У каждого они свои, поэтому на этой странице их нет.</small></li>
+      <li><b>Откройте ссылку или файл</b><br>
+        <small>Прямо в мессенджере. Приложение откроется и подключится само. Дальше всё управление — одна кнопка.</small></li>
+    </ol>
+  </section>
 
-<div id="other" class="card" hidden>
-  <p>Установите <a href="https://amnezia.org/downloads" rel="noreferrer">AmneziaVPN</a> и добавьте ключ или файл настроек.</p>
-  <button class="btn" id="getkey2">Получить ключ</button>
-  <a class="btn alt" id="conf2">Скачать файл настроек</a>
-  <a class="btn alt" id="apk2" hidden>Скачать Paramnezia для Android</a>
-</div>
+  <section class="card">
+    <h2>Почему это удобно</h2>
+    <ul class="feat">
+      <li><span class="dot"></span><div><b>Ничего не надо выключать</b><small>Банки, Госуслуги, маркетплейсы и другие российские сервисы идут напрямую, как без VPN.</small></div></li>
+      <li><span class="dot v"></span><div><b>Работает, даже когда VPN блокируют</b><small>Трафик замаскирован, а если сервер всё же заблокируют, приложение само перейдёт на запасной.</small></div></li>
+      <li><span class="dot c"></span><div><b>Меньше рекламы и слежки</b><small>Рекламные и следящие адреса отсекаются ещё до загрузки страницы.</small></div></li>
+      <li><span class="dot"></span><div><b>Не сажает батарею</b><small>Пока телефон спит, приложение почти не тратит заряд.</small></div></li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>Если что-то не так</h2>
+    <details><summary>Телефон предупреждает при установке</summary>
+      <p>Так Android встречает любые приложения не из Google Play. Нажмите «Подробнее» → «Всё равно установить». Если предложат отправить приложение на проверку, соглашайтесь.</p></details>
+    <details><summary>Ссылка не открывает приложение</summary>
+      <p>Сначала установите приложение (шаг 1), потом снова откройте ссылку. Если не помогло, на странице ссылки есть ключ: скопируйте его и вставьте в приложении на вкладке «Добавить».</p></details>
+    <details><summary>Как обновлять приложение</summary>
+      <p>Приложение само подскажет, когда выйдет новая версия. Обновление ставится поверх, настройки сохраняются.</p></details>
+    <details><summary>Это безопасно?</summary>
+      <p>Да. Приложение одно и то же для всех, его исходный код открыт. Ваш интернет идёт только через сервер того, кто вас пригласил.</p></details>
+  </section>
+
+  <footer>Эта страница работает на том же сервере, что и VPN.<br>Paramnezia · <a href="https://github.com/zazzool/paramnezia" rel="noreferrer">исходный код</a></footer>
+</main>
 
 <script>
 (function () {
   var t = location.hash.slice(1), $ = function (id) { return document.getElementById(id); };
-  if (!/^[A-Za-z0-9_-]{16,64}$/.test(t)) { $('bad').hidden = false; return; }
-  // The token lives in the fragment: it never reaches link previews, server logs or Referer headers.
-  var url = function (what) { return '/cgi-bin/get?' + t + '&' + what; };
-  $('conf').href = $('conf2').href = url('conf');
+  var all = function (sel) { return [].slice.call(document.querySelectorAll(sel)); };
 
-  function show(id) { ['choose', 'android', 'ios', 'other'].forEach(function (s) { $(s).hidden = s !== id; }); }
+  // The app: the same signed release for everyone, from public HTTPS mirrors first. The user starts
+  // the download; nothing downloads by itself.
+  function setApk(href) { all('[data-apk]').forEach(function (a) { a.href = href; a.hidden = false; }); }
   function get(path, done, fail) {
     var x = new XMLHttpRequest();
     x.open('GET', path);
@@ -83,8 +197,51 @@
     x.onerror = function () { fail(0); };
     x.send();
   }
+  var haveApk = false;
+  get('/app.json', function (text) {
+    var a = null; try { a = JSON.parse(text); } catch (e) {}
+    if (a && a.urls && a.urls.length) {
+      setApk(a.urls[0]); haveApk = true;
+      $('ver').textContent = 'Версия ' + a.version + '.';
+    }
+    var h = new XMLHttpRequest();
+    h.open('HEAD', '/paramnezia.apk');
+    h.onload = function () {
+      if (h.status !== 200) { if (!haveApk) $('noapk').hidden = false; return; }
+      if (haveApk) { $('apkhere').hidden = false; return; }
+      // No public mirror known: this server's copy is the only one.
+      setApk('/paramnezia.apk'); haveApk = true;
+    };
+    h.onerror = function () { if (!haveApk) $('noapk').hidden = false; };
+    h.send();
+  }, function () { $('noapk').hidden = false; });
+
+  if (!t) return; // The public page: nothing personal to do.
+
+  $('invite').hidden = false;
+  $('get').hidden = true; // the invite card has its own steps
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(t)) { $('bad').hidden = false; return; }
+  // The token lives in the fragment: it never reaches link previews, server logs or Referer headers.
+  var url = function (what) { return '/cgi-bin/get?' + t + '&' + what; };
+  var chooser = false;
+  $('conf').href = $('conf2').href = url('conf');
+
+  function show(id) {
+    ['android', 'ios', 'other'].forEach(function (s) { $(s).hidden = s !== id; });
+    // On a computer the device switch stays visible, so the person can change their mind.
+    $('choose').hidden = !(chooser && id !== null);
+    all('[data-show]').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-show') === id); });
+  }
+  // The invite, once fetched, stays in this browser: installing the app may take longer than the
+  // server's 30-minute retry window, and the person must not lose their access because of that.
+  var store = null; try { store = window.localStorage; } catch (e) {}
   function fetchText(what, done) {
-    get(url(what), done, function (status) {
+    var cached = what === 'app' && store && store.getItem('pn-' + t);
+    if (cached) { done(cached); return; }
+    get(url(what), function (k) {
+      if (what === 'app' && store) try { store.setItem('pn-' + t, k); } catch (e) {}
+      done(k);
+    }, function (status) {
       if (status === 0) { alert('Нет связи с сервером, попробуйте ещё раз.'); return; }
       show(null); $('gone').hidden = false;
     });
@@ -95,59 +252,40 @@
     if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(k.value);
     button.textContent = ok ? 'Скопировано' : 'Выделите текст и скопируйте';
   }
-
-  // The app: the same signed release for everyone, from public HTTPS mirrors first. The user starts
-  // the download; nothing downloads by itself.
-  get('/app.json', function (text) {
-    var a = null; try { a = JSON.parse(text); } catch (e) {}
-    if (a && a.urls && a.urls.length) {
-      $('apk').href = $('apk2').href = a.urls[0];
-      $('apk').hidden = $('apk2').hidden = false;
-      $('ver').textContent = 'Версия ' + a.version + ', SHA-256 ' + a.sha256.slice(0, 16) + '…';
-    }
-    var h = new XMLHttpRequest();
-    h.open('HEAD', '/paramnezia.apk');
-    h.onload = function () {
-      if (h.status !== 200) { if ($('apk').hidden) $('noapk').hidden = false; return; }
-      if (!$('apk').hidden) { $('apkhere').hidden = false; return; }
-      // No public mirror known: this server's copy is the only one.
-      $('apk').href = $('apk2').href = '/paramnezia.apk';
-      $('apk').hidden = $('apk2').hidden = false;
-    };
-    h.onerror = function () { if ($('apk').hidden) $('noapk').hidden = false; };
-    h.send();
-  }, function () { $('noapk').hidden = false; });
-
   function keyFlow() {
     show('ios');
     fetchText('key', function (k) { $('key').value = k; $('keybox').hidden = false; $('getkey').hidden = true; });
   }
-  [].forEach.call(document.querySelectorAll('[data-show]'), function (b) {
-    b.onclick = function () { show(b.getAttribute('data-show')); };
-  });
+  all('[data-show]').forEach(function (b) { b.onclick = function () { show(b.getAttribute('data-show')); }; });
   $('getkey').onclick = keyFlow;
   $('getkey2').onclick = keyFlow;
   $('copy').onclick = function () { copy('key', this); };
   $('copyapp').onclick = function () { copy('appkey', this); };
-  $('have').onclick = function () {
-    fetchText('app', function (k) {
-      // An intent link opens exactly Paramnezia (not another app that also handles vpn://) and,
-      // if it is not installed yet, comes back here instead of going to a store.
-      var rest = k.replace(/^vpn:\/\//, '');
-      var intent = 'intent://' + rest + '#Intent;scheme=vpn;package=net.paramnezia;S.browser_fallback_url=' +
-        encodeURIComponent(location.href) + ';end';
-      $('open').href = intent; $('appkey').value = k;
-      $('appbox').hidden = false; $('have').hidden = true;
-      location.href = intent;
-    });
-  };
+  // An intent link opens exactly Paramnezia (not another app that also handles vpn://) and, if it
+  // is not installed yet, comes back to this page marked ?noapp (install steps, no new attempt).
+  function openApp(k) {
+    var rest = k.replace(/^vpn:\/\//, '');
+    var back = location.origin + location.pathname + '?noapp#' + t;
+    var intent = 'intent://' + rest + '#Intent;scheme=vpn;package=net.paramnezia;S.browser_fallback_url=' +
+      encodeURIComponent(back) + ';end';
+    $('open').href = intent; $('appkey').value = k;
+    $('appbox').hidden = false; $('have').hidden = true;
+    location.href = intent;
+  }
+  $('have').onclick = function () { fetchText('app', openApp); };
 
   var ua = navigator.userAgent || '';
   var android = /Android/i.test(ua);
   var ios = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-  if (android) show('android');
+  if (android) {
+    show('android');
+    // Paramnezia already installed: open the invite in it right away, no taps needed. Without the
+    // app the browser comes back with ?noapp and the page shows how to install it.
+    if (!/noapp/.test(location.search)) fetchText('app', openApp);
+    else $('have').textContent = 'Я установил(а) Paramnezia — открыть приглашение';
+  }
   else if (ios) show('ios');
-  else show('choose');
+  else { chooser = true; show('other'); }
 })();
 </script>
 </body>

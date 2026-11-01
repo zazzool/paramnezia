@@ -28,6 +28,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -98,13 +99,28 @@ class App : Application(), TunnelHost {
         }
         specs = SpecBuilder(this)
         fleet = FleetManager(repo, net, NativeEd25519, scope) { reconnectIfUp() }
-        servers = Servers(repo, fleet)
+        // Every new server gets the page to share with family and friends, in the background.
+        val pageOn: (net.paramnezia.core.profile.SshCredentials) -> Unit = { ssh -> scope.launch { runCatching { links.preparePage(ssh) } } }
+        fleet.onServerReady = pageOn
+        servers = Servers(repo, fleet, pageOn)
 
         // DNS rules follow the settings; loading them is a one-off ~1 ms parse in Go.
         scope.launch(Dispatchers.IO) {
             repo.state.map { it.settings.blockTrackers to it.settings.bypassRussia }.distinctUntilChanged().collect {
                 runCatching { specs.applyDnsRules(repo.current.settings) }.onFailure { Log.e(TAG, "dns rules", it) }
             }
+        }
+        // Admin: settings changes go to every fleet device (no new manifest version when nothing changed).
+        // Only real changes (drop the current value): settings change on the admin's screen, so the
+        // SSH publishing this causes never starts from the background. The open app catches up in
+        // healServers.
+        scope.launch(Dispatchers.IO) {
+            repo.state.map { it.settings to (it.fleet?.adminSeed != null && it.fleet.sharePolicy) }.distinctUntilChanged().drop(1)
+                .collectLatest { (settings, share) ->
+                    if (!share) return@collectLatest
+                    delay(3_000) // a burst of toggles becomes one version
+                    runCatching { fleet.sharePolicy(settings) }.onFailure { Log.w(TAG, "share policy", it) }
+                }
         }
         // Nothing below blocks the first frame: WorkManager, the updater and the native library start
         // in the background.
@@ -181,8 +197,15 @@ class App : Application(), TunnelHost {
         return next
     }
 
+    @Volatile private var healthyServer: String? = null
+
     override fun onServerHealthy(spec: TunnelSpec) {
         failover.markHealthy(spec.serverId)
+        // Fleet devices pick up the admin's changes within the hour while the tunnel works, and at
+        // once on a fresh connection or a switch to another server.
+        val fresh = healthyServer != spec.serverId
+        healthyServer = spec.serverId
+        fleet.syncIfDue(if (fresh) 0 else 3600_000L)
     }
 
     /**
@@ -193,6 +216,8 @@ class App : Application(), TunnelHost {
     suspend fun healServers(force: Boolean = false) {
         val f = repo.current.fleet ?: return
         if (f.adminSeed == null) return
+        // Cheap and local when nothing changed; brings a manifest from before 2.2 up to date.
+        if (f.sharePolicy) runCatching { fleet.sharePolicy(repo.current.settings) }
         if (!force && System.currentTimeMillis() - f.lastHeal < HEAL_EVERY_MS) return
         runCatching { fleet.heal(updater.shareable()) }.onFailure { Log.w(TAG, "heal", it) }
     }
