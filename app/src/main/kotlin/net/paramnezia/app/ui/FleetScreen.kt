@@ -38,7 +38,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import net.paramnezia.app.App
+import net.paramnezia.app.data.CloudServerRef
 import net.paramnezia.app.data.StoredLink
+import net.paramnezia.deploy.cloud.CloudProviders
 import net.paramnezia.app.data.StoredProfile
 import net.paramnezia.core.config.WgQuick
 import net.paramnezia.core.crypto.WgKey
@@ -60,7 +62,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
     var newServer by remember { mutableStateOf(false) }
     var buying by remember { mutableStateOf(false) }
     /** A server bought from the app was just removed from the fleet: offer to delete it at the provider. */
-    var boughtRemoved by remember { mutableStateOf<net.paramnezia.app.data.CloudServerRef?>(null) }
+    var boughtRemoved by remember { mutableStateOf<CloudServerRef?>(null) }
     var link by remember { mutableStateOf<StoredLink?>(null) }
     val clipboard = remember { context.getSystemService(ClipboardManager::class.java) }
     /** Standalone server to make a separate account on (no fleet). */
@@ -255,7 +257,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
         app.fleet.addServer(n, ssh, makeMaster = false, onStep = onStep)
     }
     boughtRemoved?.let { ref ->
-        val provider = net.paramnezia.deploy.cloud.CloudProviders.info(ref.provider)?.name ?: ref.provider
+        val provider = CloudProviders.info(ref.provider)?.name ?: ref.provider
         AlertDialog(
             onDismissRequest = { boughtRemoved = null },
             title = { Text("Удалить и у хостера?") },

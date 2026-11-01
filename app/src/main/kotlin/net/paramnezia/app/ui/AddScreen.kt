@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import net.paramnezia.app.App
+import net.paramnezia.app.data.Cloud
 import net.paramnezia.app.data.Servers
 import net.paramnezia.core.amnezia.AmneziaQr
 import net.paramnezia.core.profile.SshCredentials
@@ -174,7 +175,7 @@ private fun DeployCard(app: App, toast: (String) -> Unit, onDone: () -> Unit) {
     }
 }
 
-private fun stepLabel(s: ServerManager.Step) = net.paramnezia.app.data.Cloud.stepLabel(s)
+private fun stepLabel(s: ServerManager.Step) = Cloud.stepLabel(s)
 
 private fun deployError(e: Throwable): String = when ((e as? SshException)?.code) {
     "auth_failed" -> "Неверный логин, пароль или ключ"
