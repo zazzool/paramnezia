@@ -1,8 +1,9 @@
 name: Release
 
 # Push a tag like v1.2.0, or a branch like release/v1.2.0, to publish (docs/RELEASE.md).
-# Keys: keys/release-keys.enc (APK keystore + OTA release seed), opened with the secret PN_KEYS_PASSWORD.
-# The public halves of the release key are in gradle.properties.
+# Keys: keys/release-keys.enc (APK keystore + release seed), opened with the secret PN_KEYS_PASSWORD.
+# The public half of the release key is in gradle.properties. The APK and the signed release.json go
+# to https://psync.ru/paramnezia/ (secrets PN_DEPLOY_KEY, PN_DEPLOY_HOST) and to the GitHub release.
 on:
   push:
     tags: ["v*"]
@@ -48,7 +49,7 @@ jobs:
         run: |
           # A mismatch would ship builds that silently reject every later OTA update.
           releasetool/build/install/releasetool/bin/releasetool pubkey > pinned-check.txt
-          grep -E '^paramnezia\.release(Key|Nostr)=' gradle.properties | diff - pinned-check.txt \
+          grep -E '^paramnezia\.releaseKey=' gradle.properties | diff - pinned-check.txt \
             || { echo "::error::PN_RELEASE_SEED in keys/release-keys.enc does not match gradle.properties (docs/RELEASE.md)"; exit 1; }
       - name: Audit the APK (Play Protect rules, docs/PLAY-PROTECT.md)
         run: bash .github/scripts/apk-audit.sh "paramnezia-${VERSION}.apk" --release
@@ -60,19 +61,42 @@ jobs:
           # Re-running a failed release: the release may already exist.
           gh release view "$VERSION" >/dev/null 2>&1 || gh release create "$VERSION" --target "$GITHUB_SHA" --title "Paramnezia $VERSION" ${notes:---generate-notes}
           gh release upload "$VERSION" "paramnezia-${VERSION}.apk" --clobber
-      - name: Sign the OTA manifest, upload to Blossom, announce on Nostr
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Sign release.json
         run: |
           apk="paramnezia-${VERSION}.apk"
           apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
           signer=$("$apksigner" verify --print-certs "$apk" | grep -m1 'SHA-256 digest' | awk '{print $NF}')
-          releasetool/build/install/releasetool/bin/releasetool publish \
+          releasetool/build/install/releasetool/bin/releasetool sign \
             --apk "$apk" \
             --version-code "${{ github.run_number }}" \
             --version-name "$VERSION" \
             --signer-sha256 "$signer" \
-            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/$apk" \
+            --url "${PUBLIC_BASE}/$apk" \
             --out release.json
-          gh release upload "$VERSION" release.json --clobber
+        env: { PUBLIC_BASE: "https://psync.ru/paramnezia" }
         shell: bash
+      - name: Publish to psync.ru
+        env:
+          PN_DEPLOY_KEY: ${{ secrets.PN_DEPLOY_KEY }}
+          PN_DEPLOY_HOST: ${{ secrets.PN_DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PN_DEPLOY_KEY" ] || [ -z "$PN_DEPLOY_HOST" ]; then
+            echo "::error::Secrets PN_DEPLOY_KEY / PN_DEPLOY_HOST are not set (docs/RELEASE.md)"; exit 1
+          fi
+          key="$RUNNER_TEMP/deploy_key"; printf '%s\n' "$PN_DEPLOY_KEY" > "$key"; chmod 600 "$key"
+          dest="$PN_DEPLOY_HOST"; port=22
+          case "$dest" in *:*) port="${dest##*:}"; dest="${dest%:*}" ;; esac
+          ssh="ssh -i $key -p $port -o StrictHostKeyChecking=accept-new -o BatchMode=yes"
+          # The key is limited to the download folder on the server (rrsync), so paths are relative to it.
+          # The APK goes first: release.json never points at a file that is not there yet.
+          rsync -e "$ssh" --chmod=F644 "paramnezia-${VERSION}.apk" "$dest:./"
+          cp "paramnezia-${VERSION}.apk" paramnezia.apk
+          rsync -e "$ssh" --chmod=F644 paramnezia.apk release.json "$dest:./"
+          rm -f "$key"
+          sleep 5
+          curl -fsS https://psync.ru/paramnezia/release.json | cmp - release.json \
+            || { echo "::error::https://psync.ru/paramnezia/release.json does not serve the new release (nginx, see docs/RELEASE.md)"; exit 1; }
+      - name: Attach release.json to the GitHub release
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: gh release upload "$VERSION" release.json --clobber

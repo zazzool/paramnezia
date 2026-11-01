@@ -76,6 +76,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Admin: the daily server check runs while the admin is looking at the app, not in the background.
+        app.scope.launch { app.healServers() }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handle(intent)

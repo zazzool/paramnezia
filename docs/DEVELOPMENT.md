@@ -23,7 +23,7 @@ Android Studio открывает проект как обычно. Если Goo
 ## 2. Модули
 
 ```
-core/         чистый Kotlin/JVM, без Android: форматы, криптография, флот, Nostr, OTA, маршруты, слот APK
+core/         чистый Kotlin/JVM, без Android: форматы, криптография, флот, релизы, маршруты
 deploy/       JVM: SSH (JSch), скрипты установки сервера, публикация манифеста, страница приглашений
 tunnel/       Android-библиотека: VpnService, JNI, Go (amneziawg-go + DNS-фильтр)
 app/          Android-приложение: Compose UI, состояние, флот, OTA, виджет, плитка
@@ -38,8 +38,7 @@ tools/bypass-lists/  генератор списков «российское н
 | `amnezia` | `AmneziaKey`, `AmneziaFormat`, `AmneziaQr` | ключи `vpn://` (qCompress + base64url JSON), JSON-раскладка AmneziaVPN, серии QR |
 | `config` | `TunnelConfig`, `WgQuick`, `Uapi`, `AwgParam` | модель туннеля, wg-quick/awg-quick, UAPI для Go, параметры AmneziaWG 1/2/3 |
 | `crypto` | `WgKey`, `Curve25519.java` | ключи WireGuard |
-| `fleet` | `Fleet`, `FleetManifest`, `FleetCrypto`, `Resilience` | админ/участник флота, манифест, шифрование и подпись, выбор сервера, кворум здоровья, gossip-сообщения |
-| `nostr` | `Schnorr`, `NostrEvent`, `NostrClient`, `NostrFleet`, `NostrRelease` | BIP-340, события NIP-01/NIP-78, минимальный WebSocket-клиент, слоты флота и релизов |
+| `fleet` | `Fleet`, `FleetManifest`, `FleetCrypto`, `Resilience` | админ/участник флота, манифест, шифрование и подпись, выбор сервера, повышение резервного сервера |
 | `ota` | `Release` | релиз, подписанный ключом релизов, проверка, потоковая проверка SHA-256 |
 | `routing` | `BypassLists`, `RoutePlanner` | загрузка списков, план маршрутов в бюджете Android (3000) |
 | `net` | `IpPrefix`, `PrefixSet` | IPv4/IPv6 префиксы, вычитание множеств |
@@ -60,7 +59,7 @@ tools/bypass-lists/  генератор списков «российское н
 
 | Файл | Что делает |
 |---|---|
-| `ParamneziaVpnService.kt` | поднимает tun, передаёт fd в Go, сторож живости, keepalive по экрану, gossip-сокет |
+| `ParamneziaVpnService.kt` | поднимает tun, передаёт fd в Go, сторож живости, keepalive по экрану |
 | `TunnelSpec.kt` | `TunnelSpec`, `DnsPolicy`, `TunnelHost` (интерфейс к приложению), `TunnelRuntime` (состояние, статистика, здоровье) |
 | `AwgNative.kt` | JNI: `turnOn/turnOff/getConfig/setConfig/setDnsRules/dnsBlocked/ed25519*` |
 | `go/api.go` | экспорт в C: запуск amneziawg-go на fd |
@@ -72,11 +71,11 @@ tools/bypass-lists/  генератор списков «российское н
 
 | Файл | Что делает |
 |---|---|
-| `App.kt` | процесс приложения и `TunnelHost`: выбор сервера, failover, gossip, самовосстановление серверов (админ), видимость адресов |
+| `App.kt` | процесс приложения и `TunnelHost`: выбор сервера, failover, самовосстановление серверов (админ, при открытом приложении), видимость адресов |
 | `data/AppState.kt` | всё состояние приложения (сериализуется) |
 | `data/Vault.kt`, `data/Repo.kt` | зашифрованное (Keystore AES-GCM) хранилище: атомарная запись, `state.bak`, нечитаемое откладывается; асинхронная загрузка |
 | `data/Servers.kt` | импорт ключей/QR/файлов, деплой VPS, экспорт (в том числе всех ключей с полным доступом) |
-| `fleet/FleetManager.kt` | флот: вступление, синхронизация (сервер, зеркала, Nostr), gossip, управление, `heal` |
+| `fleet/FleetManager.kt` | флот: вступление, синхронизация (сервер в туннеле, HTTPS-зеркала), управление, `heal` |
 | `fleet/Links.kt` | одноразовые ссылки со стороны админа, подготовка серверов заранее |
 | `ota/Updater.kt` | децентрализованное обновление: фоновая загрузка, установка по нажатию |
 | `tunnel/SpecBuilder.kt` | собирает `TunnelSpec`: маршруты, исключённые приложения, DNS-политика |
@@ -105,7 +104,6 @@ OTA в нём выключены (нет `RELEASE_KEY`). Debug имеет `appli
 | `WgQuickTest`, `CryptoTest` | конфиги и ключи |
 | `FleetTest` | смена мастера без участия пользователя, приглашения, адреса устройств |
 | `ResilienceTest` | failover и кворум |
-| `NostrTest`, `NostrClientTest` | BIP-340 по официальным векторам, события, клиент против встроенного релея |
 | `OtaTest` | подпись релизов, выбор лучшего, установленный релиз, публичные адреса, проверка SHA-256 |
 | `RoutingTest` | ключевые российские сервисы идут напрямую, бюджет маршрутов |
 | `DeployE2ETest` | установка сервера, клиенты (в том числе пачкой и с занятым адресом), рукопожатие, перезапуск внутритуннельного httpd, зеркало релиза; одноразовая ссылка на настоящем контейнере, `app.json`, копия APK на сервере |
@@ -131,7 +129,7 @@ Go-библиотека стартуют лениво. `MainActivity` показ
 
 **Туннель.** `ParamneziaVpnService.connect` строит `VpnService.Builder` по `TunnelSpec`, передаёт fd в Go
 (`AwgNative.turnOn`), защищает UDP-сокеты от VPN (`protect`). Своё приложение остаётся внутри VPN (нужно для
-gossip и внутритуннельных адресов); каналы, которые должны работать при мёртвом туннеле, идут через
+внутритуннельных адресов); каналы, которые должны работать при мёртвом туннеле, идут через
 `TunnelRuntime.directNetwork()`.
 
 **Сторож живости.** Каждую минуту при включённом экране и раз в 15 минут при выключенном читает счётчики
@@ -157,7 +155,6 @@ gossip и внутритуннельных адресов); каналы, кот
 - **Поменять параметры маскировки.** `deploy/ObfuscationProfile.kt`.
 - **Новая настройка.** Поле в `Settings` (`AppState.kt`, у всех полей есть значения по умолчанию, чтобы старое
   состояние читалось), переключатель в `SettingsScreen`, использование в `SpecBuilder`.
-- **Новое сообщение gossip.** Класс в `GossipMessage` (`Resilience.kt`) с `@SerialName`, обработка в `App.onGossip`.
 
 ## 6. Подводные камни
 

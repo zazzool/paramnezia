@@ -24,8 +24,6 @@ data class TunnelSpec(
     /** Keepalive while the screen is on / off, UAPI syntax (`"25"`, `"25-35"`, `"0"` = off). */
     val keepaliveScreenOn: String,
     val keepaliveScreenOff: String,
-    /** Tunnel addresses of other trusted devices, for in-tunnel gossip. */
-    val gossipPeers: List<String> = emptyList(),
     /** Split DNS with tracker blocking; null leaves DNS to the config. */
     val dns: DnsPolicy? = null,
 )
@@ -43,7 +41,7 @@ data class DnsPolicy(
     internal fun encode() = "virtual=$virtual\ntunnel=${tunnel.joinToString(",")}\ndirect=${direct.joinToString(",")}"
 }
 
-/** The app side of the service: supplies configs and hears about health and gossip. */
+/** The app side of the service: supplies configs and hears about server health. */
 interface TunnelHost {
     /** Spec to connect with now (also used when Always-on VPN starts the service). */
     suspend fun currentSpec(): TunnelSpec?
@@ -53,9 +51,6 @@ interface TunnelHost {
 
     /** Handshakes work again on [spec]'s server. */
     fun onServerHealthy(spec: TunnelSpec) {}
-
-    /** A gossip datagram from another trusted device (source is its tunnel address). */
-    fun onGossip(from: String, payload: ByteArray) {}
 }
 
 sealed interface TunnelState {
@@ -96,9 +91,6 @@ object TunnelRuntime {
 
     /** Reads counters on demand (call it only while something is on screen). */
     fun stats(): TunnelStats? = service?.stats()
-
-    /** Sends a gossip datagram to other devices through the tunnel; no-op when down. */
-    fun gossip(payload: ByteArray, to: List<String>) { service?.sendGossip(payload, to) }
 
     /**
      * Domain rules for the DNS filter, one per line (`full:` for an exact name): [block] gets empty

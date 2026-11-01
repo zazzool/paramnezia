@@ -84,11 +84,9 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
         VisibilityCard(app, tunnel)
 
         when (val u = update) {
-            is Updater.Status.Available -> ActionCard("Доступна версия ${u.release.versionName}", "Обновить") { scope.launch { app.updater.install() } }
-            is Updater.Status.Downloading -> ActionCard("Загружаю версию ${u.release.versionName}…", null) {}
-            is Updater.Status.Ready -> ActionCard("Версия ${u.release.versionName} загружена", "Установить") { scope.launch { app.updater.install() } }
-            is Updater.Status.Installing -> ActionCard("Подтвердите установку версии ${u.release.versionName}", "Ещё раз") { scope.launch { app.updater.install() } }
-            is Updater.Status.Failed -> ActionCard("Обновление не удалось: ${u.reason}", "Повторить") { scope.launch { app.updater.install() } }
+            is Updater.Status.Available -> ActionCard("Доступна версия ${u.release.versionName}", "Скачать") {
+                if (!app.updater.openDownload()) android.widget.Toast.makeText(app, "Нет ссылки на APK", android.widget.Toast.LENGTH_SHORT).show()
+            }
             Updater.Status.Idle -> {}
         }
 

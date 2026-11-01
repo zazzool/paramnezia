@@ -28,7 +28,6 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import net.paramnezia.core.config.TunnelConfig
-import net.paramnezia.core.fleet.GossipMessage
 
 /**
  * The VPN service. Designed to cost nothing while idle:
@@ -39,7 +38,6 @@ import net.paramnezia.core.fleet.GossipMessage
  *    the tunnel is rebuilt from scratch (fresh sockets fix stuck NAT bindings), and after repeated
  *    failures the host is asked for another server;
  *  - keepalive is lowered while the screen is off;
- *  - the gossip socket blocks in receive and wakes only for incoming packets.
  */
 class ParamneziaVpnService : VpnService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -51,7 +49,6 @@ class ParamneziaVpnService : VpnService() {
     private var connectedAt = 0L
     private var lastCheck: TunnelStats? = null
     private var screenOn = true
-    private var gossipSocket: DatagramSocket? = null
     /** Failed probes in a row; reset by any sign of life. */
     private var failures = 0
 
@@ -88,7 +85,6 @@ class ParamneziaVpnService : VpnService() {
         val h = handle
         handle = -1
         if (h >= 0) AwgNative.turnOff(h)
-        gossipSocket?.close()
         TunnelRuntime.service = null
         TunnelRuntime.set(TunnelState.Down)
         scope.cancel()
@@ -133,8 +129,8 @@ class ParamneziaVpnService : VpnService() {
                 for (r in next.excludedRoutes) builder.excludeRoute(AndroidIpPrefix(r.address, r.length))
             }
             for (pkg in next.excludedApps) runCatching { builder.addDisallowedApplication(pkg) }
-            // Our own app stays inside the VPN, so gossip and the in-tunnel mirror work. Channels that
-            // must work while the server is blocked (relays, mirrors, updates) bind to
+            // Our own app stays inside the VPN, so the in-tunnel manifest URL works. Channels that
+            // must work while the server is blocked (mirrors, update check) bind to
             // TunnelRuntime.directNetwork() instead.
             if (Build.VERSION.SDK_INT >= 29) builder.setMetered(false)
             builder.setBlocking(true)
@@ -149,7 +145,6 @@ class ParamneziaVpnService : VpnService() {
             connectedAt = System.currentTimeMillis()
             lastCheck = null
             TunnelRuntime.set(TunnelState.Up(next.serverName, next.serverId, connectedAt))
-            openGossip(next)
             scheduleCheck(FIRST_CHECK_MS)
             TunnelRuntime.bumpGeneration()
             startFailures = 0
@@ -177,7 +172,6 @@ class ParamneziaVpnService : VpnService() {
     private fun down(keepState: Boolean = false) {
         main.removeCallbacks(healthCheck)
         if (!keepState) { main.removeCallbacks(retryStart); startFailures = 0 }
-        gossipSocket?.close(); gossipSocket = null
         val h = handle
         handle = -1
         if (h >= 0) AwgNative.turnOff(h)
@@ -306,38 +300,10 @@ class ParamneziaVpnService : VpnService() {
         }
     }
 
-    // --- in-tunnel gossip -------------------------------------------------------------------
-
-    private fun openGossip(s: TunnelSpec) {
-        if (s.gossipPeers.isEmpty()) return
-        val local = s.config.iface.addresses.firstOrNull { !it.isV6 }?.address ?: return
-        val socket = runCatching { DatagramSocket(InetSocketAddress(local, GOSSIP_PORT)) }.getOrNull() ?: return
-        gossipSocket = socket
-        Thread({
-            val buf = ByteArray(65_507)
-            while (!socket.isClosed) {
-                val p = DatagramPacket(buf, buf.size)
-                try { socket.receive(p) } catch (_: Exception) { break }
-                val from = p.address.hostAddress ?: continue
-                if (from in s.gossipPeers) host?.onGossip(from, p.data.copyOfRange(p.offset, p.offset + p.length))
-            }
-        }, "pn-gossip").apply { isDaemon = true }.start()
-    }
-
-    internal fun sendGossip(payload: ByteArray, to: List<String>) {
-        val socket = gossipSocket ?: return
-        scope.launch {
-            for (addr in to) runCatching {
-                socket.send(DatagramPacket(payload, payload.size, InetAddress.getByName(addr), GOSSIP_PORT))
-            }
-        }
-    }
-
     companion object {
         private const val TAG = "ParamneziaVpn"
         const val ACTION_START = "net.paramnezia.tunnel.START"
         const val ACTION_STOP = "net.paramnezia.tunnel.STOP"
-        const val GOSSIP_PORT = GossipMessage.PORT
         private const val FIRST_CHECK_MS = 20_000L
         private const val NETWORK_CHANGE_CHECK_MS = 15_000L
         private const val SCREEN_ON_CHECK_MS = 3_000L

@@ -12,16 +12,13 @@ import net.paramnezia.core.fleet.FleetCrypto
 import net.paramnezia.core.fleet.FleetManifest
 import net.paramnezia.core.fleet.FleetMember
 import net.paramnezia.core.fleet.FleetServer
-import net.paramnezia.core.fleet.GossipMessage
 import net.paramnezia.core.fleet.HealthBook
+import net.paramnezia.core.fleet.HealthReport
 import net.paramnezia.core.fleet.Invite
 import net.paramnezia.core.fleet.fleetServerOf
-import net.paramnezia.core.nostr.NostrClient
-import net.paramnezia.core.nostr.NostrFleet
 import net.paramnezia.core.profile.SshCredentials
 import net.paramnezia.deploy.FleetPublisher
 import net.paramnezia.deploy.ServerManager
-import net.paramnezia.tunnel.TunnelRuntime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -36,9 +33,11 @@ import net.paramnezia.core.ota.Release
 /**
  * Fleet membership on this device and, on the admin device, fleet management.
  *
- * Manifests travel over every channel at once and the newest valid one wins: the in-tunnel URL on
- * each server, HTTPS mirrors, Nostr relays (every device keeps its own slot) and UDP gossip between
- * devices inside the tunnel. None of them is trusted; the admin signature is the only authority.
+ * Devices read the signed manifest over plain HTTP(S), like a VPN subscription URL: from the
+ * server inside the tunnel and from the HTTPS mirrors the manifest lists (a gist, any static host).
+ * The newest valid one wins. No mirror is trusted; the admin signature is the only authority. The
+ * manifest lists several servers, so when the current one is banned a device moves to the next on
+ * its own and reads the newest manifest through it.
  */
 class FleetManager(
     private val repo: Repo,
@@ -70,25 +69,13 @@ class FleetManager(
 
     val isAdmin: Boolean get() = stored?.adminSeed != null
 
-    private fun nostr() = stored?.let { NostrFleet(it.trust) }
-
-    private fun relays(): List<String> = repo.current.settings.relays.ifEmpty { NostrFleet.DEFAULT_RELAYS }
-
-    /** Tunnel addresses of the other devices, for gossip. */
-    fun peers(): List<String> {
-        val f = stored ?: return emptyList()
-        val me = WgKey.fromBase64(f.deviceKey).publicKey().toBase64()
-        return manifest()?.devices.orEmpty().filter { it.publicKey != me }.map { it.address.substringBefore('/') }
-    }
-
     // --- receiving ----------------------------------------------------------------------------
 
     /** Offers a manifest from any channel. Returns true if it was newer and is now in use. */
-    fun offer(text: String, gossipOnward: Boolean = true): Boolean {
+    fun offer(text: String): Boolean {
         val m = member() ?: return false
         if (!m.offer(text)) return false
         repo.update { s -> s.copy(fleet = s.fleet?.copy(manifest = text.trim())) }
-        if (gossipOnward) TunnelRuntime.gossip(GossipMessage.encode(GossipMessage.Manifest(text.trim())), peers())
         onManifestChanged()
         return true
     }
@@ -104,81 +91,34 @@ class FleetManager(
         return true
     }
 
-    /** Pulls from every channel in parallel; true if a newer manifest was found. */
+    /** Reads every mirror in parallel; true if a newer manifest was found. */
     suspend fun sync(): Boolean = withContext(Dispatchers.IO) {
-        val f = stored ?: return@withContext false
-        val manifest = manifest()
-        val nf = NostrFleet(f.trust)
-        val client = NostrClient(net.directSockets())
-        val texts: List<String> = coroutineScope {
-            val http = (listOf(publisher.tunnelUrl) + manifest?.mirrors.orEmpty()).distinct().map { url ->
-                async { listOfNotNull(net.get(url)) }
-            }
-            val relayJobs = relays().map { relay ->
-                async {
-                    runCatching {
-                        nf.candidates(client.fetch(relay, manifest?.let(nf::authors) ?: listOf(nf.pubkeyFor(NostrFleet.ADMIN)), nf.tag), manifest)
-                    }.getOrDefault(emptyList())
-                }
-            }
-            (http + relayJobs).awaitAll().flatten()
-        }
+        stored ?: return@withContext false
+        val urls = (listOf(publisher.tunnelUrl) + manifest()?.mirrors.orEmpty()).distinct()
+        val texts = coroutineScope { urls.map { url -> async { net.get(url) } }.awaitAll() }.filterNotNull()
         var changed = false
         for (t in texts.distinct()) if (offer(t)) changed = true
         repo.update { s -> s.copy(fleet = s.fleet?.copy(lastSync = System.currentTimeMillis())) }
-        // Keep our own slot current, so devices that missed the admin's event still find this version.
-        if (changed || texts.none { FleetCrypto.decode(it)?.version == member()?.manifest?.version }) publishOwnSlot()
         changed
     }
 
-    private suspend fun publishOwnSlot() = withContext(Dispatchers.IO) {
-        val f = stored ?: return@withContext
-        val nf = nostr() ?: return@withContext
-        val version = manifest()?.version ?: return@withContext
-        val me = if (f.adminSeed != null) NostrFleet.ADMIN else WgKey.fromBase64(f.deviceKey).publicKey().toBase64()
-        val event = nf.manifestEvent(f.manifest, me, version)
-        val client = NostrClient(net.directSockets())
-        coroutineScope { relays().map { r -> async { runCatching { client.publish(r, event) }.getOrDefault(false) } }.awaitAll() }
-    }
-
-    // --- gossip ---------------------------------------------------------------------------------
-
-    fun onGossip(from: String, message: GossipMessage) {
-        when (message) {
-            is GossipMessage.Manifest -> offer(message.signed)
-            is GossipMessage.Version -> {
-                val mine = manifest() ?: return
-                if (message.fleetId == mine.fleetId && message.version < mine.version) {
-                    stored?.let { TunnelRuntime.gossip(GossipMessage.encode(GossipMessage.Manifest(it.manifest)), listOf(from)) }
-                }
-            }
-            is GossipMessage.Health -> if (isAdmin) {
-                health.record(from, message)
-                maybePromote()
-            }
-            is GossipMessage.Release -> {}
-        }
-    }
-
-    /** Announces our version to the other devices (after connecting). */
-    fun announce() {
-        val m = manifest() ?: return
-        TunnelRuntime.gossip(GossipMessage.encode(GossipMessage.Version(m.fleetId, m.version)), peers())
-    }
-
+    /**
+     * This device could not reach [serverId]. On the admin device, a master that stays down makes the
+     * first live standby the master, and the new manifest goes to the servers and mirrors.
+     */
     fun reportHealth(serverId: String, reachable: Boolean) {
-        val msg = GossipMessage.Health(serverId, reachable, System.currentTimeMillis())
-        if (isAdmin) { health.record("self", msg); maybePromote() }
-        TunnelRuntime.gossip(GossipMessage.encode(msg), peers())
+        if (!isAdmin) return
+        health.record("self", HealthReport(serverId, reachable, System.currentTimeMillis()))
+        maybePromote()
     }
 
-    /** Admin: when the master is down for the quorum of devices, the first live standby becomes master. */
+    /** Admin: when the master is down, the first live standby becomes master. */
     private fun maybePromote() {
         val m = manifest() ?: return
         val master = m.servers.firstOrNull() ?: return
-        if (!health.isDown(master.id, System.currentTimeMillis(), m.devices.size)) return
-        val next = m.servers.drop(1).firstOrNull { !health.isDown(it.id, System.currentTimeMillis(), m.devices.size) } ?: return
-        Log.i(TAG, "master ${master.name} is down for the fleet, promoting ${next.name}")
+        if (!health.isDown(master.id, System.currentTimeMillis(), 1)) return
+        val next = m.servers.drop(1).firstOrNull { !health.isDown(it.id, System.currentTimeMillis(), 1) } ?: return
+        Log.i(TAG, "master ${master.name} is down, promoting ${next.name}")
         scope.launch(Dispatchers.IO) { runCatching { promote(next.id) } }
     }
 
@@ -267,7 +207,7 @@ class FleetManager(
                     runCatching { servers.removeClients(a, f.revoked.map(WgKey::fromBase64)) }.onFailure { stillRevoked += f.revoked }.getOrThrow()
                 },
                 "manifest" to { if (!publisher.publishToServer(a, f.manifest)) Log.w(TAG, "${s.name}: in-tunnel web server is not answering") },
-                "release" to { release?.let { (r, wire) -> publisher.mirrorRelease(a, r.sha256, r.publicApkUrls() + r.downloadUrls(), wire, forInvites = false) } },
+                "release" to { release?.let { (r, wire) -> publisher.mirrorRelease(a, r.sha256, r.publicApkUrls(), wire, forInvites = false) } },
             )
             var serverOk = true
             for ((name, step) in steps) runCatching { step() }.onFailure { serverOk = false; Log.w(TAG, "heal ${s.name}/$name: ${it.message}") }
@@ -300,7 +240,7 @@ class FleetManager(
         })))
     }
 
-    /** Admin: makes [serverId] the master. Devices follow within seconds (gossip) or hours (sync). */
+    /** Admin: makes [serverId] the master. Devices follow at their next manifest read. */
     suspend fun promote(serverId: String) = withContext(Dispatchers.IO) {
         val admin = admin() ?: return@withContext
         val current = manifest() ?: return@withContext
@@ -330,7 +270,7 @@ class FleetManager(
 
     private fun accept(signed: String) {
         offer(signed)
-        // Spreading the new manifest (servers, gist, Nostr) can take a while on a slow network;
+        // Spreading the new manifest (servers, gist) can take a while on a slow network;
         // the admin's screen does not wait for it.
         scope.launch { runCatching { publish(signed) }.onFailure { Log.w(TAG, "publish failed", it) } }
     }
@@ -344,7 +284,6 @@ class FleetManager(
                 listOfNotNull(f.gistId?.let { id -> f.gistToken?.let { t -> async { runCatching { publisher.publishToGist(t, id, signed) } } } })
             jobs.awaitAll()
         }
-        publishOwnSlot()
     }
 
     /** Registers a device on every server; returns the failures by server id. */

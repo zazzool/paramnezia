@@ -19,7 +19,7 @@ android {
         versionName = prop("paramnezia.versionName", "PN_VERSION_NAME") ?: "0.1.0"
         // Public half of the release key: only releases signed by it are installed over the air.
         buildConfigField("String", "RELEASE_KEY", "\"${prop("paramnezia.releaseKey", "PN_RELEASE_KEY").orEmpty()}\"")
-        buildConfigField("String", "RELEASE_NOSTR", "\"${prop("paramnezia.releaseNostr", "PN_RELEASE_NOSTR").orEmpty()}\"")
+        buildConfigField("String", "UPDATE_URL", "\"${prop("paramnezia.updateUrl", "PN_UPDATE_URL").orEmpty()}\"")
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 

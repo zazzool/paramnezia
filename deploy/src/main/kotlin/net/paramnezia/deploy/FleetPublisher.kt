@@ -18,7 +18,7 @@ import java.net.URL
 class FleetPublisher(private val hostKeys: HostKeyStore) {
 
     /** In-tunnel URL every Paramnezia server answers on (the server is always .1 of the subnet). */
-    val tunnelUrl = "http://10.8.1.1:8080/fleet.json"
+    val tunnelUrl = TUNNEL_FLEET_URL
 
     /**
      * Stores [manifest] (null: only checks) on the server and makes sure its in-tunnel web server
@@ -70,10 +70,10 @@ class FleetPublisher(private val hostKeys: HostKeyStore) {
     }
 
     /** In-tunnel mirror base for APKs; the hash is appended. */
-    val tunnelApkMirror = "http://10.8.1.1:8080/apk"
+    val tunnelApkMirror = TUNNEL_APK_MIRROR
 
     /** In-tunnel URL of the newest signed release. */
-    val tunnelReleaseUrl = "http://10.8.1.1:8080/release.json"
+    val tunnelReleaseUrl = TUNNEL_RELEASE_URL
 
     /**
      * Updates a GitHub gist (create it once, secret is fine) and returns its raw URL, which devices
@@ -103,5 +103,11 @@ class FleetPublisher(private val hostKeys: HostKeyStore) {
             Json.parseToJsonElement(text).jsonObject["owner"]?.jsonObject?.get("login")?.jsonPrimitive?.content
         }.getOrNull()
         return "https://gist.githubusercontent.com/${owner ?: "-"}/$gistId/raw/fleet.json"
+    }
+
+    companion object {
+        const val TUNNEL_FLEET_URL = "http://10.8.1.1:8080/fleet.json"
+        const val TUNNEL_APK_MIRROR = "http://10.8.1.1:8080/apk"
+        const val TUNNEL_RELEASE_URL = "http://10.8.1.1:8080/release.json"
     }
 }

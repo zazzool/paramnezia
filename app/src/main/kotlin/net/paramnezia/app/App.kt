@@ -14,7 +14,6 @@ import net.paramnezia.app.ui.WidgetProvider
 import net.paramnezia.app.work.SyncWorker
 import net.paramnezia.core.config.WgQuick
 import net.paramnezia.core.fleet.FailoverPolicy
-import net.paramnezia.core.fleet.GossipMessage
 import net.paramnezia.tunnel.NativeEd25519
 import net.paramnezia.tunnel.ParamneziaVpnService
 import net.paramnezia.tunnel.TunnelHost
@@ -40,7 +39,7 @@ import net.paramnezia.deploy.SshConnection
 
 /**
  * The app process. Also the [TunnelHost] the VPN service asks for configs: it decides which server
- * to use, fails over when one is blocked and feeds what devices gossip into the fleet and updater.
+ * to use and fails over when one is blocked.
  */
 class App : Application(), TunnelHost {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -49,7 +48,7 @@ class App : Application(), TunnelHost {
     lateinit var specs: SpecBuilder; private set
     lateinit var fleet: FleetManager; private set
     /** Created on first use, off the launch path (it reads package info and the stored release). */
-    val updater: Updater by lazy { Updater(this, repo, net, fleet, NativeEd25519, scope) }
+    val updater: Updater by lazy { Updater(this, repo, net, NativeEd25519, scope) { repo.current.fleet != null } }
     lateinit var servers: Servers; private set
     val links: Links by lazy { Links(repo, fleet, { updater }, scope) }
     private val visibilityCheck by lazy { VisibilityCheck(net) }
@@ -79,15 +78,11 @@ class App : Application(), TunnelHost {
                 runCatching { specs.applyDnsRules(repo.current.settings) }.onFailure { Log.e(TAG, "dns rules", it) }
             }
         }
-        // After each connect: tell the other devices our manifest version (they answer if theirs is newer).
-        scope.launch {
-            TunnelRuntime.state.collect { s -> if (s is TunnelState.Up) { delay(3_000); fleet.announce() } }
-        }
         // Nothing below blocks the first frame: WorkManager, the updater and the native library start
         // in the background.
         scope.launch(Dispatchers.IO) {
             SyncWorker.schedule(this@App)
-            updater
+            updater.checkIfDue()
         }
         // Widget: redraw on every state change; while up, refresh the counters every 30 s with the
         // screen on (the loop simply does not run while the phone sleeps).
@@ -135,7 +130,7 @@ class App : Application(), TunnelHost {
             if (tunnels.isNotEmpty()) {
                 val chosen = failover.choose(tunnels.map { it.first }, System.currentTimeMillis()) ?: return null
                 val config = tunnels.first { it.first.id == chosen.id }.second
-                return specs.build(chosen.id, chosen.name, config, state.settings, fleet.peers())
+                return specs.build(chosen.id, chosen.name, config, state.settings)
             }
         }
         val profile = state.profiles.firstOrNull { it.id == state.activeProfile } ?: state.profiles.firstOrNull() ?: return null
@@ -154,7 +149,7 @@ class App : Application(), TunnelHost {
         val next = currentSpec() ?: return null
         if (next.serverId == spec.serverId) return null
         Log.i(TAG, "${spec.serverName} unreachable, switching to ${next.serverName}")
-        scope.launch { delay(10_000); fleet.reportHealth(spec.serverId, reachable = false) }
+        fleet.reportHealth(spec.serverId, reachable = false)
         return next
     }
 
@@ -162,25 +157,10 @@ class App : Application(), TunnelHost {
         failover.markHealthy(spec.serverId)
     }
 
-    override fun onGossip(from: String, payload: ByteArray) {
-        val msg = GossipMessage.decode(payload) ?: return
-        scope.launch {
-            when (msg) {
-                is GossipMessage.Release -> updater.offer(msg.signed)
-                else -> fleet.onGossip(from, msg)
-            }
-        }
-    }
-
-    suspend fun afterUpdate() {
-        if (repo.current.wantConnected && VpnService.prepare(this) == null) ParamneziaVpnService.start(this)
-        // The admin brings its servers up to date (and has them fetch the new release themselves).
-        healServers(force = true)
-    }
-
     /**
      * Admin only: checks and repairs the fleet's servers (see [FleetManager.heal]) at most once a
-     * day, or now if [force]. Cheap for everyone else: returns at once.
+     * day, or now if [force]. Runs only while the admin has the app open (MainActivity), never from
+     * background work. Cheap for everyone else: returns at once.
      */
     suspend fun healServers(force: Boolean = false) {
         val f = repo.current.fleet ?: return

@@ -48,7 +48,6 @@ target=$(echo "$badging" | sed -n "s/^targetSdkVersion:'\([0-9]*\)'.*/\1/p")
 # Every permission must be on this list. Extending it needs a reason in docs/PLAY-PROTECT.md.
 allowed="android.permission.INTERNET
 android.permission.ACCESS_NETWORK_STATE
-android.permission.REQUEST_INSTALL_PACKAGES
 android.permission.CAMERA
 android.permission.RECEIVE_BOOT_COMPLETED
 android.permission.WAKE_LOCK
@@ -59,10 +58,17 @@ for p in $(echo "$badging" | sed -n "s/^uses-permission: name='\([^']*\)'.*/\1/p
   echo "$allowed" | grep -qx "$p" || bad "permission $p is not on the allowed list"
 done
 echo "$badging" | grep -q "QUERY_ALL_PACKAGES" && bad "QUERY_ALL_PACKAGES"
+echo "$badging" | grep -q "INSTALL_PACKAGES" && bad "install permission (updates go through the browser)"
 
 echo "== Code"
 unzip -l "$APK" | awk '{print $4}' | grep -E '\.(dex|jar|apk|so)$' | sort
 unzip -l "$APK" | awk '{print $4}' | grep -E '^assets/.*\.(dex|jar|apk|zip)$' && bad "code or packages inside assets (looks like a dropper)"
 unzip -l "$APK" | awk '{print $4}' | grep -E '\.so$' | grep -v 'libparamnezia.so$' | grep -v 'libandroidx' && echo "note: other native libraries above"
+dex=$(unzip -Z1 "$APK" | grep -E '^classes[0-9]*\.dex$')
+for f in $dex; do unzip -p "$APK" "$f"; done > "${TMPDIR:-/tmp}/pn-dex.bin"
+# The app never installs packages itself and talks to no relay networks (docs/PLAY-PROTECT.md).
+grep -aq 'Landroid/content/pm/PackageInstaller$Session;' "${TMPDIR:-/tmp}/pn-dex.bin" && bad "code uses PackageInstaller sessions"
+grep -aq 'wss://' "${TMPDIR:-/tmp}/pn-dex.bin" && bad "WebSocket relay URLs in the code"
+rm -f "${TMPDIR:-/tmp}/pn-dex.bin"
 
 [ "$fail" -eq 0 ] && echo "apk-audit: OK" || { echo "apk-audit: FAILED"; exit 1; }

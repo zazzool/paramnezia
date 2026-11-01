@@ -66,20 +66,11 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
         stats?.takeIf { tunnel is TunnelState.Up }?.let {
             Text("↓ ${formatBytes(it.rxBytes)}   ↑ ${formatBytes(it.txBytes)}   трекеров: $blocked", style = MaterialTheme.typography.bodyMedium)
         }
-        // Updates are installed only with the user's tap, so followers need the button too.
-        when (val u = update) {
-            is Updater.Status.Available, is Updater.Status.Ready, is Updater.Status.Installing, is Updater.Status.Failed -> {
-                val name = when (u) {
-                    is Updater.Status.Available -> u.release.versionName
-                    is Updater.Status.Ready -> u.release.versionName
-                    is Updater.Status.Installing -> u.release.versionName
-                    else -> null
-                }
-                androidx.compose.material3.OutlinedButton(onClick = { scope.launch { app.updater.install() } }) {
-                    Text(if (name != null) "Обновить до $name" else "Повторить обновление")
-                }
+        // The browser downloads the APK; Android's installer asks the user, as with the first install.
+        (update as? Updater.Status.Available)?.let { u ->
+            androidx.compose.material3.OutlinedButton(onClick = { app.updater.openDownload() }) {
+                Text("Скачать версию ${u.release.versionName}")
             }
-            else -> {}
         }
     }
 

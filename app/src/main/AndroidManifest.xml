@@ -4,10 +4,9 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Over-the-air updates of this app only, always confirmed by the user in Android's dialog.
-         No UPDATE_PACKAGES_WITHOUT_USER_ACTION and no silent installs: see docs/PLAY-PROTECT.md
-         before adding any permission here (.github/scripts/apk-audit.sh enforces the list). -->
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- See docs/PLAY-PROTECT.md before adding any permission here (.github/scripts/apk-audit.sh
+         enforces the list). Updates are downloaded by the browser and installed by Android's own
+         installer, so the app holds no install permission. -->
     <!-- QR codes of keys (AmneziaVPN shows them); asked at the moment of scanning. -->
     <uses-permission android:name="android.permission.CAMERA" />
 
@@ -101,12 +100,5 @@
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_info" />
         </receiver>
 
-        <receiver android:name=".ota.InstallReceiver" android:exported="false" />
-
-        <receiver android:name=".ota.UpdatedReceiver" android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-            </intent-filter>
-        </receiver>
     </application>
 </manifest>

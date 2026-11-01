@@ -13,8 +13,10 @@ data class AppState(
     val settings: Settings = Settings(),
     /** SSH host key fingerprints, trust on first use: "host:port" → "SHA256:…". */
     val hostKeys: Map<String, String> = emptyMap(),
-    /** Newest verified app release (SignedRelease wire form), shared with peers. */
+    /** Newest verified app release (SignedRelease wire form). */
     val release: String? = null,
+    /** When release.json was last read (Updater.checkIfDue). */
+    val lastUpdateCheck: Long = 0,
     /** The user wants the tunnel up (restored after an update). */
     val wantConnected: Boolean = false,
     val uiMode: UiMode = UiMode.AUTO,
@@ -79,8 +81,6 @@ data class Settings(
     val forceTunnel: Set<String> = emptySet(),
     val forceDirect: Set<String> = emptySet(),
     val battery: BatteryMode = BatteryMode.BALANCED,
-    val autoUpdate: Boolean = true,
-    val relays: List<String> = emptyList(),
     /** Extra Russian resolvers for the split DNS; empty uses the defaults. */
     val directDns: List<String> = emptyList(),
 )

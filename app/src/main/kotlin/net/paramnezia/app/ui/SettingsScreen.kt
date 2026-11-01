@@ -117,10 +117,17 @@ fun SettingsScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
         HorizontalDivider()
         Text("Обновления", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         if (app.updater.enabled) {
-            Toggle("Скачивать обновления заранее", "Только сборки, подписанные ключом релизов; источники: Nostr, ваши серверы, другие устройства флота. Устанавливаются после вашего подтверждения", s.autoUpdate) { v -> change { it.copy(autoUpdate = v) } }
-            OutlinedButton(onClick = { scope.launch { app.updater.check(); toast("Проверка завершена") } }) { Text("Проверить обновления") }
+            Text("Приложение раз в 12 часов проверяет, есть ли новая версия, подписанная ключом релизов. Скачивает её браузер по вашему нажатию, " +
+                "устанавливает Android с вашим подтверждением.", style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = {
+                scope.launch {
+                    app.updater.check()
+                    if (app.updater.status.value is net.paramnezia.app.ota.Updater.Status.Available) app.updater.openDownload()
+                    else toast("Установлена последняя версия")
+                }
+            }) { Text("Проверить обновления") }
         } else {
-            Text("Эта сборка без ключа релизов: обновления по воздуху выключены.", style = MaterialTheme.typography.bodySmall)
+            Text("Эта сборка без ключа релизов: проверка обновлений выключена.", style = MaterialTheme.typography.bodySmall)
         }
         Text("Версия ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", style = MaterialTheme.typography.bodySmall)
     }
