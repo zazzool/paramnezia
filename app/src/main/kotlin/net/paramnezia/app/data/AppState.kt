@@ -57,11 +57,20 @@ data class StoredFleet(
     val adminSeed: String? = null,
     /** SSH access per server id, admin only (to add devices and publish manifests). */
     val serverAccess: Map<String, SshCredentials> = emptyMap(),
-    /** Optional GitHub gist mirror, admin only. */
+    /**
+     * Admin only: the reserve channel, a secret GitHub gist the app creates and updates itself.
+     * Devices read it without credentials when no fleet server is reachable.
+     */
     val gistId: String? = null,
     val gistToken: String? = null,
-    /** Last time each server answered, by id (for health reports). */
+    /** Admin: why the last update of the reserve channel failed (expired token…); null when fine. */
+    val gistError: String? = null,
+    /** Admin: the admin's own settings go to every device in the manifest. */
+    val sharePolicy: Boolean = true,
+    /** Last time some channel answered with a valid manifest. */
     val lastSync: Long = 0,
+    /** Which channel answered last ("tunnel", "github", "tor"), for the fleet screen. */
+    val lastSyncVia: String? = null,
     /**
      * Admin: public keys of removed devices. Every self-check removes them from every server again,
      * so a server that was unreachable at removal time cannot keep a revoked device connected.

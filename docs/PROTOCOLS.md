@@ -64,7 +64,13 @@ AmneziaVPN видит обычный ключ; Paramnezia вступает во 
 ### Каналы доставки манифеста
 
 1. **Сервер, внутри туннеля:** `http://10.8.1.1:8080/fleet.json` (busybox httpd в контейнере `amnezia-awg2`).
-2. **Зеркала:** любые HTTPS-URL из `mirrors` (например, gist). Читаются через туннель и напрямую.
+2. **Зеркала:** любые HTTPS-URL из `mirrors`. Резервный канал — секретный gist: raw-адрес (там лежит
+   `SignedManifest`) и адрес API (там объект gist; `FleetCrypto.unwrap` достаёт `files["fleet.json"].content`).
+   Читаются через туннель и напрямую.
+3. **Через Tor:** если ничего не ответило, HTTPS-зеркала через SOCKS Orbot `127.0.0.1:9050` (`Net.getViaTor`).
+
+Поле `policy` (`FleetPolicy`, с 2.2.0, может отсутствовать): `bypassRussia`, `bypassLan`, `blockTrackers`,
+`forceTunnel`, `forceDirect`, `directDns`. Старые версии приложения поле игнорируют.
 
 Никаких релеев и обмена между устройствами (с 2.1.0, см. [PLAY-PROTECT.md](PLAY-PROTECT.md)): устройство само
 читает манифест, как подписку VPN. `sync()` опрашивает 1–2 параллельно и принимает самый новый валидный манифест; при приёме нового

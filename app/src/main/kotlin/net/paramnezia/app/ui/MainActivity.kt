@@ -80,6 +80,8 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         // Admin: the daily server check runs while the admin is looking at the app, not in the background.
         app.scope.launch { app.healServers() }
+        // Everyone in a fleet: opening the app looks for a newer configuration (at most every 15 min).
+        app.fleet.syncIfDue(15 * 60_000L)
     }
 
     override fun onNewIntent(intent: Intent) {

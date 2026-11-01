@@ -23,9 +23,25 @@ data class FleetManifest(
     val devices: List<FleetDevice>,
     /** Where devices look for newer versions (HTTPS mirrors, plus each server's in-tunnel URL). */
     val mirrors: List<String>,
+    /**
+     * Settings the admin shares with every device (bypass rules, tracker blocking). Null: devices
+     * keep their own. Older apps ignore the field.
+     */
+    val policy: FleetPolicy? = null,
 ) {
     fun deviceFor(publicKey: WgKey): FleetDevice? = devices.firstOrNull { it.publicKey == publicKey.toBase64() }
 }
+
+/** Fleet-wide settings; mirrors the app's own settings minus per-device ones (battery). */
+@Serializable
+data class FleetPolicy(
+    val bypassRussia: Boolean = true,
+    val bypassLan: Boolean = true,
+    val blockTrackers: Boolean = true,
+    val forceTunnel: Set<String> = emptySet(),
+    val forceDirect: Set<String> = emptySet(),
+    val directDns: List<String> = emptyList(),
+)
 
 @Serializable
 data class FleetServer(

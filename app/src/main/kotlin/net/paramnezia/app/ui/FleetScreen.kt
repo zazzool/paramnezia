@@ -84,8 +84,8 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
         val fleet = state.fleet
         if (fleet == null) {
             Text("Флот", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("Флот объединяет ваши серверы и устройства. Устройства сами получают новые конфиги, переключаются на " +
-                "резервный сервер при блокировке и обмениваются сведениями друг с другом без центрального сервера.")
+            Text("Флот объединяет ваши серверы и устройства. Устройства сами получают новые серверы и ваши настройки, " +
+                "а при блокировке сервера переключаются на резервный.")
             val managed = state.profiles.filter { it.ssh != null }
             if (managed.isEmpty()) {
                 Text("Чтобы создать флот, сначала разверните свой сервер на вкладке «Добавить» или импортируйте ключ с полным доступом.",
@@ -112,6 +112,15 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
         val me = WgKey.fromBase64(fleet.deviceKey).publicKey().toBase64()
         Text(if (isAdmin) "Флот (вы администратор)" else "Флот", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         Text("Версия конфигурации: ${manifest?.version ?: "—"}", style = MaterialTheme.typography.bodySmall)
+        if (fleet.lastSync > 0) {
+            val via = when (fleet.lastSyncVia) { "tunnel" -> "с сервера"; "github" -> "через GitHub"; "tor" -> "через Tor (Orbot)"; else -> "с зеркала" }
+            Text("Проверено ${android.text.format.DateUtils.getRelativeTimeSpanString(fleet.lastSync)}, $via",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+        }
+        if (!isAdmin && manifest?.policy != null) {
+            Text("Обход российских сайтов и блокировку рекламы настраивает администратор флота, они обновляются сами.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+        }
 
         Text("Серверы", style = MaterialTheme.typography.titleMedium)
         manifest?.servers?.forEachIndexed { i, s ->
@@ -148,6 +157,32 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
         }
         if (isAdmin) Button(enabled = !busy, onClick = { newDevice = true }) { Text("Пригласить устройство") }
         if (isAdmin) LinkList(state.links, busy, onOpen = { link = it }) { l -> work("Ссылка отозвана") { app.links.revoke(l) } }
+
+        if (isAdmin) {
+            Text("Доставка настроек", style = MaterialTheme.typography.titleMedium)
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Мои настройки на всех устройствах", fontWeight = FontWeight.Bold)
+                            Text("Обход российского, блокировка рекламы, списки «через VPN» и «напрямую»",
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                        androidx.compose.material3.Switch(fleet.sharePolicy, enabled = !busy, onCheckedChange = { on ->
+                            work(if (on) "Устройства получат ваши настройки" else "Устройства оставят свои настройки") {
+                                app.fleet.sharePolicy(state.settings, on)
+                            }
+                        })
+                    }
+                }
+            }
+            ReserveChannel(fleet.gistToken != null, fleet.gistError, busy,
+                onEnable = { token -> work("Резервный канал включён") { app.fleet.setReserveChannel(token) } },
+                onDisable = { work("Резервный канал отключён") { app.fleet.clearReserveChannel() } },
+                openTokenPage = {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(GITHUB_TOKEN_PAGE)))
+                })
+        }
 
         OutlinedButton(enabled = !busy, onClick = {
             work { toast(if (app.fleet.sync()) "Получена новая конфигурация" else "Конфигурация актуальна") }
@@ -270,6 +305,43 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
             },
             dismissButton = { TextButton(onClick = { newServer = false }) { Text("Отмена") } },
         )
+    }
+}
+
+/** GitHub page for a classic token with only the `gist` scope, prefilled. */
+private const val GITHUB_TOKEN_PAGE = "https://github.com/settings/tokens/new?scopes=gist&description=Paramnezia"
+
+/**
+ * The reserve channel: a secret GitHub gist with the encrypted manifest. Devices read it when no
+ * fleet server is reachable, so they learn about new servers even after every old one was banned.
+ */
+@Composable
+private fun ReserveChannel(on: Boolean, error: String?, busy: Boolean, onEnable: (String) -> Unit, onDisable: () -> Unit, openTokenPage: () -> Unit) {
+    var token by remember { mutableStateOf("") }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Резервный канал: GitHub" + if (on) " · включён" else "", fontWeight = FontWeight.Bold)
+            if (on) {
+                Text("Если заблокируют все серверы, устройства найдут новые настройки на GitHub. Там лежит только " +
+                    "зашифрованная и подписанная конфигурация: GitHub не может ни прочитать, ни подменить её.",
+                    style = MaterialTheme.typography.bodySmall)
+                if (error != null) {
+                    Text("Не удалось обновить: $error. Вставьте новый токен.", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                }
+            } else {
+                Text("Сейчас устройства узнают о новых серверах только через уже известные. Включите канал, чтобы флот " +
+                    "пережил блокировку всех серверов сразу. Нужен один раз токен GitHub с правом «gist»; срок действия " +
+                    "выберите «No expiration».", style = MaterialTheme.typography.bodySmall)
+            }
+            if (!on || error != null) {
+                TextButton(onClick = openTokenPage) { Text("1. Получить токен на GitHub") }
+                OutlinedTextField(token, { token = it.trim() }, label = { Text("2. Вставьте токен") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                Button(enabled = !busy && token.length >= 20, onClick = { onEnable(token); token = "" }) { Text("Включить") }
+            }
+            if (on) TextButton(enabled = !busy, onClick = onDisable) { Text("Отключить") }
+        }
     }
 }
 

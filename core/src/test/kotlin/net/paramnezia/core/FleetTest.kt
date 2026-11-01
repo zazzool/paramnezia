@@ -8,6 +8,8 @@ import net.paramnezia.core.fleet.FleetAdmin
 import net.paramnezia.core.fleet.FleetCrypto
 import net.paramnezia.core.fleet.FleetMember
 import net.paramnezia.core.fleet.FleetServer
+import net.paramnezia.core.fleet.FleetManifest
+import net.paramnezia.core.fleet.FleetPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -81,6 +83,50 @@ class FleetTest {
         val wire = FleetCrypto.encode(admin.seal(m))
         assertFalse("198.51.100.77" in wire)
         assertFalse("Jmin" in wire)
+    }
+
+    @Test
+    fun sharedSettingsTravelEncryptedAndOldManifestsStillOpen() {
+        val (admin, empty) = FleetAdmin.create("x", ed)
+        val v1 = admin.next(empty) { it.copy(servers = listOf(server("a", "198.51.100.1"))) }
+        val (phone, key) = admin.newDevice(v1, "phone")
+        val v2 = admin.next(v1) { it.copy(devices = listOf(phone)) }
+        val member = assertNotNullT(FleetMember.fromInvite(admin.invite(v2, phone, key), ed))
+        assertEquals(null, member.manifest!!.policy)
+
+        val policy = FleetPolicy(bypassRussia = true, blockTrackers = false, forceTunnel = setOf("org.telegram.messenger"))
+        val v3 = admin.next(v2) { it.copy(policy = policy) }
+        val wire = FleetCrypto.encode(admin.seal(v3))
+        assertFalse("org.telegram.messenger" in wire)
+        assertTrue(member.offer(wire))
+        assertEquals(policy, member.manifest!!.policy)
+
+        // A 2.1 manifest (no policy field in the JSON) is read by 2.2 and vice versa.
+        val legacy = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val json = legacy.encodeToString(FleetManifest.serializer(), v3)
+        assertTrue("policy" in json)
+        assertEquals(v3, legacy.decodeFromString(FleetManifest.serializer(), json))
+        val old = legacy.decodeFromString(FleetManifest.serializer(), json.replace(Regex(",\"policy\":\\{[^}]*\\}"), ""))
+        assertEquals(null, old.policy)
+    }
+
+    @Test
+    fun manifestIsReadFromTheGistApiToo() {
+        val (admin, empty) = FleetAdmin.create("x", ed)
+        val wire = FleetCrypto.encode(admin.seal(admin.next(empty) { it }))
+        val api = kotlinx.serialization.json.buildJsonObject {
+            put("id", kotlinx.serialization.json.JsonPrimitive("abc"))
+            put("files", kotlinx.serialization.json.buildJsonObject {
+                put("fleet.json", kotlinx.serialization.json.buildJsonObject {
+                    put("filename", kotlinx.serialization.json.JsonPrimitive("fleet.json"))
+                    put("content", kotlinx.serialization.json.JsonPrimitive(wire))
+                })
+            })
+        }.toString()
+        assertEquals(wire, FleetCrypto.unwrap(api))
+        assertEquals(FleetCrypto.decode(wire), FleetCrypto.decode(api))
+        assertEquals(wire, FleetCrypto.unwrap("  $wire\n"))
+        assertEquals(null, FleetCrypto.decode("{\"files\":{}}"))
     }
 
     private fun <T> assertNotNullT(v: T?): T { assertNotNull(v); return v!! }

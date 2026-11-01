@@ -2,7 +2,9 @@ package net.paramnezia.app.fleet
 
 import android.util.Log
 import net.paramnezia.app.data.Repo
+import net.paramnezia.app.data.Settings
 import net.paramnezia.app.data.StoredFleet
+import net.paramnezia.core.fleet.FleetPolicy
 import net.paramnezia.app.tunnel.Net
 import net.paramnezia.core.config.TunnelConfig
 import net.paramnezia.core.crypto.WgKey
@@ -74,8 +76,13 @@ class FleetManager(
     /** Offers a manifest from any channel. Returns true if it was newer and is now in use. */
     fun offer(text: String): Boolean {
         val m = member() ?: return false
-        if (!m.offer(text)) return false
-        repo.update { s -> s.copy(fleet = s.fleet?.copy(manifest = text.trim())) }
+        val wire = FleetCrypto.unwrap(text)
+        if (!m.offer(wire)) return false
+        val policy = m.manifest?.policy
+        repo.update { s ->
+            val applied = if (policy != null && s.fleet?.adminSeed == null) s.settings.applying(policy) else s.settings
+            s.copy(fleet = s.fleet?.copy(manifest = wire), settings = applied)
+        }
         onManifestChanged()
         return true
     }
@@ -84,22 +91,63 @@ class FleetManager(
     fun join(invite: String, deviceName: String): Boolean {
         val m = FleetMember.fromInvite(invite.trim(), ed) ?: return false
         val inv = Invite.read(invite) ?: return false
+        val policy = m.manifest?.policy
         repo.update { s ->
-            s.copy(fleet = StoredFleet(m.trust, m.deviceKey.toBase64(), deviceName.ifBlank { inv.deviceName }, inv.manifest), activeProfile = null)
+            s.copy(
+                fleet = StoredFleet(m.trust, m.deviceKey.toBase64(), deviceName.ifBlank { inv.deviceName }, inv.manifest),
+                activeProfile = null,
+                settings = policy?.let(s.settings::applying) ?: s.settings,
+            )
         }
         onManifestChanged()
         return true
     }
 
-    /** Reads every mirror in parallel; true if a newer manifest was found. */
-    suspend fun sync(): Boolean = withContext(Dispatchers.IO) {
+    @Volatile private var lastAttempt = 0L
+
+    /**
+     * Reads every channel in parallel: the server inside the tunnel and the HTTPS mirrors (the
+     * GitHub reserve channel), each the normal way and then over the physical network. When none
+     * answers, tries the HTTPS mirrors through Orbot if it runs. True if a newer manifest arrived.
+     * With [tunnelFirst] the mirrors are asked only when the server inside the tunnel does not answer
+     * (the hourly check: one small request that never leaves the tunnel).
+     */
+    suspend fun sync(tunnelFirst: Boolean = false): Boolean = withContext(Dispatchers.IO) {
         stored ?: return@withContext false
-        val urls = (listOf(publisher.tunnelUrl) + manifest()?.mirrors.orEmpty()).distinct()
-        val texts = coroutineScope { urls.map { url -> async { net.get(url) } }.awaitAll() }.filterNotNull()
+        lastAttempt = System.currentTimeMillis()
+        val mirrors = manifest()?.mirrors.orEmpty().filter { it != publisher.tunnelUrl }.distinct()
+        fun valid(u: String, t: String?) = t?.takeIf { FleetCrypto.decode(it) != null }?.let { u to it }
+        var answers = if (tunnelFirst) listOfNotNull(valid(publisher.tunnelUrl, net.get(publisher.tunnelUrl, fallbackDirect = false))) else emptyList()
+        if (answers.isEmpty()) {
+            val urls = listOf(publisher.tunnelUrl) + mirrors
+            answers = coroutineScope { urls.map { url -> async { url to net.get(url) } }.awaitAll() }.mapNotNull { (u, t) -> valid(u, t) }
+        }
+        var via = answers.firstOrNull()?.first?.let(::channelName)
+        if (answers.isEmpty() && mirrors.isNotEmpty()) {
+            answers = listOfNotNull(mirrors.firstNotNullOfOrNull { u -> valid(u, net.getViaTor(u)) })
+            if (answers.isNotEmpty()) via = "tor"
+        }
+        // Newest first, so a stale mirror never triggers an extra reconnect.
         var changed = false
-        for (t in texts.distinct()) if (offer(t)) changed = true
-        repo.update { s -> s.copy(fleet = s.fleet?.copy(lastSync = System.currentTimeMillis())) }
+        for (t in answers.map { it.second }.distinct().sortedByDescending { FleetCrypto.decode(it)?.version ?: 0L }) if (offer(t)) changed = true
+        if (answers.isNotEmpty()) repo.update { s -> s.copy(fleet = s.fleet?.copy(lastSync = System.currentTimeMillis(), lastSyncVia = via)) }
         changed
+    }
+
+    /**
+     * Cheap background check while the tunnel works: at most once per [minIntervalMs], and at once
+     * after a switch to another server. One small HTTP request inside the tunnel.
+     */
+    fun syncIfDue(minIntervalMs: Long = SYNC_EVERY_MS) {
+        if (stored == null || System.currentTimeMillis() - lastAttempt < minIntervalMs) return
+        lastAttempt = System.currentTimeMillis()
+        scope.launch { runCatching { sync(tunnelFirst = true) } }
+    }
+
+    private fun channelName(url: String) = when {
+        url == publisher.tunnelUrl -> "tunnel"
+        "github" in url -> "github"
+        else -> "mirror"
     }
 
     /**
@@ -135,7 +183,9 @@ class FleetManager(
         val config = servers.addClient(ssh, key, deviceName, clientIp = device.address.substringBefore('/'),
             dns = serverTunnel.iface.dns.ifEmpty { listOf("1.1.1.1", "1.0.0.1") })
         val server = fleetServerOf(serverId, serverName, config)
-        val manifest = admin.next(empty) { it.copy(servers = listOf(server), devices = listOf(device), mirrors = listOf(publisher.tunnelUrl)) }
+        val manifest = admin.next(empty) {
+            it.copy(servers = listOf(server), devices = listOf(device), mirrors = listOf(publisher.tunnelUrl), policy = repo.current.settings.toPolicy())
+        }
         val signed = FleetCrypto.encode(admin.seal(manifest))
         repo.update { s ->
             s.copy(
@@ -258,14 +308,40 @@ class FleetManager(
         repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(serverAccess = it.serverAccess - serverId) }) }
     }
 
-    /** Admin: sets the gist mirror (devices without a working tunnel read it over plain HTTPS). */
-    suspend fun setGist(gistId: String, token: String) = withContext(Dispatchers.IO) {
-        val admin = admin() ?: return@withContext
+    /**
+     * Admin: turns on the reserve channel. With only a GitHub token (scope `gist`) the app creates a
+     * secret gist, stores the manifest there and lists it in the manifest, so every device can read
+     * it when no fleet server is reachable. The gist holds only the encrypted, signed manifest.
+     */
+    suspend fun setReserveChannel(token: String) = withContext(Dispatchers.IO) {
+        val admin = admin() ?: error("not admin")
         val f = stored ?: return@withContext
-        val url = publisher.publishToGist(token, gistId, f.manifest)
-        repo.update { s -> s.copy(fleet = s.fleet?.copy(gistId = gistId, gistToken = token)) }
+        val gist = publisher.publishToGist(token.trim(), f.gistId, f.manifest)
+        repo.update { s -> s.copy(fleet = s.fleet?.copy(gistId = gist.id, gistToken = token.trim(), gistError = null)) }
         val current = manifest() ?: return@withContext
-        if (url !in current.mirrors) accept(FleetCrypto.encode(admin.seal(admin.next(current) { it.copy(mirrors = it.mirrors + url) })))
+        val mirrors = current.mirrors.filter { "github" !in it } + gist.mirrors
+        if (mirrors != current.mirrors) accept(FleetCrypto.encode(admin.seal(admin.next(current) { it.copy(mirrors = mirrors) })))
+    }
+
+    /** Admin: turns the reserve channel off (devices stop looking there; the gist itself stays). */
+    suspend fun clearReserveChannel() = withContext(Dispatchers.IO) {
+        val admin = admin() ?: return@withContext
+        repo.update { s -> s.copy(fleet = s.fleet?.copy(gistId = null, gistToken = null, gistError = null)) }
+        val current = manifest() ?: return@withContext
+        val mirrors = current.mirrors.filter { "github" !in it }
+        if (mirrors != current.mirrors) accept(FleetCrypto.encode(admin.seal(admin.next(current) { it.copy(mirrors = mirrors) })))
+    }
+
+    /**
+     * Admin: shares [settings] with every device (or stops sharing when [share] is false). Called
+     * when the admin changes settings; a no-op when nothing changed, so no new version is made.
+     */
+    suspend fun sharePolicy(settings: Settings, share: Boolean = stored?.sharePolicy ?: true) = withContext(Dispatchers.IO) {
+        val admin = admin() ?: return@withContext
+        if (stored?.sharePolicy != share) repo.update { s -> s.copy(fleet = s.fleet?.copy(sharePolicy = share)) }
+        val current = manifest() ?: return@withContext
+        val policy = if (share) settings.toPolicy() else null
+        if (policy != current.policy) accept(FleetCrypto.encode(admin.seal(admin.next(current) { it.copy(policy = policy) })))
     }
 
     private fun accept(signed: String) {
@@ -279,10 +355,19 @@ class FleetManager(
     private suspend fun publish(signed: String) = withContext(Dispatchers.IO) {
         val f = stored ?: return@withContext
         val m = manifest() ?: return@withContext
-        coroutineScope {
-            val jobs = m.servers.mapNotNull { s -> access(s)?.let { a -> async { runCatching { publisher.publishToServer(a, signed) } } } } +
-                listOfNotNull(f.gistId?.let { id -> f.gistToken?.let { t -> async { runCatching { publisher.publishToGist(t, id, signed) } } } })
+        val gist = coroutineScope {
+            val jobs = m.servers.mapNotNull { s -> access(s)?.let { a -> async { runCatching { publisher.publishToServer(a, signed) } } } }
+            val gistJob = f.gistToken?.let { t -> async { runCatching { publisher.publishToGist(t, f.gistId, signed) } } }
             jobs.awaitAll()
+            gistJob?.await()?.also { r ->
+                val error = r.exceptionOrNull()?.let { it.message ?: it.toString() }
+                if (error != stored?.gistError) repo.update { s -> s.copy(fleet = s.fleet?.copy(gistError = error)) }
+            }?.getOrNull()
+        }
+        // The gist was deleted on GitHub and a new one was made: point the devices at it.
+        if (gist != null && gist.id != f.gistId) {
+            repo.update { s -> s.copy(fleet = s.fleet?.copy(gistId = gist.id)) }
+            f.gistToken?.let { setReserveChannel(it) }
         }
     }
 
@@ -312,6 +397,17 @@ class FleetManager(
 
     private companion object {
         const val TAG = "PnFleet"
+        /** While the tunnel works, look for a newer manifest at most this often. */
+        const val SYNC_EVERY_MS = 3600_000L
     }
 }
+
+/** The admin's settings as the fleet's shared policy (battery mode stays per device). */
+fun Settings.toPolicy() = FleetPolicy(bypassRussia, bypassLan, blockTrackers, forceTunnel, forceDirect, directDns)
+
+/** This device's settings with the fleet's policy applied. */
+fun Settings.applying(p: FleetPolicy) = copy(
+    bypassRussia = p.bypassRussia, bypassLan = p.bypassLan, blockTrackers = p.blockTrackers,
+    forceTunnel = p.forceTunnel, forceDirect = p.forceDirect, directDns = p.directDns,
+)
 

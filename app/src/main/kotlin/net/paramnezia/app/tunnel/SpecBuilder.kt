@@ -56,6 +56,9 @@ class SpecBuilder(private val context: Context) {
         val installed = installedPackages()
         val excludedApps = if (settings.bypassRussia) apps.select(installed, settings.forceTunnel, settings.forceDirect, context.packageName)
         else installed.filter { it in settings.forceDirect && it != context.packageName }
+        // Orbot is our last-resort way to reach the fleet's mirrors while our own server is blocked,
+        // so it must not depend on our tunnel (Tor through a VPN is pointless anyway).
+        val withOrbot = if (ORBOT in installed && ORBOT !in settings.forceTunnel && ORBOT !in excludedApps) excludedApps + ORBOT else excludedApps
 
         return TunnelSpec(
             serverId = serverId,
@@ -63,11 +66,15 @@ class SpecBuilder(private val context: Context) {
             config = config,
             routes = plan.include,
             excludedRoutes = plan.exclude,
-            excludedApps = excludedApps,
+            excludedApps = withOrbot,
             keepaliveScreenOn = settings.battery.screenOn,
             keepaliveScreenOff = settings.battery.screenOff,
             dns = if (useDns) DnsPolicy(tunnel = dnsServers, direct = settings.directDns.ifEmpty { DnsPolicy(emptyList()).direct }) else null,
         )
+    }
+
+    companion object {
+        const val ORBOT = "org.torproject.android"
     }
 
     fun installedPackages(): List<String> =

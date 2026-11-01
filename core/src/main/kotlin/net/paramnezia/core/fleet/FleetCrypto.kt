@@ -2,6 +2,8 @@ package net.paramnezia.core.fleet
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.security.KeyFactory
 import java.security.SecureRandom
 import java.security.Signature
@@ -118,7 +120,24 @@ object FleetCrypto {
     }
 
     fun encode(signed: SignedManifest): String = json.encodeToString(SignedManifest.serializer(), signed)
-    fun decode(text: String): SignedManifest? = runCatching { json.decodeFromString(SignedManifest.serializer(), text) }.getOrNull()
+    fun decode(text: String): SignedManifest? = runCatching { json.decodeFromString(SignedManifest.serializer(), unwrap(text)) }.getOrNull()
+
+    /**
+     * Mirrors may wrap the manifest: the GitHub gist API answers with the gist object, whose
+     * `files[*].content` holds it. Anything else is returned unchanged.
+     */
+    fun unwrap(text: String): String {
+        val t = text.trim()
+        if (!t.startsWith("{") || "\"files\"" !in t) return t
+        return runCatching {
+            val files = json.parseToJsonElement(t).jsonObject["files"]!!.jsonObject
+            val file = (files[MIRROR_FILE] ?: files.values.first()).jsonObject
+            file["content"]!!.jsonPrimitive.content.trim()
+        }.getOrDefault(t)
+    }
+
+    /** File name of the manifest on static mirrors (gist). */
+    const val MIRROR_FILE = "fleet.json"
 
     private fun aad(fleetId: String, version: Long) = "$fleetId:$version".toByteArray()
 }
