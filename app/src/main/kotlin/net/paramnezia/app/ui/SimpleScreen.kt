@@ -60,7 +60,7 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
             is TunnelState.Connecting -> "Подключаюсь…"
             is TunnelState.Failed -> "Не удалось подключиться"
             TunnelState.Down -> "Нажмите, чтобы включить"
-        }, style = MaterialTheme.typography.headlineMedium, color = when (tunnel.power()) {
+        }, style = MaterialTheme.typography.headlineSmall, textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = when (tunnel.power()) {
             PowerState.ON -> Brand.Mint; PowerState.CONNECTING -> Brand.Amber; PowerState.OFF -> MaterialTheme.colorScheme.onSurface
         })
         stats?.takeIf { tunnel is TunnelState.Up }?.let {
