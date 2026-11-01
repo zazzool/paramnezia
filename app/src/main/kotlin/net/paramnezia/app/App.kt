@@ -1,5 +1,6 @@
 package net.paramnezia.app
 
+import net.paramnezia.app.data.Cloud
 import android.app.Application
 import android.net.VpnService
 import android.os.PowerManager
@@ -52,6 +53,8 @@ class App : Application(), TunnelHost {
     val updater: Updater by lazy { Updater(this, repo, net, NativeEd25519, scope) { repo.current.fleet != null } }
     lateinit var servers: Servers; private set
     val links: Links by lazy { Links(repo, fleet, { updater }, scope) }
+    /** Buying servers from hosting providers (admin). */
+    val cloud: Cloud by lazy { Cloud(repo, scope) }
     private val visibilityCheck by lazy { VisibilityCheck(net) }
     private val _visibility = kotlinx.coroutines.flow.MutableStateFlow<Visibility?>(null)
     /** What foreign and Russian sites last saw; refreshed by the home screen. */

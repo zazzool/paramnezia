@@ -1,0 +1,50 @@
+{
+  "updated": "2026-11-01",
+  "providers": [
+    {
+      "id": "cloudzy",
+      "name": "Cloudzy",
+      "enabled": true,
+      "api": "https://dash.cloudzy.com/api/v1",
+      "auth": "Authorization: Bearer <developer token>",
+      "endpoints": {
+        "verify": "GET /auth/me",
+        "regions": "GET /regions",
+        "pricing": "GET /pricing/catalog",
+        "images": "GET /os-templates",
+        "create": "POST /services (Idempotency-Key header)",
+        "get": "GET /services/{id}",
+        "list": "GET /services",
+        "delete": "DELETE /services/{id}"
+      },
+      "cloudInit": "config.userData",
+      "tokenPage": "https://dash.cloudzy.com/",
+      "source": "https://github.com/CloudzyVPS/cli/blob/main/src/api/ops.rs"
+    },
+    {
+      "id": "timeweb",
+      "name": "Timeweb Cloud",
+      "enabled": true,
+      "api": "https://api.timeweb.cloud/api/v1",
+      "auth": "Authorization: Bearer <token>",
+      "endpoints": {
+        "verify": "GET /account/status",
+        "plans": "GET /presets/servers",
+        "images": "GET /os/servers",
+        "sshKeys": "GET|POST /ssh-keys",
+        "create": "POST /servers",
+        "get": "GET /servers/{id}",
+        "list": "GET /servers",
+        "delete": "DELETE /servers/{id}"
+      },
+      "cloudInit": "cloud_init",
+      "locations": {"nl-1": "Amsterdam", "de-1": "Frankfurt", "pl-1": "Gdansk", "kz-1": "Almaty", "ru-1": "Saint Petersburg", "ru-2": "Novosibirsk", "ru-3": "Moscow"},
+      "tokenPage": "https://timeweb.cloud/my/api-keys",
+      "source": "https://github.com/timeweb-cloud/twc/blob/master/twc/api/client.py"
+    },
+    {"id": "vultr", "name": "Vultr", "enabled": false, "api": "https://api.vultr.com/v2", "reason": "service to customers in Russia not confirmed"},
+    {"id": "hetzner", "name": "Hetzner Cloud", "enabled": false, "api": "https://api.hetzner.cloud/v1", "reason": "no contracts with Russian addresses since Dec 2023"},
+    {"id": "digitalocean", "name": "DigitalOcean", "enabled": false, "api": "https://api.digitalocean.com/v2", "reason": "blocked by Roskomnadzor since Apr 2024"},
+    {"id": "aeza", "name": "Aeza", "enabled": false, "reason": "OFAC sanctions (Jul 2025)"}
+  ]
+}

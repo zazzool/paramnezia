@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import net.paramnezia.app.App
+import net.paramnezia.app.data.Cloud
 import net.paramnezia.app.data.Servers
 import net.paramnezia.core.amnezia.AmneziaQr
 import net.paramnezia.core.profile.SshCredentials
@@ -127,6 +128,18 @@ private fun DeployCard(app: App, toast: (String) -> Unit, onDone: () -> Unit) {
     var name by remember { mutableStateOf("") }
     var step by remember { mutableStateOf<ServerManager.Step?>(null) }
     var running by remember { mutableStateOf(false) }
+    var buying by remember { mutableStateOf(false) }
+
+    if (buying) CloudBuyDialog(app, onDismiss = { buying = false }, toast = toast) { n, ssh, onStep -> app.servers.deploy(n, ssh, onStep) }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Новый сервер у хостера", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Cloudzy или Timeweb Cloud: приложение само закажет VPS по API и установит на него AmneziaWG. Нужен только токен API хостера.",
+                style = MaterialTheme.typography.bodySmall)
+            Button(enabled = !running, onClick = { buying = true }) { Text("Купить сервер у хостера") }
+        }
+    }
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -162,16 +175,7 @@ private fun DeployCard(app: App, toast: (String) -> Unit, onDone: () -> Unit) {
     }
 }
 
-private fun stepLabel(s: ServerManager.Step) = when (s) {
-    ServerManager.Step.CHECK -> "Проверяю сервер…"
-    ServerManager.Step.DOCKER -> "Устанавливаю Docker…"
-    ServerManager.Step.IMAGE -> "Собираю AmneziaWG…"
-    ServerManager.Step.RUN -> "Запускаю контейнер…"
-    ServerManager.Step.CONFIGURE -> "Генерирую ключи и маскировку…"
-    ServerManager.Step.START -> "Запускаю туннель…"
-    ServerManager.Step.FIREWALL -> "Настраиваю сеть…"
-    ServerManager.Step.DONE -> "Готово"
-}
+private fun stepLabel(s: ServerManager.Step) = Cloud.stepLabel(s)
 
 private fun deployError(e: Throwable): String = when ((e as? SshException)?.code) {
     "auth_failed" -> "Неверный логин, пароль или ключ"
