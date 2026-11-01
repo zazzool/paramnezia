@@ -45,7 +45,7 @@
   .phones { display: flex; justify-content: center; gap: 1rem; margin: 1.6rem 0 .6rem; perspective: 900px; }
   .phone { width: 46%; max-width: 190px; border-radius: 28px; padding: 8px; background: #05070f;
            box-shadow: 0 0 0 1px var(--line), 0 24px 60px rgba(0,0,0,.55); }
-  .phone img { display: block; width: 100%; border-radius: 21px; }
+  .phone img { display: block; width: 100%; height: auto; border-radius: 21px; }
   .phone.l { transform: rotateY(12deg) rotateZ(-2deg); }
   .phone.r { transform: rotateY(-12deg) rotateZ(2deg) translateY(18px); }
   .caption { text-align: center; color: var(--muted); font-size: .9rem; margin-top: 2rem; }
@@ -136,8 +136,8 @@
   <!-- Public part: the page to share with family and friends. One story: what it is, how to get
        it, why it is convenient, what if something goes wrong. -->
   <div class="phones" aria-hidden="true">
-    <div class="phone l"><img src="/shot-off.webp" alt="" loading="lazy" width="320" height="616"></div>
-    <div class="phone r"><img src="/shot-on.webp" alt="" loading="lazy" width="320" height="616"></div>
+    <div class="phone l"><img src="/shot-off.webp" alt="" loading="lazy" width="540" height="920"></div>
+    <div class="phone r"><img src="/shot-on.webp" alt="" loading="lazy" width="540" height="920"></div>
   </div>
   <p class="caption">Так выглядит приложение. Нажали кнопку — защищено.</p>
 
