@@ -3,7 +3,7 @@ name: Release
 # Push a tag like v1.2.0, or a branch like release/v1.2.0, to publish (docs/RELEASE.md).
 # Keys: keys/release-keys.enc (APK keystore + release seed), opened with the secret PN_KEYS_PASSWORD.
 # The public half of the release key is in gradle.properties. The APK and the signed release.json go
-# to https://psync.ru/paramnezia/ (secrets PN_DEPLOY_KEY, PN_DEPLOY_HOST) and to the GitHub release.
+# to https://paramnezia.psync.ru/ (secrets PN_DEPLOY_KEY, PN_DEPLOY_HOST) and to the GitHub release.
 on:
   push:
     tags: ["v*"]
@@ -73,7 +73,7 @@ jobs:
             --signer-sha256 "$signer" \
             --url "${PUBLIC_BASE}/$apk" \
             --out release.json
-        env: { PUBLIC_BASE: "https://psync.ru/paramnezia" }
+        env: { PUBLIC_BASE: "https://paramnezia.psync.ru" }
         shell: bash
       - name: Publish to psync.ru
         env:
@@ -95,8 +95,8 @@ jobs:
           rsync -e "$ssh" --chmod=F644 paramnezia.apk release.json "$dest:./"
           rm -f "$key"
           sleep 5
-          curl -fsS https://psync.ru/paramnezia/release.json | cmp - release.json \
-            || { echo "::error::https://psync.ru/paramnezia/release.json does not serve the new release (nginx, see docs/RELEASE.md)"; exit 1; }
+          curl -fsS https://paramnezia.psync.ru/release.json | cmp - release.json \
+            || { echo "::error::https://paramnezia.psync.ru/release.json does not serve the new release (nginx, see docs/RELEASE.md)"; exit 1; }
       - name: Attach release.json to the GitHub release
         env: { GH_TOKEN: "${{ github.token }}" }
         run: gh release upload "$VERSION" release.json --clobber
