@@ -111,6 +111,11 @@ jobs:
           sudo wg set wg0 listen-port 51820 private-key /etc/wireguard/wg0.key peer "$(cat c.pub)" allowed-ips 10.9.0.2/32
           sudo ip addr add 10.9.0.1/24 dev wg0
           sudo ip link set wg0 up
+          # The emulator reaches the internet through the tunnel (the home screen checks its address).
+          sudo sysctl -qw net.ipv4.ip_forward=1
+          sudo iptables -t nat -A POSTROUTING -s 10.9.0.0/24 ! -o wg0 -j MASQUERADE
+          sudo iptables -I FORWARD -i wg0 -j ACCEPT
+          sudo iptables -I FORWARD -o wg0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
           printf '[Interface]\nPrivateKey = %s\nAddress = 10.9.0.2/32\nDNS = 1.1.1.1\n\n[Peer]\nPublicKey = %s\nEndpoint = 10.0.2.2:51820\nAllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25\n' "$(cat c.key)" "$(cat s.pub)" > client.conf
       - name: Install the release APK, import the server, connect
         uses: reactivecircus/android-emulator-runner@v2
