@@ -42,6 +42,7 @@ $up = Ask @{ op = 'up'; up = @{ name = 'ci'; uapi = $uapi; addresses = @('10.123
 if (-not $up.ok) { throw "up failed: $($up.error)" }
 $st = Ask @{ op = 'status' }
 if (-not $st.up -or $st.name -ne 'ci') { throw "status does not show the tunnel" }
+if ($st.stats -match 'private_key') { throw "status gives out the private key" }
 $nic = Get-NetAdapter -Name Paramnezia
 Write-Host "adapter: $($nic.InterfaceDescription) $($nic.Status)"
 $addr = Get-NetIPAddress -InterfaceAlias Paramnezia -AddressFamily IPv4 | Where-Object IPAddress -eq '10.123.0.2'
@@ -74,3 +75,4 @@ Start-Sleep 3
 if (Get-Service ParamneziaTunnel -ErrorAction SilentlyContinue) { throw "service still installed" }
 if (Test-Path "$app\service\paramnezia-service.exe") { throw "files left behind" }
 Write-Host "OK"
+exit 0

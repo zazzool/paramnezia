@@ -152,7 +152,7 @@ func (t *tunnel) status() response {
 		return response{}
 	}
 	stats, _ := t.dev.IpcGet()
-	return response{Up: true, Name: t.name, Since: t.since.UnixMilli(), Stats: stats}
+	return response{Up: true, Name: t.name, Since: t.since.UnixMilli(), Stats: withoutSecrets(stats)}
 }
 
 func (t *tunnel) set(uapi string) error {
@@ -329,4 +329,18 @@ func amneziawgVersion() string {
 		}
 	}
 	return "unknown"
+}
+
+// withoutSecrets drops the keys from a UAPI dump: any logged-on user may ask for the status,
+// and the app needs only counters, handshake times and endpoints.
+func withoutSecrets(uapi string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(uapi, "\n") {
+		if strings.HasPrefix(line, "private_key=") || strings.HasPrefix(line, "preshared_key=") || line == "" {
+			continue
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
