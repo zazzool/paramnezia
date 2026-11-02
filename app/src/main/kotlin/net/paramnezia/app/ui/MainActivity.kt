@@ -6,22 +6,14 @@ import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings as AndroidSettings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.consumeWindowInsets
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Icon
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -37,6 +29,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import net.paramnezia.app.App
+import net.paramnezia.tunnel.TunnelRuntime
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -122,8 +115,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Tab(val title: String) { HOME("Главная"), ADD("Добавить"), FLEET("Флот"), SETTINGS("Настройки") }
-
 @Composable
 private fun Root(app: App, incoming: MutableSharedFlow<String>, onConnect: () -> Unit) {
     var tab by rememberSaveable { mutableStateOf(Tab.HOME) }
@@ -134,6 +125,7 @@ private fun Root(app: App, incoming: MutableSharedFlow<String>, onConnect: () ->
 
     val ready by app.repo.ready.collectAsState()
     val simple by remember { app.repo.state.map { it.simpleUi }.distinctUntilChanged() }.collectAsState(initial = false)
+    val tunnel by TunnelRuntime.state.collectAsState()
     // The vault is read in parallel with the first frame; wait those few ms rather than flash the wrong mode.
     if (!ready) return
 
@@ -150,34 +142,14 @@ private fun Root(app: App, incoming: MutableSharedFlow<String>, onConnect: () ->
         return
     }
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
-        bottomBar = {
-            NavigationBar {
-                for (t in Tab.entries) {
-                    NavigationBarItem(
-                        selected = tab == t,
-                        onClick = { tab = t },
-                        icon = {
-                            Icon(
-                                when (t) {
-                                    Tab.HOME -> Icons.Filled.Home
-                                    Tab.ADD -> Icons.Filled.Add
-                                    Tab.FLEET -> Icons.Filled.Share
-                                    Tab.SETTINGS -> Icons.Filled.Settings
-                                },
-                                contentDescription = t.title,
-                            )
-                        },
-                        label = { Text(t.title) },
-                    )
-                }
-            }
-        },
-    ) { padding ->
-        // Consumed, so the screens' imePadding() adds only the part of the keyboard above the bottom bar.
-        val m = Modifier.padding(padding).consumeWindowInsets(padding)
-        when (tab) {
+    AppShell(
+        tab = tab,
+        onTab = { tab = it },
+        power = tunnel.power(),
+        snackbar = snackbar,
+        backHandler = { enabled, onBack -> BackHandler(enabled, onBack) },
+    ) { t, m ->
+        when (t) {
             Tab.HOME -> HomeScreen(app, m, onConnect, onAddServer = { tab = Tab.ADD })
             Tab.ADD -> AddScreen(app, m, pending, onConsumed = { pending = null }, toast = toast, onDone = { tab = Tab.HOME }, onConnect = onConnect)
             Tab.FLEET -> FleetScreen(app, m, toast, onAddServer = { tab = Tab.ADD })
