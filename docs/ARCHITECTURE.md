@@ -106,7 +106,12 @@ APK один и тот же для всех: официальный релиз, 
 из подписанного релиза, который знает админ-устройство; своего APK приложение никуда не передаёт.
 
 Без токена та же страница — публичная «страница для семьи»: значок, скриншоты (`invite/shot-*.webp`, из
-эмулятора CI), кнопка скачивания последнего релиза (`app.json`, затем копия на сервере), шаги и вопросы. Она
+эмулятора CI), блок «Скачать приложение» (Android, Windows, iPhone), шаги и вопросы. Кнопки Android и Windows ведут
+на проверенную копию на этом сервере (`/paramnezia.apk`, `/Paramnezia-Setup.exe`, `release-mirror.sh`), а если её
+нет — на `github.com/zazzool/paramnezia/releases/latest/download/{paramnezia.apk,Paramnezia-Setup.exe}`: эти имена
+`release.yml` прикладывает к каждому релизу, так что ссылка не устаревает. Вторая ссылка — всегда GitHub latest.
+Копию Windows-установщика сервер скачивает по подписанному `release-windows.json`, который админ-устройство
+читает вместе с `release.json` (`ReleaseSource.windows()`); у Windows — подсказка про SmartScreen. Она
 ставится сама после развёртывания каждого сервера (`Servers.deploy`, `FleetManager.create/addServer` →
 `Links.preparePage`, в том числе для серверов, купленных через API хостера) и отдаётся тем же контейнером
 `paramnezia-invite`. Картинки передаются в `invite-server.sh` base64-строками (`PN_INVITE_ASSETS`).

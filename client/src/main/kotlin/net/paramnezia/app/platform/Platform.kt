@@ -66,6 +66,8 @@ interface Http {
 interface ReleaseSource {
     /** The newest signed release (and its wire form) that others may install, if known. */
     fun shareable(): Pair<Release, String>?
+    /** The newest signed Windows installer release, for the family page; null if not known. */
+    fun windows(): Release? = null
     /** Reads the release channels once. */
     suspend fun check()
 }

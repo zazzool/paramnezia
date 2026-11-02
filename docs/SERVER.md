@@ -48,6 +48,7 @@ AmneziaWG и (для ссылок) TCP-порт 80 или любой свобо�
   www/cgi-bin/get         CGI (sh)
   www/app.json            где скачать приложение: версия, SHA-256, HTTPS-адреса
   www/paramnezia.apk      копия того же релиза (сервер скачал и проверил её сам)
+  www/Paramnezia-Setup.exe  так же проверенная копия установщика для Windows
   data/t/<токен>/         ждущие ссылки: app, key, conf, name, expires
   data/c/<токен>/         использованные: то же + claim ("<unix-время> <адрес>")
 ```

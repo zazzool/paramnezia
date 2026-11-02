@@ -56,6 +56,13 @@ class Updater(
         if (Build.VERSION.SDK_INT >= 28) it.longVersionCode else @Suppress("DEPRECATION") it.versionCode.toLong()
     } }
 
+    /** Windows installer releases (any version counts), only to point people at them on the family page. */
+    private val windowsChecker by lazy {
+        UpdateChecker(WINDOWS_PACKAGE, 0, Int.MAX_VALUE, listOf(BuildConfig.RELEASE_KEY), ed)
+    }
+
+    override fun windows(): Release? = synchronized(windowsChecker) { windowsChecker.best?.first }
+
     private val checker by lazy {
         UpdateChecker(context.packageName, versionCode, Build.VERSION.SDK_INT, listOf(BuildConfig.RELEASE_KEY), ed, ownSigner())
     }
@@ -94,8 +101,14 @@ class Updater(
         if (!enabled) return@withContext
         val urls = listOfNotNull(BuildConfig.UPDATE_URL.takeIf { it.startsWith("https://") },
             FleetPublisher.TUNNEL_RELEASE_URL.takeIf { inFleet() })
-        val texts = coroutineScope { urls.map { u -> async { net.get(u) } }.awaitAll() }
+        val windowsUrl = BuildConfig.UPDATE_URL.takeIf { it.startsWith("https://") && it.endsWith("/release.json") }
+            ?.replace("/release.json", "/release-windows.json")
+        val (texts, win) = coroutineScope {
+            val w = windowsUrl?.let { u -> async { net.get(u) } }
+            urls.map { u -> async { net.get(u) } }.awaitAll() to w?.await()
+        }
         texts.filterNotNull().forEach { offer(it) }
+        win?.let { if (enabled) synchronized(windowsChecker) { windowsChecker.offer(it) } }
         repo.update { it.copy(lastUpdateCheck = System.currentTimeMillis()) }
     }
 
@@ -125,4 +138,8 @@ class Updater(
         } ?: return@runCatching ""
         MessageDigest.getInstance("SHA-256").digest(sig.toByteArray()).joinToString("") { "%02x".format(it) }
     }.getOrDefault("")
+
+    private companion object {
+        const val WINDOWS_PACKAGE = "net.paramnezia.windows"
+    }
 }

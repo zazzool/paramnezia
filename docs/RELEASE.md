@@ -90,6 +90,10 @@ git push origin main:release/v2.1.0
 подписывает `release-windows.json` (`--package net.paramnezia.windows --min-sdk 0`) тем же ключом релизов.
 Номер сборки у обеих платформ один (`github.run_number`). Подробнее: [WINDOWS.md](WINDOWS.md).
 
+Кроме файлов с номером версии к релизу прикладываются те же байты под постоянными именами `paramnezia.apk` и
+`Paramnezia-Setup.exe`: страница для семьи на серверах ссылается на `releases/latest/download/<имя>` и поэтому
+не устаревает.
+
 Перезапуск упавшего выпуска безопасен: релиз и файлы перезаписываются (`--clobber`).
 
 ## `releasetool`

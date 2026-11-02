@@ -134,7 +134,10 @@ class DeployE2ETest {
 
         val bytes = ByteArray(300_000) { (it * 13).toByte() }
         val sha = putInCache(bytes)
-        val app = InviteLinks.AppDownload("v9.9.9", sha, listOf("https://github.com/zazzool/paramnezia/releases/download/v9/paramnezia-v9.9.9.apk", "http://plain.example/x.apk"))
+        val exeBytes = ByteArray(200_000) { (it * 7 + 1).toByte() }
+        val exeSha = putInCache(exeBytes, "exe")
+        val win = InviteLinks.AppDownload("v9.9.9", exeSha, listOf("https://github.com/zazzool/paramnezia/releases/download/v9/Paramnezia-Setup-9.9.9.exe"))
+        val app = InviteLinks.AppDownload("v9.9.9", sha, listOf("https://github.com/zazzool/paramnezia/releases/download/v9/paramnezia-v9.9.9.apk", "http://plain.example/x.apk"), win)
 
         val link = links.create(creds, invite, "Мама", app, preferredPort = 18080)
         assertTrue(link.url, link.url.startsWith("http://127.0.0.1:18080/#"))
@@ -145,6 +148,10 @@ class DeployE2ETest {
         assertTrue("no automatic download", "setTimeout" !in page)
         val appJson = http("$base/app.json").second
         assertTrue(appJson, sha in appJson && "https://github.com/zazzool/paramnezia/releases/download/v9/" in appJson && "plain.example" !in appJson)
+        assertTrue(appJson, "\"windows\"" in appJson && exeSha in appJson)
+        // The newest releases for both platforms, and how to get past SmartScreen.
+        assertTrue("releases/latest/download/paramnezia.apk" in page && "releases/latest/download/Paramnezia-Setup.exe" in page)
+        assertTrue("Скачать для Windows" in page && "Выполнить в любом случае" in page)
         assertEquals(setOf<String>(), links.claimed(creds, listOf(link.token)))
 
         val (code, key) = http("$base/cgi-bin/get?${link.token}&key")
@@ -157,9 +164,17 @@ class DeployE2ETest {
 
         // The server keeps a copy of the same public APK for people who cannot reach the mirrors.
         assertEquals(404, http("$base/paramnezia.apk").first)
-        FleetPublisher(hostKeys).mirrorRelease(creds, sha, app.urls, null, forInvites = true, protocol = null)
+        assertEquals(404, http("$base/Paramnezia-Setup.exe").first)
+        FleetPublisher(hostKeys).mirrorRelease(creds, sha, app.urls, null, forInvites = true, protocol = null, windows = win)
         val served = java.net.URI("$base/paramnezia.apk").toURL().openStream().use { it.readBytes() }
         assertTrue(served.contentEquals(bytes))
+        val servedExe = java.net.URI("$base/Paramnezia-Setup.exe").toURL().openStream().use { it.readBytes() }
+        assertTrue(servedExe.contentEquals(exeBytes))
+        // A Windows installer the server cannot get does not break the APK copy, and the old one stays.
+        FleetPublisher(hostKeys).mirrorRelease(creds, sha, app.urls, null, forInvites = true, protocol = null,
+            windows = InviteLinks.AppDownload("v10", "1".repeat(64), listOf("https://127.0.0.1:1/x.exe")))
+        assertEquals(200, http("$base/Paramnezia-Setup.exe").first)
+        assertEquals(200, http("$base/paramnezia.apk").first)
         // A release the server cannot verify is refused, not served.
         val wrong = "0".repeat(64)
         assertTrue(runCatching { FleetPublisher(hostKeys).mirrorRelease(creds, wrong, listOf("https://127.0.0.1:1/x.apk"), null, true, null) }
@@ -178,11 +193,11 @@ class DeployE2ETest {
         assertEquals(200, http("$base/").first)
     }
 
-    /** Puts [bytes] where release-mirror.sh keeps verified APKs, as if downloaded earlier. */
-    private fun putInCache(bytes: ByteArray): String {
+    /** Puts [bytes] where release-mirror.sh keeps verified releases, as if downloaded earlier. */
+    private fun putInCache(bytes: ByteArray, ext: String = "apk"): String {
         val sha = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
         val f = File.createTempFile("pn-release", ".apk").apply { writeBytes(bytes); deleteOnExit() }
-        sh("S=\$( [ \"\$(id -u)\" -eq 0 ] || echo sudo -n ); \$S mkdir -p /opt/amnezia/paramnezia/cache && \$S cp ${f.absolutePath} /opt/amnezia/paramnezia/cache/$sha.apk")
+        sh("S=\$( [ \"\$(id -u)\" -eq 0 ] || echo sudo -n ); \$S mkdir -p /opt/amnezia/paramnezia/cache && \$S cp ${f.absolutePath} /opt/amnezia/paramnezia/cache/$sha.$ext")
         return sha
     }
 
