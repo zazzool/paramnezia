@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -191,19 +192,16 @@ private fun SegmentRing(g: Ring, pressed: Map<Tab, Boolean>, lit: Tab?, modifier
                 val shadow = slab(Offset(c.x, c.y + 3.dp.toPx() * (1 - sink)), rIn + k, rOut - k, s.center - 60f, 120f, gap / 2 + k)
                 drawPath(shadow, Color.Black.copy(alpha = (if (dark) 0.35f else 0.10f) * (1 - sink)), style = Stroke(2 * k + 2.dp.toPx(), join = StrokeJoin.Round))
                 // Convex body: light along the outer edge, deeper towards the button; pressed turns it concave.
+                // Colours are blended here (opaque), so the fill and its rounding stroke overlap without a seam.
+                val wash = 0.07f + 0.20f * sink + if (s.tab == lit) 0.22f * glow else 0f
+                fun tone(x: Color) = lerp(lerp(x, base, 0.55f), accent, wash)
                 val body = Brush.radialGradient(
-                    (rIn / rOut) to (if (sink > 0.5f) light else deep),
-                    1f to (if (sink > 0.5f) deep else light),
+                    (rIn / rOut) to tone(if (sink > 0.5f) light else deep),
+                    1f to tone(if (sink > 0.5f) deep else light),
                     center = c, radius = rOut,
                 )
                 drawPath(path, body)
                 drawPath(path, body, style = Stroke(2 * k, join = StrokeJoin.Round))
-                drawPath(path, base.copy(alpha = 0.55f))
-                drawPath(path, base.copy(alpha = 0.55f), style = Stroke(2 * k, join = StrokeJoin.Round))
-                // The place's colour: a whisper at rest, a wash under the finger or when it calls for attention.
-                val wash = 0.07f + 0.20f * sink + if (s.tab == lit) 0.22f * glow else 0f
-                drawPath(path, accent.copy(alpha = wash))
-                drawPath(path, accent.copy(alpha = wash), style = Stroke(2 * k, join = StrokeJoin.Round))
                 // Rim light on the outer edge.
                 val inset = (gap / 2 + 2 * k) / rOut * 180f / PI.toFloat()
                 drawArc(
@@ -254,12 +252,12 @@ fun PlaceBadge(tab: Tab, look: PlaceLook, size: Dp) {
  * the cut, a light one on the lower-right), then filled with glossy enamel slightly below the surface.
  */
 private fun DrawScope.engraved(tab: Tab, at: Offset, r: Float, enamel: Color, pressed: Float, dark: Boolean) {
-    val d = 1.2.dp.toPx()
-    glyph(tab, at + Offset(d, d), r, Color.White.copy(alpha = if (dark) 0.10f else 0.9f), 1.25f)
-    glyph(tab, at - Offset(d * 0.8f, d * 0.8f), r, Color.Black.copy(alpha = if (dark) 0.55f else 0.28f), 1.25f)
+    val d = 1.dp.toPx()
+    glyph(tab, at + Offset(0f, d), r, Color.White.copy(alpha = if (dark) 0.08f else 0.75f), 1f)
+    glyph(tab, at - Offset(0f, d * 0.9f), r, Color.Black.copy(alpha = if (dark) 0.45f else 0.18f), 1f)
     glyph(tab, at, r, enamel, 1f)
-    // The enamel's gloss: a light, thinner pass shifted up.
-    glyph(tab, at - Offset(0f, d * 0.6f), r, Color.White.copy(alpha = 0.28f * (1 - pressed)), 0.45f)
+    // The enamel's gloss: a faint, thinner pass shifted up.
+    glyph(tab, at - Offset(0f, d * 0.5f), r, Color.White.copy(alpha = 0.16f * (1 - pressed)), 0.4f)
 }
 
 /** The glyph on a 24-unit grid centred at [at], [r] being half its size; [weight] scales the strokes. */
