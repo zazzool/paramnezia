@@ -66,6 +66,17 @@ top
 tap "Пригласить" && shot invite-dialog
 adb shell input keyevent KEYCODE_BACK; sleep 1
 
+# Buying a server from a hoster: the one-tap offer, then places, plans and the hoster list.
+demo cloud
+tap "Добавить" && { scroll; tap "Купить у хостера"; } && {
+  shot cloud-pick 3
+  tap "Другое: место" && { shot cloud-places; scroll; shot cloud-places-2; }
+  top
+  tap "Скрыть"; tap "Другое: тариф" && { shot cloud-plans; scroll; shot cloud-plans-2; }
+  top
+  tap "Хостер" && { shot cloud-providers; tap "Vultr" && shot cloud-provider-token; }
+}
+
 adb shell wm size reset; adb shell wm density reset
 adb logcat -d > "logcat-$tag-ui.txt"
 if crashed; then

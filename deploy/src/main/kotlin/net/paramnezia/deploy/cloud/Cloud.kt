@@ -1,5 +1,6 @@
 package net.paramnezia.deploy.cloud
 
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -29,6 +30,23 @@ interface CloudProvider {
     fun plans(region: String): List<CloudPlan>
 
     /**
+     * Everything the picker needs in as few requests as the API allows, sent in parallel. The
+     * default asks for the regions and then every region's plans at once; adapters whose API
+     * returns all plans in one call override it.
+     */
+    fun catalog(): CloudCatalog {
+        val regions = regions()
+        val plans = Parallel.map(regions) { r -> r.id to runCatching { plans(r.id) }.getOrDefault(emptyList()) }.toMap()
+        return CloudCatalog.of(info.id, regions, plans)
+    }
+
+    /**
+     * The exact monthly price of [plan] with everything the order adds (Cloudzy: the IPv4 address,
+     * which its catalog leaves out), or null when the catalog price is already exact.
+     */
+    fun exactPrice(plan: CloudPlan): Double? = null
+
+    /**
      * Creates a server with Ubuntu, [authorizedKey] for root and [userData] (cloud-init). Starts
      * billing. [idempotencyKey] makes a retried call (after a dropped connection) not buy twice.
      */
@@ -55,12 +73,69 @@ data class ProviderInfo(
     /** Short hint shown next to the token field. */
     val tokenHint: String,
     val currency: String,
+    /** One line on how to pay and who it suits, shown in the list of providers. */
+    val blurb: String = "",
+    /** Brand-ish colour of the provider's monogram (ARGB). */
+    val color: Long = 0xFF7C4DFF,
 )
 
+@Serializable
 data class CloudRegion(val id: String, val name: String, val countryCode: String) {
     val inRussia: Boolean get() = countryCode.equals("RU", ignoreCase = true)
+    private val place: Geo.Place? get() = Geo.place(name, id)
+    /** City in Russian when known, else the provider's name. */
+    val city: String get() = place?.takeIf { it.country == countryCode || countryCode == "??" }?.city ?: name
+    val flag: String get() = Geo.flag(countryCode)
+    val country: String get() = Geo.countryName(countryCode)
+    val area: Geo.Area get() = Geo.area(countryCode)
+    val km: Int? get() = Geo.kmFromMoscow(place)
+    val reach: Geo.Reach? get() = Geo.reach(km)
 }
 
+/** A provider's locations and their plans, fetched in one go and cached by the app. */
+@Serializable
+data class CloudCatalog(
+    val provider: String,
+    val regions: List<CloudRegion>,
+    /** Region id → its plans, cheapest first, without duplicates. */
+    val plans: Map<String, List<CloudPlan>>,
+    val fetchedAt: Long = System.currentTimeMillis(),
+) {
+    /** Regions with at least one plan to buy. */
+    val sellable: List<CloudRegion> get() = regions.filter { plans[it.id].orEmpty().isNotEmpty() }
+
+    fun plansIn(region: String): List<CloudPlan> = plans[region].orEmpty()
+
+    companion object {
+        fun of(provider: String, regions: List<CloudRegion>, plans: Map<String, List<CloudPlan>>) =
+            CloudCatalog(provider, regions, plans.mapValues { (_, v) -> CloudProviders.dedupe(v) })
+
+        private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+        fun encode(c: CloudCatalog): String = json.encodeToString(serializer(), c)
+        fun decode(text: String): CloudCatalog? = runCatching { json.decodeFromString(serializer(), text) }.getOrNull()
+    }
+}
+
+/** Runs independent HTTP calls at once (the provider APIs are slow; one at a time adds up). */
+object Parallel {
+    private val pool = java.util.concurrent.Executors.newCachedThreadPool { r -> Thread(r, "pn-cloud").apply { isDaemon = true } }
+
+    fun <T, R> map(items: List<T>, f: (T) -> R): List<R> {
+        if (items.size <= 1) return items.map(f)
+        val futures = items.map { item -> pool.submit<R> { f(item) } }
+        return futures.map { unwrap { it.get() } }
+    }
+
+    fun <A, B> both(a: () -> A, b: () -> B): Pair<A, B> {
+        val fb = pool.submit<B> { b() }
+        val ra = a()
+        return ra to unwrap { fb.get() }
+    }
+
+    private inline fun <R> unwrap(get: () -> R): R = try { get() } catch (e: java.util.concurrent.ExecutionException) { throw e.cause ?: e }
+}
+
+@Serializable
 data class CloudPlan(
     val id: String,
     val region: String,
@@ -75,6 +150,14 @@ data class CloudPlan(
     val extra: Map<String, String> = emptyMap(),
 ) {
     fun priceText(): String = monthly?.let { "${formatMoney(it)} ${symbol(currency)}/мес" } ?: "цена у хостера"
+
+    /** Price without "/мес", for big numbers. */
+    fun priceShort(): String = monthly?.let { "${formatMoney(it)} ${symbol(currency)}" } ?: "—"
+
+    val ramText: String get() = if (ramMb >= 1000) "${CloudPlan.formatMoney(Math.round(ramMb / 102.4) / 10.0)} ГБ" else "$ramMb МБ"
+
+    /** Too small for the installer (AmneziaWG is built in Docker). */
+    val tooSmall: Boolean get() = ramMb in 1 until 1000
 
     companion object {
         fun formatMoney(v: Double) = if (v == Math.floor(v)) v.toLong().toString() else String.format(java.util.Locale.ROOT, "%.2f", v)
@@ -160,3 +243,9 @@ internal fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive
 internal fun JsonObject.num(key: String): Double? = (this[key] as? JsonPrimitive)?.let { it.doubleOrNull ?: it.contentOrNull?.toDoubleOrNull() }
 internal fun JsonObject.int(key: String): Int? = (this[key] as? JsonPrimitive)?.let { it.intOrNull ?: it.doubleOrNull?.toInt() }
 internal fun JsonObject.bool(key: String): Boolean? = (this[key] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull()
+
+/** Whether two OpenSSH public key lines are the same key (comments may differ). */
+internal fun sameKey(a: String?, b: String?): Boolean {
+    if (a == null || b == null) return false
+    return a.trim().split(Regex("\\s+")).take(2) == b.trim().split(Regex("\\s+")).take(2)
+}

@@ -166,10 +166,12 @@ private fun DeployCard(app: App, toast: (String) -> Unit, onDone: () -> Unit) {
     var vps by remember { mutableStateOf(false) }
 
     if (buying) CloudBuyDialog(app, onDismiss = { buying = false }, toast = toast) { n, ssh, onStep -> app.servers.deploy(n, ssh, onStep) }
+    // Hoster prices are ready before the tap (cached copy at once, refreshed when older than 10 min).
+    LaunchedEffect(Unit) { if (app.repo.current.cloud.tokens.isNotEmpty()) app.cloud.prefetch() }
 
     Group {
         GroupRow(
-            "Купить у хостера", subtitle = "Cloudzy или Timeweb: готов за 3–8 минут, нужен токен API",
+            "Купить у хостера", subtitle = "В одно нажатие: Cloudzy, Timeweb, Vultr, Hetzner, DigitalOcean · 3–8 минут",
             icon = Glyph.Cloud, onClick = { if (!running) buying = true },
             trailing = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
         )
