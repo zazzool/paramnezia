@@ -55,13 +55,13 @@ fun TunnelState.power(): PowerState = when (this) {
 }
 
 /**
- * The home screen fits one screen, without scrolling: header, the button (sized to the space
- * left), the status, and a compact info panel. Everything else is one tap away in a sheet.
- * With no server at all, the button gives way to an "add a server" hero.
+ * The home screen fits one screen, without scrolling: header, the dial (the power button inside a
+ * ring of three segment buttons for the other places, sized to the space left), the status, and
+ * the panel with where sites see you and the speed. Everything else is one tap away.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer: () -> Unit) {
+fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer: () -> Unit, onOpen: (Tab) -> Unit = {}) {
     val tunnel by TunnelRuntime.state.collectAsState()
     val servers = rememberServerCount(app)
     val p = protection(tunnel, servers)
@@ -72,24 +72,24 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer:
     Column(modifier.fillMaxSize().padding(horizontal = Space.M + 4.dp).padding(top = Space.S, bottom = Space.M)) {
         TopBar(app, tunnel, servers, onDetails = { details = true })
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            val button = buttonFor(maxHeight, maxWidth, 216.dp)
-            if (p == Protection.NO_SERVER) {
-                // Normally fits; the scroll is only a safety net for very small or zoomed screens.
-                Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), contentAlignment = Alignment.Center) {
-                    EmptyHero(follower = false, onAdd = onAddServer, onPaste = paste, modifier = Modifier.padding(vertical = Space.M))
-                }
-            } else {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    PowerButton(
-                        tunnel.power(),
-                        onClick = { if (tunnel.power() == PowerState.OFF) onConnect() else app.disconnect() },
-                        size = button,
-                    )
-                    StatusBlock(tunnel, p)
-                }
+            val dial = dialFor(maxHeight, maxWidth)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                OrbitDial(
+                    tunnel, p, dial,
+                    onPower = {
+                        when {
+                            p == Protection.NO_SERVER -> onAddServer()
+                            tunnel.power() == PowerState.OFF -> onConnect()
+                            else -> app.disconnect()
+                        }
+                    },
+                    onOpen = onOpen,
+                )
+                StatusBlock(tunnel, p)
             }
         }
-        if (p != Protection.NO_SERVER) InfoPanel(app, tunnel, onMore = { details = true })
+        if (p == Protection.NO_SERVER) ActionTile(Glyph.Paste, "Вставить ключ", "vpn://, приглашение или конфиг из буфера", primary = false, onClick = paste)
+        else InfoPanel(app, tunnel, onMore = { details = true })
     }
 
     if (details) {

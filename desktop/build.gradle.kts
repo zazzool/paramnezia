@@ -26,7 +26,7 @@ kotlin {
 // The Android app's screens, compiled here unchanged (they reach the system only through UiPlatform).
 val sharedUiFiles = listOf(
     "UiPlatform.kt", "Theme.kt", "PowerButton.kt", "HomeKit.kt", "HomeParts.kt", "HomeScreen.kt", "SimpleScreen.kt",
-    "FormKit.kt", "SshForm.kt", "AddScreen.kt", "CloudDialog.kt", "FleetScreen.kt", "Qr.kt",
+    "FormKit.kt", "SshForm.kt", "AddScreen.kt", "CloudDialog.kt", "FleetScreen.kt", "Qr.kt", "Shell.kt", "Orbit.kt",
 )
 val syncSharedUi by tasks.registering(Sync::class) {
     from(rootProject.file("app/src/main/kotlin/net/paramnezia/app/ui")) { include(sharedUiFiles) }

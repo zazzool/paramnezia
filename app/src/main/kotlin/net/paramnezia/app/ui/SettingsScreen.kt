@@ -57,6 +57,7 @@ fun SettingsScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
     if (apps) { AppsScreen(app, modifier) { apps = false }; return }
 
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ScreenTitle("Настройки", "Маршруты, приватность и обновления")
         Text("Маршрутизация", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Toggle("Российские сайты и приложения напрямую", "Банки, Госуслуги, маркетплейсы, Яндекс, VK, Max и другие идут мимо VPN", s.bypassRussia) { v -> change { it.copy(bypassRussia = v) } }
         Toggle("Локальная сеть напрямую", "Роутер, принтер, телевизор остаются доступны", s.bypassLan) { v -> change { it.copy(bypassLan = v) } }

@@ -24,7 +24,7 @@ shot() {
   adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 && adb pull /sdcard/ui.xml "ui-$tag-ui-$1.xml" >/dev/null 2>&1
   echo "--- screen: $1 ---"; python3 "$here/ui.py" list "ui-$tag-ui-$1.xml" 2>/dev/null | grep "$pkg" | head -40
 }
-# Swipes in the middle of the screen (the bottom bar must not catch the gesture).
+# Swipes in the middle of the screen (the dock must not catch the gesture).
 size() { adb shell wm size | sed -n 's/.*: \([0-9]*\)x\([0-9]*\).*/\1 \2/p' | tail -1; }
 scroll() { local w h; read -r w h < <(size); adb shell input swipe $((w / 2)) $((h * 3 / 5)) $((w / 2)) $((h / 5)) 600; sleep 1; }
 top() { local w h; read -r w h < <(size); for _ in 1 2 3; do adb shell input swipe $((w / 2)) $((h / 4)) $((w / 2)) $((h * 3 / 4)) 200; done; sleep 1; }
@@ -50,9 +50,14 @@ if tap "Ввести с клавиатуры"; then shot add-keyboard 3; hide_ke
 top; tap "Ввести" && shot add-type 3
 hide_keyboard
 tap "Семья" && shot fleet-empty
+# Around the dial: «Настройки», then the mini power orb in the header leads back home; system Back does the same.
+tap "Настройки" && shot settings
+tap "Главная, VPN выключен" && shot home-back
+tap "Добавить" && { adb shell input keyevent KEYCODE_BACK; shot back-key; }
 
 # An admin with a server of their own but no fleet yet.
 demo server
+shot home
 tap "Семья" && shot fleet-server
 scroll; shot fleet-server-2
 

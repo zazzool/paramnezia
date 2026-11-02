@@ -15,6 +15,7 @@ import net.paramnezia.app.net.SeenAddress
 import net.paramnezia.app.net.Visibility
 import net.paramnezia.app.ui.LocalUiPlatform
 import net.paramnezia.app.ui.PnTheme
+import net.paramnezia.app.ui.Tab
 import net.paramnezia.core.crypto.WgKey
 import net.paramnezia.core.fleet.Ed25519
 import net.paramnezia.core.fleet.FleetAdmin
@@ -61,6 +62,10 @@ object Screenshots {
         shot(out, "fleet-server", serverState(), Tab.FLEET)
         shot(out, "fleet-admin", adminState(), Tab.FLEET)
         shot(out, "settings", serverState().let { it.copy(settings = it.settings.copy(forceDirect = setOf("steam.exe", "Telegram.exe"))) }, Tab.SETTINGS)
+        // The header's mini power orb glows while the VPN is on, on every screen.
+        shot(out, "fleet-on", adminState(), Tab.FLEET) {
+            TunnelRuntime.set(TunnelState.Up("Нидерланды", "demo", System.currentTimeMillis() - 754_000))
+        }
         shot(out, "home-follower", adminState().let { it.copy(fleet = it.fleet!!.copy(adminSeed = null)) }, Tab.HOME)
         println("screenshots in ${out.absolutePath}")
     }

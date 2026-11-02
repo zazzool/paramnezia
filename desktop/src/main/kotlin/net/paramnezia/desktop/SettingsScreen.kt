@@ -1,5 +1,6 @@
 package net.paramnezia.desktop
 
+import net.paramnezia.app.ui.ScreenTitle
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -64,6 +65,7 @@ fun SettingsScreen(app: App, platform: DesktopUiPlatform, modifier: Modifier, to
     }
 
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ScreenTitle("Настройки", "Маршруты, приватность и обновления")
         Section("Маршрутизация")
         if (follower) Hint("Эти настройки приходят от администратора семьи.")
         Toggle("Российские сайты напрямую", "Банки, Госуслуги, маркетплейсы, Яндекс, VK и другие идут мимо VPN", s.bypassRussia) { v -> change { it.copy(bypassRussia = v) } }
