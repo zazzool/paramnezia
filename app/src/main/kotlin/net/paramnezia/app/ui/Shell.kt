@@ -155,15 +155,18 @@ private const val REVEAL_MS = 460
 @OptIn(ExperimentalAnimationApi::class)
 private fun transition(from: Tab, to: Tab): ContentTransform = when (to) {
     Tab.HOME -> (scaleIn(tween(REVEAL_MS, easing = Emphasized), 0.94f) + fadeIn(tween(REVEAL_MS / 2)))
-        .togetherWith(ExitTransition.KeepUntilTransitionsFinished)
+        .togetherWith(keep())
         .apply { targetContentZIndex = -1f }
     else -> EnterTransition.None
         .togetherWith(
             if (from == Tab.HOME) scaleOut(tween(REVEAL_MS, easing = Emphasized), 0.94f) + fadeOut(tween(REVEAL_MS, delayMillis = 120))
-            else ExitTransition.KeepUntilTransitionsFinished,
+            else keep(),
         )
         .apply { targetContentZIndex = 1f }
 }
+
+/** Stays fully visible for the whole reveal (the clip in [Revealed] does the work). */
+private fun keep(): ExitTransition = fadeOut(tween(REVEAL_MS), targetAlpha = 0.999f)
 
 /** A circular reveal centred on the satellite (or header orb) that opened this place. */
 @OptIn(ExperimentalAnimationApi::class)
