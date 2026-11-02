@@ -68,9 +68,9 @@ import kotlin.math.sin
 
 /**
  * The home dial: the power button in the middle and, concentric with it, a ring cut into three
- * equal segments. Each segment is a button: «Добавить» at the bottom (the thumb's spot),
- * «Семья» upper left, «Настройки» upper right. A segment is a soft convex slab with a glossy
- * badge; under the finger it sinks towards the centre, darkens into its colour and ticks.
+ * equal segments. Each whole segment is a button: «Добавить» at the bottom (the thumb's spot),
+ * «Семья» upper left, «Настройки» upper right. A segment is a soft convex slab with its icon
+ * engraved and enamelled; under the finger it sinks towards the centre, takes its colour and ticks.
  */
 @Composable
 fun OrbitDial(tunnel: TunnelState, p: Protection, size: Dp, onPower: () -> Unit, onOpen: (Tab) -> Unit) {
@@ -103,35 +103,18 @@ fun OrbitDial(tunnel: TunnelState, p: Protection, size: Dp, onPower: () -> Unit,
     ) {
         SegmentRing(g, pressed, lit = if (p == Protection.NO_SERVER) Tab.ADD else null, Modifier.size(size))
         PowerButton(tunnel.power(), onClick = onPower, size = g.disc, dimmed = p == Protection.NO_SERVER)
-        // Badge and label of each segment; also its node for screen readers and UI tests.
+        // Each segment's node for screen readers and UI tests (the drawing is all in SegmentRing).
         for (s in Segments) {
             val rad = s.center * PI / 180
             val mid = (g.inner + g.outer) / 2
-            val dx = mid * cos(rad).toFloat()
-            val dy = mid * sin(rad).toFloat()
-            Column(
+            Box(
                 Modifier
-                    .offset(dx, dy)
-                    .width(96.dp)
+                    .offset(mid * cos(rad).toFloat(), mid * sin(rad).toFloat())
+                    .size(g.band * 0.8f)
                     .onGloballyPositioned { orbit.satellites[s.tab] = it.positionInRoot() + Offset(it.size.width / 2f, it.size.height / 2f) }
-                    .semantics(mergeDescendants = true) { contentDescription = s.tab.title }
+                    .semantics { contentDescription = s.tab.title }
                     .clickable(interactions.getValue(s.tab), indication = null, role = Role.Button) { open(s.tab) },
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                val sink by animateFloatAsState(if (pressed.getValue(s.tab)) 0.9f else 1f,
-                    spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium), label = "badge")
-                Box(Modifier.size(g.badge), contentAlignment = Alignment.Center) {
-                    Box(Modifier.size(g.badge * sink), contentAlignment = Alignment.Center) {
-                        PlaceBadge(s.tab, PlaceLooks.getValue(s.tab), g.badge * sink)
-                    }
-                }
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    s.tab.title, maxLines = 1, textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold),
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
-                )
-            }
+            )
         }
     }
 }
@@ -182,6 +165,12 @@ private fun SegmentRing(g: Ring, pressed: Map<Tab, Boolean>, lit: Tab?, modifier
             0.35f, 1f, infiniteRepeatable(tween(1400, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "lit")
         v
     } else 0f
+    val enamels = Segments.associate { s ->
+        val look = PlaceLooks.getValue(s.tab)
+        val on = pressed.getValue(s.tab) || s.tab == lit
+        val c by animateColorAsState(if (on) look.gradient[0] else look.gradient[1], tween(200), label = "enamel")
+        s.tab to c
+    }
     val accents = Segments.associate { s ->
         val look = PlaceLooks.getValue(s.tab)
         val c by animateColorAsState(if (dark) look.tintDark else look.tintLight, label = "accent")
@@ -224,6 +213,11 @@ private fun SegmentRing(g: Ring, pressed: Map<Tab, Boolean>, lit: Tab?, modifier
                     style = Stroke(1.5.dp.toPx(), cap = StrokeCap.Round),
                     alpha = 1f - sink,
                 )
+                // The icon is engraved into the slab and filled with enamel of the place's colour.
+                val rad = s.center * PI.toFloat() / 180f
+                val mid = (rIn + rOut) / 2
+                val at = Offset(c.x + mid * cos(rad), c.y + mid * sin(rad))
+                engraved(s.tab, at, (rOut - rIn) * 0.30f, enamels.getValue(s.tab), sink, dark)
             }
         }
     }
@@ -241,48 +235,55 @@ private fun slab(c: Offset, rIn: Float, rOut: Float, start: Float, sweep: Float,
 }
 
 /**
- * The place's icon as a little glossy sweet: a gradient disc with a top light, a soft shadow
- * and a bold, rounded white glyph drawn here (plus; two people; sliders).
+ * The place's icon in a screen header: the same engraving, on a small round slab.
  */
 @Composable
 fun PlaceBadge(tab: Tab, look: PlaceLook, size: Dp) {
+    val dark = isSystemInDarkTheme()
+    val slab = MaterialTheme.colorScheme.surfaceContainerHigh
     Canvas(Modifier.size(size)) {
         val r = this.size.minDimension / 2
-        drawCircle(Color.Black.copy(alpha = 0.16f), r * 0.98f, Offset(center.x, center.y + r * 0.10f))
-        drawCircle(Brush.linearGradient(look.gradient, Offset(0f, 0f), Offset(this.size.width, this.size.height)), r)
-        drawCircle(
-            Brush.radialGradient(listOf(Color.White.copy(alpha = 0.55f), Color.Transparent),
-                Offset(center.x - r * 0.25f, center.y - r * 0.55f), r * 0.85f),
-            r,
-        )
-        drawCircle(Color.White.copy(alpha = 0.25f), r - 0.75.dp.toPx(), style = Stroke(1.dp.toPx()))
-        glyph(tab, r)
+        drawCircle(Brush.verticalGradient(listOf(if (dark) Color(0xFF2C3458) else Color.White, slab)), r)
+        drawCircle(Color.White.copy(alpha = if (dark) 0.08f else 0.8f), r - 0.75.dp.toPx(), style = Stroke(1.dp.toPx()))
+        engraved(tab, center, r * 0.62f, look.gradient[1], 0f, dark)
     }
 }
 
-private fun DrawScope.glyph(tab: Tab, r: Float) {
-    // A 24-unit grid centred in the badge, about 55 % of its diameter.
-    val u = r * 1.1f / 12f
-    fun p(x: Float, y: Float) = Offset(center.x + (x - 12f) * u, center.y + (y - 12f) * u)
-    val w = Color.White
-    val stroke = 2.4f * u
+/**
+ * An engraving with enamel: the glyph is cut into the surface (a dark lip on the upper-left edge of
+ * the cut, a light one on the lower-right), then filled with glossy enamel slightly below the surface.
+ */
+private fun DrawScope.engraved(tab: Tab, at: Offset, r: Float, enamel: Color, pressed: Float, dark: Boolean) {
+    val d = 1.2.dp.toPx()
+    glyph(tab, at + Offset(d, d), r, Color.White.copy(alpha = if (dark) 0.10f else 0.9f), 1.25f)
+    glyph(tab, at - Offset(d * 0.8f, d * 0.8f), r, Color.Black.copy(alpha = if (dark) 0.55f else 0.28f), 1.25f)
+    glyph(tab, at, r, enamel, 1f)
+    // The enamel's gloss: a light, thinner pass shifted up.
+    glyph(tab, at - Offset(0f, d * 0.6f), r, Color.White.copy(alpha = 0.28f * (1 - pressed)), 0.45f)
+}
+
+/** The glyph on a 24-unit grid centred at [at], [r] being half its size; [weight] scales the strokes. */
+private fun DrawScope.glyph(tab: Tab, at: Offset, r: Float, color: Color, weight: Float) {
+    val u = r / 12f * 1.15f
+    fun p(x: Float, y: Float) = Offset(at.x + (x - 12f) * u, at.y + (y - 12f) * u)
+    val stroke = 2.6f * u * weight
     when (tab) {
         Tab.ADD -> {
-            drawLine(w, p(12f, 5.5f), p(12f, 18.5f), stroke * 1.15f, StrokeCap.Round)
-            drawLine(w, p(5.5f, 12f), p(18.5f, 12f), stroke * 1.15f, StrokeCap.Round)
+            drawLine(color, p(12f, 5f), p(12f, 19f), stroke * 1.1f, StrokeCap.Round)
+            drawLine(color, p(5f, 12f), p(19f, 12f), stroke * 1.1f, StrokeCap.Round)
         }
         Tab.FLEET -> {
             // Two people: a grown-up and a smaller one beside.
-            drawCircle(w, 3.3f * u, p(9f, 7.6f))
-            drawArc(w, 180f, 180f, false, topLeft = p(3.2f, 13.6f), size = Size(11.6f * u, 11.6f * u), style = Stroke(stroke, cap = StrokeCap.Round))
-            drawCircle(w.copy(alpha = 0.85f), 2.5f * u, p(16.8f, 9.6f))
-            drawArc(w.copy(alpha = 0.85f), 200f, 140f, false, topLeft = p(13f, 14.6f), size = Size(8.4f * u, 8.4f * u), style = Stroke(stroke * 0.9f, cap = StrokeCap.Round))
+            drawCircle(color, 3.2f * u + (stroke - 2.6f * u) / 2, p(9f, 7.6f))
+            drawArc(color, 180f, 180f, false, topLeft = p(3.2f, 13.6f), size = Size(11.6f * u, 11.6f * u), style = Stroke(stroke, cap = StrokeCap.Round))
+            drawCircle(color, 2.5f * u + (stroke - 2.6f * u) / 2, p(16.8f, 9.6f))
+            drawArc(color, 200f, 140f, false, topLeft = p(13f, 14.6f), size = Size(8.4f * u, 8.4f * u), style = Stroke(stroke * 0.9f, cap = StrokeCap.Round))
         }
         Tab.SETTINGS -> {
             // Sliders: three tracks with knobs.
             for ((y, x) in listOf(6.5f to 9f, 12f to 15.5f, 17.5f to 11f)) {
-                drawLine(w.copy(alpha = 0.6f), p(5f, y), p(19f, y), stroke * 0.8f, StrokeCap.Round)
-                drawCircle(w, 2.5f * u, p(x, y))
+                drawLine(color, p(5f, y), p(19f, y), stroke * 0.7f, StrokeCap.Round)
+                drawCircle(color, 2.6f * u + (stroke - 2.6f * u) / 2, p(x, y))
             }
         }
         Tab.HOME -> Unit
