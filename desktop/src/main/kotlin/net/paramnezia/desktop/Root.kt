@@ -49,7 +49,7 @@ import net.paramnezia.app.ui.SimpleScreen
 import net.paramnezia.tunnel.TunnelRuntime
 import net.paramnezia.tunnel.TunnelState
 
-enum class Tab(val title: String) { HOME("Главная"), ADD("Добавить"), FLEET("Флот"), SETTINGS("Настройки") }
+enum class Tab(val title: String) { HOME("Главная"), ADD("Добавить"), FLEET("Семья"), SETTINGS("Настройки") }
 
 /**
  * The window's content: the same four tabs as the Android app, the same screens (shared code),

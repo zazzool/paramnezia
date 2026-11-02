@@ -19,7 +19,9 @@ JSON — раскладка AmneziaVPN: `containers[]` с `container: "amnezia-a
 Серии QR AmneziaVPN (`AmneziaQr.kt`): сжатые данные режутся на куски с заголовком (магия, номер, всего),
 каждый кусок — отдельный QR; приложение собирает и импортирует как `vpn://`.
 
-## 2. Флот
+## 2. Семейная группа (fleet)
+
+В интерфейсе — вкладка «Семья». В коде, JSON и файлах на сервере имя прежнее: `fleet`.
 
 `core/fleet/*`, `app/fleet/FleetManager.kt`
 
@@ -58,7 +60,7 @@ SignedManifest = { fleetId, version, body, sig }   // JSON, это и есть �
 "paramnezia_fleet": { "trust": FleetTrust, "deviceName": "...", "privateKey": "<WireGuard>", "manifest": "<SignedManifest>" }
 ```
 
-AmneziaVPN видит обычный ключ; Paramnezia вступает во флот. Для оригинального AmneziaVPN это поле
+AmneziaVPN видит обычный ключ; Paramnezia вступает в семейную группу. Для оригинального AmneziaVPN это поле
 вырезается (`Invite.plainKey`).
 
 ### Каналы доставки манифеста
@@ -94,7 +96,7 @@ SignedRelease(body = json(Release), sig = Ed25519(releaseSeed, "paramnezia-relea
 ```
 
 Публичный ключ релизов вшит в APK (`BuildConfig.RELEASE_KEY`), адрес проверки тоже (`BuildConfig.UPDATE_URL`,
-сейчас `https://github.com/zazzool/paramnezia/releases/latest/download/release.json`). Устройство читает `release.json` оттуда и, во флоте, с
+сейчас `https://github.com/zazzool/paramnezia/releases/latest/download/release.json`). Устройство читает `release.json` оттуда и, в семейной группе, с
 `http://10.8.1.1:8080/release.json`. Релиз принимается, если подпись верна, пакет совпадает, версия больше,
 `minSdk` подходит и `signerSha256` равен сертификату установленного APK. Проверка: при запуске приложения не чаще
 раза в 12 часов и по кнопке в настройках.
@@ -126,7 +128,7 @@ SHA-256) и положить его в `apk/<sha256>` и `release.json` внут
 `PN_WIN_URLS`; неудача не мешает APK). Без копий кнопки ведут на `releases/latest/download/paramnezia.apk` и
 `…/Paramnezia-Setup.exe` (постоянные имена в каждом релизе).
 
-**CGI** `GET /cgi-bin/get?<токен>&<что>`, `что` = `app` (приглашение для Paramnezia) | `key` (ключ без флота,
+**CGI** `GET /cgi-bin/get?<токен>&<что>`, `что` = `app` (приглашение для Paramnezia) | `key` (ключ без семейной группы,
 для AmneziaVPN) | `conf`. Первый запрос атомарно (`mv t/T c/T`) гасит ссылку и запоминает `время адрес`;
 повтор разрешён только с того же адреса в течение 30 минут. Ответы: 200, 400 (неверный запрос),
 410 (использована/истекла).

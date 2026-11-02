@@ -63,7 +63,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
 /*
- * The building blocks of the «Добавить» and «Флот» screens and their dialogs: one look, one rhythm
+ * The building blocks of the «Добавить» and «Семья» screens and their dialogs: one look, one rhythm
  * (8 dp grid, 16 dp inside cards, 24 dp between sections), and input fields made for pasting.
  */
 
