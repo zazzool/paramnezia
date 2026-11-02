@@ -150,7 +150,8 @@ class DeployE2ETest {
         assertTrue(appJson, sha in appJson && "https://github.com/zazzool/paramnezia/releases/download/v9/" in appJson && "plain.example" !in appJson)
         assertTrue(appJson, "\"windows\"" in appJson && exeSha in appJson)
         // The newest releases for both platforms, and how to get past SmartScreen.
-        assertTrue("releases/latest/download/paramnezia.apk" in page && "releases/latest/download/Paramnezia-Setup.exe" in page)
+        assertTrue("github.com/zazzool/paramnezia/releases/latest/download/" in page &&
+            "GH + 'paramnezia.apk'" in page && "GH + 'Paramnezia-Setup.exe'" in page)
         assertTrue("Скачать для Windows" in page && "Выполнить в любом случае" in page)
         assertEquals(setOf<String>(), links.claimed(creds, listOf(link.token)))
 
