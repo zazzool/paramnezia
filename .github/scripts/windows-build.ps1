@@ -26,7 +26,7 @@ Copy-Item "$env:RUNNER_TEMP\wintun\wintun\bin\amd64\wintun.dll" "$svc\wintun.dll
 
 # 2. The app image.
 Push-Location $root
-& .\gradlew.bat -Pparamnezia.jvmOnly=true --no-configuration-cache :desktop:createDistributable
+& .\gradlew.bat '-Pparamnezia.jvmOnly=true' --no-configuration-cache :desktop:createDistributable
 if ($LASTEXITCODE) { throw "gradle failed" }
 Pop-Location
 $app = "$root\desktop\build\compose\binaries\main\app\Paramnezia"

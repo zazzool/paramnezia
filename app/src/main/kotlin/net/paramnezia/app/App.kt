@@ -1,5 +1,7 @@
 package net.paramnezia.app
 
+import net.paramnezia.app.platform.Log as PLog
+import net.paramnezia.app.data.Vault
 import net.paramnezia.app.data.Cloud
 import android.app.Application
 import android.net.VpnService
@@ -92,15 +94,15 @@ class App : Application(), TunnelHost {
     override fun onCreate() {
         super.onCreate()
         // Shared client code logs through the platform logger; here that is logcat.
-        net.paramnezia.app.platform.Log.sink = net.paramnezia.app.platform.Log.Sink { level, tag, msg, e ->
+        PLog.sink = PLog.Sink { level, tag, msg, e ->
             when (level) {
-                net.paramnezia.app.platform.Log.Level.DEBUG -> Log.d(tag, msg, e)
-                net.paramnezia.app.platform.Log.Level.INFO -> Log.i(tag, msg, e)
-                net.paramnezia.app.platform.Log.Level.WARN -> Log.w(tag, msg, e)
-                net.paramnezia.app.platform.Log.Level.ERROR -> Log.e(tag, msg, e)
+                PLog.Level.DEBUG -> Log.d(tag, msg, e)
+                PLog.Level.INFO -> Log.i(tag, msg, e)
+                PLog.Level.WARN -> Log.w(tag, msg, e)
+                PLog.Level.ERROR -> Log.e(tag, msg, e)
             }
         }
-        repo = Repo(net.paramnezia.app.data.Vault(this))
+        repo = Repo(Vault(this))
         net = Net(this)
         // Server management goes over the phone's own network while our VPN is up, then through it.
         SshConnection.routes = {
