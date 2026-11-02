@@ -93,6 +93,16 @@ adb shell ping -c 3 -W 2 10.9.0.1 || echo "::warning::[$tag] ping 10.9.0.1 throu
 adb shell pidof net.paramnezia >/dev/null || fail "the app died"
 # The "how sites see you" card checks the addresses a few seconds after connecting.
 shot connected 15
+echo "--- how sites see us (app log) ---"; adb logcat -d -s ParamneziaSeen | tail -40
+# "How Russian sites see you" must always resolve: Yandex, or the phone's own network past the VPN.
+for _ in 1 2 3 4 5 6; do
+  python3 "$here/ui.py" find "ui-$tag-connected.xml" "проверяю…" >/dev/null || break
+  shot connected 5
+done
+if python3 "$here/ui.py" find "ui-$tag-connected.xml" "не удалось узнать" >/dev/null; then
+  adb logcat -d -s ParamneziaSeen | tail -40
+  fail "the home screen could not tell how Russian sites see us"
+fi
 # Details are one tap away, in a sheet.
 tap "Подробнее" || echo "::warning::[$tag] no 'details' on the home screen"
 shot details 3

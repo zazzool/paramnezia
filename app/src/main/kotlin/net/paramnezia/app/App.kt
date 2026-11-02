@@ -70,8 +70,9 @@ class App : Application(), TunnelHost {
 
     suspend fun refreshVisibility() {
         val key = visibilityKey()
-        val host = (TunnelRuntime.state.value as? TunnelState.Up)?.let { serverHost(it.serverId) }
-        val v = visibilityCheck.run(key, host)
+        val up = TunnelRuntime.state.value as? TunnelState.Up
+        val host = up?.let { serverHost(it.serverId) }
+        val v = visibilityCheck.run(key, host, vpnUp = up != null, ruDirect = repo.current.settings.bypassRussia)
         // The tunnel may have changed while the check ran; a result for an old state is dropped.
         if (key == visibilityKey()) _visibility.value = v
     }

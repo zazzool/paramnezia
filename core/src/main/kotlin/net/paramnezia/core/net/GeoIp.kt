@@ -61,6 +61,13 @@ object GeoIp {
     /** Yandex's own address check (the one yandex.ru/internet shows), IPv4 first. */
     val RUSSIAN_SELF = listOf("https://ipv4-internet.yandex.net/api/v0/ip", "https://yandex.ru/internet/api/v0/ip")
 
+    /**
+     * Plain "what is my IP" services for asking over the phone's own network, bypassing the VPN. That
+     * is the route Russian sites take when split tunneling is on, so the answer is the address they see.
+     * Different companies and CDNs, so one of them being down or blocked does not matter.
+     */
+    val CARRIER_SELF = listOf("https://api.ipify.org", "https://ipv4.icanhazip.com", "https://checkip.amazonaws.com", "https://ipinfo.io/ip")
+
     private fun obj(body: String): JsonObject? = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
     private fun JsonObject.s(k: String): String? = (this[k] as? JsonPrimitive)?.content?.trim()?.takeIf { it.isNotEmpty() && it != "null" }
 

@@ -253,8 +253,8 @@ fun InfoPanel(app: App, tunnel: TunnelState, onMore: () -> Unit) {
         modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large).tactile(onClick = onMore),
     ) {
         Column(Modifier.padding(horizontal = Space.M, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(Space.S)) {
-            PlaceLine("Зарубежные сайты", v?.foreign, loading, if (up) Brand.Mint else null)
-            PlaceLine("Российские сайты", v?.russian, loading, null)
+            PlaceLine("Зарубежные сайты", v?.foreign, loading, if (up) Brand.Mint else null, v?.foreignError)
+            PlaceLine("Российские сайты", v?.russian, loading, null, v?.russianError)
             if (up) {
                 Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)))
                 Row(Modifier.fillMaxWidth()) {
@@ -274,7 +274,7 @@ fun InfoPanel(app: App, tunnel: TunnelState, onMore: () -> Unit) {
 
 /** Flag, "who · address" in small type, and the country in body type: the country is what people read. */
 @Composable
-private fun PlaceLine(who: String, a: net.paramnezia.app.net.SeenAddress?, loading: Boolean, accent: Color?) {
+private fun PlaceLine(who: String, a: net.paramnezia.app.net.SeenAddress?, loading: Boolean, accent: Color?, error: String?) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(a?.let { VisibilityCheck.flag(it.countryCode) } ?: "🌐", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.width(12.dp))
@@ -291,6 +291,10 @@ private fun PlaceLine(who: String, a: net.paramnezia.app.net.SeenAddress?, loadi
                 when { a != null -> a.country ?: "страна не определена"; loading -> "проверяю…"; else -> "не удалось узнать" },
                 MaterialTheme.typography.bodyLarge, min = 12.sp,
             )
+            // The real reason, not a bare "failed": which services were asked and what each said.
+            if (a == null && !loading && error != null) {
+                Text(error, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+            }
         }
     }
 }
