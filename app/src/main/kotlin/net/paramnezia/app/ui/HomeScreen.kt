@@ -106,7 +106,7 @@ private fun TopBar(app: App, tunnel: TunnelState, servers: Int, onDetails: () ->
     val update by app.updater.status.collectAsState()
     var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
-        FitText("Paramnezia", MaterialTheme.typography.titleLarge, Modifier.weight(1f), min = 14.sp)
+        Wordmark(Modifier.weight(1f))
         (update as? Updater.Status.Available)?.let { u ->
             Surface(shape = CircleShape, color = Brand.Violet, modifier = Modifier.clip(CircleShape).tactile { app.updater.openDownload() }) {
                 FitText("${u.release.versionName} ↓", MaterialTheme.typography.labelLarge, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), color = Color.White)

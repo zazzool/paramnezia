@@ -15,6 +15,18 @@ import net.paramnezia.app.net.SeenAddress
 import net.paramnezia.app.net.Visibility
 import net.paramnezia.app.ui.LocalUiPlatform
 import net.paramnezia.app.ui.PnTheme
+import net.paramnezia.app.ui.ThemePicker
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import net.paramnezia.app.ui.Tab
 import net.paramnezia.core.crypto.WgKey
 import net.paramnezia.core.fleet.Ed25519
@@ -42,9 +54,21 @@ object Screenshots {
     private const val H = 860
     private const val SCALE = 2f
 
+    /** Each screen in the light theme (windows-*.png) and the dark one (windows-dark-*.png). */
+    private var dark = false
+
     fun render(out: File) {
         out.mkdirs()
         System.setProperty("paramnezia.screenshots", "true")
+        for (d in listOf(false, true)) {
+            dark = d
+            renderAll(out)
+            picker(out)
+        }
+        println("screenshots in ${out.absolutePath}")
+    }
+
+    private fun renderAll(out: File) {
         shot(out, "home-empty", AppState(), Tab.HOME)
         shot(out, "add", AppState(), Tab.ADD)
         shot(out, "home-off", serverState(), Tab.HOME)
@@ -67,7 +91,6 @@ object Screenshots {
             TunnelRuntime.set(TunnelState.Up("Нидерланды", "demo", System.currentTimeMillis() - 754_000))
         }
         shot(out, "home-follower", adminState().let { it.copy(fleet = it.fleet!!.copy(adminSeed = null)) }, Tab.HOME)
-        println("screenshots in ${out.absolutePath}")
     }
 
     private fun shot(out: File, name: String, state: AppState, tab: Tab, prepare: (App) -> Unit = {}) {
@@ -79,7 +102,7 @@ object Screenshots {
         prepare(app)
         val platform = DesktopUiPlatform("DESKTOP-PC")
         val scene = ImageComposeScene(width = (W * SCALE).toInt(), height = (H * SCALE).toInt(), density = Density(SCALE)) {
-            PnTheme {
+            PnTheme(dark) {
                 CompositionLocalProvider(LocalUiPlatform provides platform) {
                     Root(app, platform, MutableSharedFlow(), initialTab = tab, watchService = false)
                 }
@@ -88,10 +111,29 @@ object Screenshots {
         var t = 0L
         repeat(30) { scene.render(t); t += 50_000_000L; Thread.sleep(20) }
         val image = scene.render(t)
-        File(out, "windows-$name.png").writeBytes(image.encodeToData(EncodedImageFormat.PNG)!!.bytes)
+        File(out, if (dark) "windows-dark-$name.png" else "windows-$name.png").writeBytes(image.encodeToData(EncodedImageFormat.PNG)!!.bytes)
         scene.close()
         app.scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
         home.deleteRecursively()
+    }
+
+    /** «Настройки → Оформление» on its own (in the full settings shot it is below the fold). */
+    private fun picker(out: File) {
+        val scene = ImageComposeScene(width = (W * SCALE).toInt(), height = (300 * SCALE).toInt(), density = Density(SCALE)) {
+            PnTheme(dark) {
+                Surface(color = MaterialTheme.colorScheme.background) {
+                    Column(Modifier.fillMaxSize().padding(16.dp)) {
+                        Text("Оформление", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(12.dp))
+                        ThemePicker()
+                    }
+                }
+            }
+        }
+        repeat(10) { scene.render(it * 50_000_000L) }
+        val image = scene.render(600_000_000L)
+        File(out, if (dark) "windows-dark-theme-picker.png" else "windows-theme-picker.png").writeBytes(image.encodeToData(EncodedImageFormat.PNG)!!.bytes)
+        scene.close()
     }
 
     private val ssh = SshCredentials("203.0.113.10", 22, "root", password = "demo")

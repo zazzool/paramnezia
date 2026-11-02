@@ -27,7 +27,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -199,9 +198,10 @@ private fun androidx.compose.animation.AnimatedContentScope.Revealed(t: Tab, orb
 class PlaceLook(val tintLight: Color, val tintDark: Color, val gradient: List<Color>)
 
 val PlaceLooks = mapOf(
-    Tab.ADD to PlaceLook(Color(0xFF00839C), Brand.Cyan, listOf(Color(0xFF26E0FF), Brand.Indigo)),
-    Tab.FLEET to PlaceLook(Color(0xFF5B3DD6), Color(0xFFA48BFF), listOf(Color(0xFFB388FF), Color(0xFF6A3DF0))),
-    Tab.SETTINGS to PlaceLook(Color(0xFF59607A), Color(0xFFBAC1DC), listOf(Color(0xFFFFC46B), Color(0xFFFF7A59))),
+    // Azure and iris are the two ends of the icon's gradient; settings are the one warm place.
+    Tab.ADD to PlaceLook(Color(0xFF1D72D8), Color(0xFF6CC4FF), listOf(Color(0xFF5CC8FF), Color(0xFF2F6BFF))),
+    Tab.FLEET to PlaceLook(Color(0xFF5A48E6), Color(0xFFA99BFF), listOf(Color(0xFFB9A8FF), Color(0xFF6A4CF5))),
+    Tab.SETTINGS to PlaceLook(Color(0xFF5D5A6E), Color(0xFFA9A6BA), listOf(Color(0xFFFFC97A), Color(0xFFFF7E5F))),
 )
 
 /** Inside a place: home (with the VPN state) on the left, the other two places on the right. */
@@ -256,16 +256,15 @@ fun PlaceOrb(tab: Tab, look: PlaceLook, size: Dp, modifier: Modifier = Modifier,
 /** A small twin of the power button: its colours tell the VPN state; a tap leads home to the big one. */
 @Composable
 private fun HomeOrb(power: PowerState, onClick: () -> Unit) {
-    val dark = isSystemInDarkTheme()
     val colors = when (power) {
         PowerState.ON -> Brand.On
         PowerState.CONNECTING -> Brand.Connecting
-        PowerState.OFF -> if (dark) Brand.Off else Brand.OffLight
+        PowerState.OFF -> Pn.offDisc
     }
     val c0 by animateColorAsState(colors[0], tween(450), label = "c0")
     val c1 by animateColorAsState(colors[1], tween(450), label = "c1")
     val glyph by animateColorAsState(
-        if (power == PowerState.OFF) (if (dark) Color(0xFFBAC1DC) else Color(0xFF59607A)) else Color.White, tween(400), label = "glyph")
+        if (power == PowerState.OFF) Pn.offGlyph else Color.White, tween(400), label = "glyph")
     // Breathes only while connected or connecting, like the big button; no frames at rest.
     val pulse = if (power != PowerState.OFF) {
         val v by rememberInfiniteTransition(label = "pulse").animateFloat(
@@ -311,8 +310,9 @@ private fun Modifier.orbPressPill(label: String, onClick: () -> Unit): Modifier 
     return this
         .semantics(mergeDescendants = true) { contentDescription = label }
         .scale(s)
+        .edge(CircleShape)
         .clip(CircleShape)
-        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+        .background(MaterialTheme.colorScheme.surfaceContainer)
         .clickable(interaction, indication = null, role = Role.Button) {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             onClick()

@@ -1,6 +1,7 @@
 package net.paramnezia.desktop
 
 import net.paramnezia.app.ui.ScreenTitle
+import net.paramnezia.app.ui.ThemePicker
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -96,6 +97,10 @@ fun SettingsScreen(app: App, platform: DesktopUiPlatform, modifier: Modifier, to
             style = MaterialTheme.typography.bodySmall,
             color = if (service == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline,
         )
+
+        HorizontalDivider()
+        Section("Оформление")
+        ThemePicker()
 
         HorizontalDivider()
         Section("Интерфейс")

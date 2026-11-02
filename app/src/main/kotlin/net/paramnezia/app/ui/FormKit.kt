@@ -271,7 +271,8 @@ fun SectionTitle(text: String, modifier: Modifier = Modifier, trailing: (@Compos
 /** A list of rows in one rounded block, rows separated by a hairline gap (Material 3 expressive lists). */
 @Composable
 fun Group(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
-    Column(modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)), verticalArrangement = Arrangement.spacedBy(2.dp), content = content)
+    val shape = RoundedCornerShape(24.dp)
+    Column(modifier.fillMaxWidth().edge(shape).clip(shape), verticalArrangement = Arrangement.spacedBy(2.dp), content = content)
 }
 
 /** One row of a [Group]: leading icon in a soft circle, title and subtitle, a badge, trailing content. */
@@ -332,7 +333,7 @@ fun SmallTile(icon: ImageVector, label: String, modifier: Modifier = Modifier, s
     val content = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface
     Surface(
         shape = RoundedCornerShape(20.dp), color = container,
-        modifier = modifier.heightIn(min = 84.dp).clip(RoundedCornerShape(20.dp)).then(if (enabled) Modifier.tactile(onClick = onClick) else Modifier),
+        modifier = modifier.heightIn(min = 84.dp).edge(RoundedCornerShape(20.dp)).clip(RoundedCornerShape(20.dp)).then(if (enabled) Modifier.tactile(onClick = onClick) else Modifier),
     ) {
         Column(Modifier.padding(vertical = 14.dp, horizontal = Space.S), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Icon(icon, null, Modifier.size(26.dp), tint = if (enabled) MaterialTheme.colorScheme.primary else content.copy(alpha = 0.38f))
@@ -362,7 +363,7 @@ fun ExpandTile(
         color = MaterialTheme.colorScheme.surfaceContainer,
         border = if (expanded) BorderStroke(1.dp, accent.copy(alpha = 0.4f)) else null,
         shape = RoundedCornerShape(24.dp),
-        modifier = modifier.fillMaxWidth().animateContentSize(),
+        modifier = modifier.fillMaxWidth().then(if (expanded) Modifier else Modifier.edge(RoundedCornerShape(24.dp))).animateContentSize(),
     ) {
         Column {
             Row(

@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings as AndroidSettings
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -28,6 +29,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import net.paramnezia.app.App
 import net.paramnezia.tunnel.TunnelRuntime
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -54,12 +56,21 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
+        // The theme choice is one word in plain preferences (not in the encrypted state, which loads
+        // later), so the very first frame is already in the right theme.
+        val ui = getSharedPreferences("ui", MODE_PRIVATE)
+        ThemePrefs.mode.value = ThemePrefs.parse(ui.getString("theme", null))
+        ThemePrefs.save = { m -> ui.edit().putString("theme", m.name).apply() }
+        val forced = when (ThemePrefs.mode.value) { ThemeMode.DARK -> true; ThemeMode.LIGHT -> false; ThemeMode.SYSTEM -> null }
+        bars(forced ?: systemDark())
+        if (forced != null) window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(colorsFor(forced).background.toArgb()))
         super.onCreate(savedInstanceState)
         handle(intent)
         val platform = AndroidUiPlatform(this)
         setContent {
-            PnTheme {
+            val dark = resolveDark()
+            LaunchedEffect(dark) { bars(dark) }
+            PnTheme(dark) {
               androidx.compose.runtime.CompositionLocalProvider(LocalUiPlatform provides platform) {
                 Root(app, incoming, onConnect = ::connect)
                 val refused by vpnRefused.collectAsState()
@@ -73,6 +84,16 @@ class MainActivity : ComponentActivity() {
               }
             }
         }
+    }
+
+    private fun systemDark() =
+        (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+
+    /** Status and navigation bar icons that read on the app's background, whatever the system theme is. */
+    private fun bars(dark: Boolean) {
+        val t = android.graphics.Color.TRANSPARENT
+        val style = if (dark) SystemBarStyle.dark(t) else SystemBarStyle.light(t, t)
+        enableEdgeToEdge(style, style)
     }
 
     override fun onStart() {

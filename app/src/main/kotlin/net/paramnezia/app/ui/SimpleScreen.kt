@@ -56,8 +56,7 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
     Column(modifier.fillMaxSize().padding(horizontal = Space.M + 4.dp).padding(top = Space.S, bottom = Space.M),
         horizontalAlignment = Alignment.CenterHorizontally) {
         Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
-            FitText("Paramnezia", MaterialTheme.typography.titleLarge, min = 14.sp,
-                modifier = Modifier.weight(1f).combinedClickable(onClick = {}, onLongClick = { askFull = true }))
+            Wordmark(Modifier.weight(1f).combinedClickable(onClick = {}, onLongClick = { askFull = true }))
             (update as? Updater.Status.Available)?.let { u ->
                 Surface(shape = CircleShape, color = Brand.Violet, modifier = Modifier.clip(CircleShape).tactile { app.updater.openDownload() }) {
                     FitText("${u.release.versionName} ↓", MaterialTheme.typography.labelLarge, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), color = Color.White)

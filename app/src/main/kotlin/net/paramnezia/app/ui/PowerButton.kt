@@ -15,7 +15,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -54,7 +53,7 @@ enum class PowerState { OFF, CONNECTING, ON }
  */
 @Composable
 fun PowerButton(state: PowerState, onClick: () -> Unit, modifier: Modifier = Modifier, size: Dp = 216.dp, dimmed: Boolean = false) {
-    val dark = isSystemInDarkTheme()
+    val shade = Pn.shadowAlpha
     val haptic = LocalHapticFeedback.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -63,13 +62,13 @@ fun PowerButton(state: PowerState, onClick: () -> Unit, modifier: Modifier = Mod
     val colors = when (state) {
         PowerState.ON -> Brand.On
         PowerState.CONNECTING -> Brand.Connecting
-        PowerState.OFF -> if (dark) Brand.Off else Brand.OffLight
+        PowerState.OFF -> Pn.offDisc
     }
     val c0 by animateColorAsState(colors[0], tween(450), label = "c0")
     val c1 by animateColorAsState(colors[1], tween(450), label = "c1")
     val glowAlpha by animateFloatAsState(if (state == PowerState.OFF) 0f else 1f, tween(600), label = "glow")
     val iconColor by animateColorAsState(
-        if (state == PowerState.OFF) (if (dark) Color(0xFFBAC1DC) else Color(0xFF59607A)) else Color.White, tween(400), label = "icon")
+        if (state == PowerState.OFF) Pn.offGlyph else Color.White, tween(400), label = "icon")
 
     // Endless animations exist only while they are visible, so an idle screen draws no frames.
     val breath = if (state == PowerState.ON) {
@@ -98,6 +97,15 @@ fun PowerButton(state: PowerState, onClick: () -> Unit, modifier: Modifier = Mod
         Canvas(Modifier.fillMaxSize()) {
             val r = this.size.minDimension / 2
             val pulse = if (state == PowerState.ON) breath else 0.5f
+            // At rest the disc is a physical object: a soft shadow under it, where the glow would be.
+            drawCircle(
+                Brush.radialGradient(
+                    0.62f to Color.Black.copy(alpha = shade * (1f - glowAlpha)),
+                    1f to Color.Transparent,
+                    center = center + Offset(0f, 5.dp.toPx()), radius = r * 0.86f,
+                ),
+                radius = r * 0.86f, center = center + Offset(0f, 5.dp.toPx()),
+            )
             drawCircle(
                 Brush.radialGradient(
                     0.55f to c1.copy(alpha = 0.38f * glowAlpha * (0.6f + 0.4f * pulse)),

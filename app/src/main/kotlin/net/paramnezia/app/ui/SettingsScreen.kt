@@ -85,6 +85,10 @@ fun SettingsScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
         OutlinedButton(onClick = { context.startActivity(Intent(AndroidSettings.ACTION_VPN_SETTINGS)) }) { Text("Настройки VPN Android") }
 
         HorizontalDivider()
+        Text("Оформление", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        ThemePicker()
+
+        HorizontalDivider()
         Text("Интерфейс", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         for ((mode, title, sub) in listOf(
             Triple(UiMode.AUTO, "Автоматически", "Простой на устройствах, приглашённых в семью, полный на остальных"),
