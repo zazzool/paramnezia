@@ -61,6 +61,7 @@ import net.paramnezia.app.App
 import net.paramnezia.app.net.SeenAddress
 import net.paramnezia.app.net.Visibility
 import net.paramnezia.app.net.VisibilityCheck
+import net.paramnezia.app.net.RuSource
 import net.paramnezia.app.net.countryName
 import net.paramnezia.tunnel.TunnelRuntime
 import net.paramnezia.tunnel.TunnelState
@@ -151,10 +152,10 @@ fun VisibilityCard(app: App, tunnel: TunnelState) {
                     else IconButton(onClick = refresh) { Icon(Icons.Filled.Refresh, "Обновить") }
                 }
             }
-            SeenRow("Зарубежные сайты", if (up) Route.TUNNEL else Route.DIRECT, v?.foreign, loading)
+            SeenRow("Зарубежные сайты", if (up) Route.TUNNEL else Route.DIRECT, v?.foreign, loading, v?.foreignError)
             // "Through VPN" only when the check proved it (both sides saw the same address).
             val ruRoute = if (up && v?.russian != null && v.foreign != null && !v.split) Route.TUNNEL else Route.DIRECT
-            SeenRow("Российские сайты", ruRoute, v?.russian, loading)
+            SeenRow("Российские сайты", ruRoute, v?.russian, loading, v?.russianError)
             val notes = notes(v, tunnel)
             AnimatedVisibility(notes.isNotEmpty()) {
                 Column(Modifier.padding(end = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { notes.forEach { NoteRow(it) } }
@@ -166,7 +167,7 @@ fun VisibilityCard(app: App, tunnel: TunnelState) {
 enum class Route(val label: String) { TUNNEL("через VPN"), DIRECT("напрямую") }
 
 @Composable
-private fun SeenRow(who: String, route: Route, a: SeenAddress?, loading: Boolean) {
+private fun SeenRow(who: String, route: Route, a: SeenAddress?, loading: Boolean, error: String? = null) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 8.dp)) {
@@ -190,6 +191,9 @@ private fun SeenRow(who: String, route: Route, a: SeenAddress?, loading: Boolean
                 },
                 style = MaterialTheme.typography.titleMedium,
             )
+            if (a == null && !loading && error != null) {
+                Text(error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             if (a != null) {
                 // IPv6 addresses are long: the address shrinks to fit rather than being cut.
                 FitText(
@@ -240,6 +244,7 @@ private fun notes(v: Visibility?, tunnel: TunnelState): List<Note> {
         v.foreign != null && v.russian != null -> out += Note(false, "Оба вида сайтов видят один адрес. Проверьте, включено ли «Российское напрямую» в настройках.")
         else -> out += Note(false, "Не удалось проверить один из адресов. Нажмите «Обновить».")
     }
+    if (up && v.russianSource == RuSource.CARRIER) out += Note(null, "Яндекс не ответил, поэтому российский адрес узнан по сети телефона в обход VPN: этим путём идут российские сайты.")
     if (up && v.foreignIsServer == true) out += Note(true, "Зарубежный адрес совпадает с адресом вашего сервера.")
     if (up && v.foreignIsServer == false) out += Note(null, "Сервер выходит в интернет с другого адреса, чем принимает подключения. Так бывает у хостеров, это не утечка.")
     for ((side, a) in listOf("зарубежного" to v.foreign, "российского" to v.russian.takeIf { it?.ip != v.foreign?.ip })) {

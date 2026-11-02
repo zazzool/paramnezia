@@ -39,6 +39,31 @@ class Net(private val context: Context) {
         return null
     }
 
+    /** One answer of [fetch]: the body, or why there is none (for checks that must say what failed). */
+    data class Fetched(val body: String?, val error: String?)
+
+    /**
+     * One GET on a fresh connection (never a pooled one: a socket opened before the tunnel came up
+     * keeps its old route), over [network] or, when null, the way the system routes it. Unlike
+     * [get] it reports the failure: HTTP code, timeout, DNS, TLS, no network.
+     */
+    fun fetch(url: String, network: Network? = null, maxBytes: Int = 4096, timeoutMs: Int = 8_000, userAgent: String = "paramnezia"): Fetched =
+        try {
+            val c = open(url, network, timeoutMs)
+            c.connectTimeout = minOf(timeoutMs, 6_000)
+            c.setRequestProperty("User-Agent", userAgent)
+            c.setRequestProperty("Connection", "close"); c.useCaches = false
+            try {
+                val code = c.responseCode
+                if (code == 200) Fetched(c.inputStream.use { it.readUpTo(maxBytes) }.decodeToString(), null)
+                else Fetched(null, "HTTP $code")
+            } finally { c.disconnect() }
+        } catch (e: java.net.SocketTimeoutException) { Fetched(null, "нет ответа")
+        } catch (e: java.net.UnknownHostException) { Fetched(null, "имя не найдено")
+        } catch (e: javax.net.ssl.SSLException) { Fetched(null, "ошибка TLS")
+        } catch (e: java.net.ConnectException) { Fetched(null, "соединение отклонено")
+        } catch (e: Exception) { Fetched(null, e.javaClass.simpleName) }
+
     /**
      * GET [url] through Orbot's SOCKS port, when Orbot is running. The last way to reach the fleet's
      * HTTPS mirrors when both our server and the direct path are blocked. No Tor code in our app:
