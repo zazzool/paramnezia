@@ -4,7 +4,9 @@
 протоколы), [SERVER.md](SERVER.md) (сервер), [RELEASE.md](RELEASE.md) (выпуск версий).
 
 ```
-app/          Android-приложение (Compose): экраны, хранилище, флот, OTA, синхронизация
+client/       Общий код Android и Windows: состояние, импорт, флот, ссылки, видимость адресов
+app/          Android-приложение (Compose): экраны (общие с Windows), хранилище, OTA, синхронизация
+desktop/      Windows-приложение: те же экраны, служба туннеля на Go (Wintun), установщик — WINDOWS.md
 tunnel/       VpnService + нативная библиотека: amneziawg-go v3, JNI, DNS-фильтр (Go)
 core/         Чистый Kotlin/JVM: конфиги, форматы AmneziaVPN, маршруты, флот, релизы
 deploy/       Установка и управление сервером по SSH (скрипты в resources)

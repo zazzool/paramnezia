@@ -1,15 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
-package main
-
-import "C"
+// Package dnsfilter is the split DNS with tracker blocking that runs inside the tun device, shared by
+// the Android library and the Windows service.
+package dnsfilter
 
 import (
 	"encoding/binary"
-	"errors"
 	"net"
 	"net/netip"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -206,13 +204,17 @@ func (c *dnsCache) put(key string, resp []byte) {
 
 // --- tun wrapper ------------------------------------------------------------------------------
 
+// Config says where the virtual resolver lives and which resolvers answer behind it.
+type Config = dnsConfig
+
 type dnsConfig struct {
 	virtual netip.Addr
 	tunnel  []string
 	direct  []string
 }
 
-func parseDNSConfig(s string) (dnsConfig, bool) {
+// ParseConfig reads "virtual=…\ntunnel=a,b\ndirect=c,d"; false if there is no IPv4 virtual address.
+func ParseConfig(s string) (Config, bool) {
 	var c dnsConfig
 	for _, line := range strings.Split(s, "\n") {
 		k, v, _ := strings.Cut(strings.TrimSpace(line), "=")
@@ -244,8 +246,9 @@ type dnsTun struct {
 	writeMu sync.Mutex
 }
 
-// newDNSTun wraps dev. directFd is a UDP socket the app protected from the VPN (or -1).
-func newDNSTun(dev tun.Device, cfg dnsConfig, directFd int) (*dnsTun, error) {
+// NewTun wraps dev. direct is a UDP socket that bypasses the VPN (Android: protected by the app;
+// Windows: the direct resolvers are routed outside the tunnel), or nil to resolve everything in it.
+func NewTun(dev tun.Device, cfg Config, direct *net.UDPConn) (tun.Device, error) {
 	tunnelConn, err := net.ListenUDP("udp4", nil)
 	if err != nil {
 		return nil, err
@@ -257,10 +260,8 @@ func newDNSTun(dev tun.Device, cfg dnsConfig, directFd int) (*dnsTun, error) {
 		cache:   dnsCache{m: map[string]cached{}},
 		slots:   make(chan struct{}, 64),
 	}
-	if directFd >= 0 {
-		if c, err := udpFromFd(directFd); err == nil {
-			t.direct = newForwarder(c, cfg.direct)
-		}
+	if direct != nil {
+		t.direct = newForwarder(direct, cfg.direct)
 	}
 	return t, nil
 }
@@ -500,30 +501,11 @@ func skipName(m []byte, i int) int {
 	return -1
 }
 
-func udpFromFd(fd int) (*net.UDPConn, error) {
-	f := os.NewFile(uintptr(fd), "pn-dns-direct")
-	defer f.Close() // FileConn dups the descriptor
-	c, err := net.FileConn(f)
-	if err != nil {
-		return nil, err
-	}
-	u, ok := c.(*net.UDPConn)
-	if !ok {
-		c.Close()
-		return nil, errors.New("not a UDP socket")
-	}
-	return u, nil
-}
-
-// pnSetDnsRules replaces the block / direct / allow lists (one rule per line, `full:` for exact
-// names) for all tunnels, effective for the next query.
-//
-//export pnSetDnsRules
-func pnSetDnsRules(block, direct, allow string) {
+// SetRules replaces the block / direct / allow lists (one rule per line, `full:` for exact names)
+// for all tunnels, effective for the next query.
+func SetRules(block, direct, allow string) {
 	rules.Store(parseRules(block, direct, allow))
 }
 
-// pnDnsBlocked returns how many queries were blocked since the library was loaded.
-//
-//export pnDnsBlocked
-func pnDnsBlocked() int64 { return blockedCount.Load() }
+// Blocked returns how many queries were blocked since the process started.
+func Blocked() int64 { return blockedCount.Load() }

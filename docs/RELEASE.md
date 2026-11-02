@@ -83,14 +83,21 @@ git push origin main:release/v2.1.0
 
 Перед публикацией `apk-audit.sh --release` проверяет APK по правилам из [PLAY-PROTECT.md](PLAY-PROTECT.md); APK
 публикуется ровно таким, каким его подписал apksigner. Описание релиза берётся из `docs/releases/vX.Y.Z.md`, если
-такой файл есть. Перезапуск упавшего выпуска безопасен: релиз и файлы перезаписываются (`--clobber`).
+такой файл есть.
+
+Параллельно задача `windows` собирает на `windows-latest` установщик для Windows и проверяет его
+(`windows-service-check.ps1`), а `windows-publish` прикладывает `Paramnezia-Setup-X.Y.Z.exe` к релизу и
+подписывает `release-windows.json` (`--package net.paramnezia.windows --min-sdk 0`) тем же ключом релизов.
+Номер сборки у обеих платформ один (`github.run_number`). Подробнее: [WINDOWS.md](WINDOWS.md).
+
+Перезапуск упавшего выпуска безопасен: релиз и файлы перезаписываются (`--clobber`).
 
 ## `releasetool`
 
 ```
 releasetool keygen                                   # новый PN_RELEASE_SEED и публичный ключ
 releasetool pubkey                                   # публичный ключ из PN_RELEASE_SEED (проверка при выпуске)
-releasetool sign --apk F --version-code N --version-name S --url URL… [--signer-sha256 HEX] [--notes S] --out release.json
+releasetool sign --apk F --version-code N --version-name S --url URL… [--signer-sha256 HEX] [--package P] [--min-sdk N] [--notes S] --out release.json
 ```
 
 ## Сборки без релиза

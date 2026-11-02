@@ -195,8 +195,9 @@ private fun PickScreen(
             verticalArrangement = Arrangement.spacedBy(Space.M),
         ) {
             ProviderStrip(connected, provider, onProvider, onAddProvider)
+            val catError = cat.error
             when {
-                data == null && cat.error != null -> ErrorCard(cat.error) { app.cloud.refresh(provider, force = true) }
+                data == null && catError != null -> ErrorCard(catError) { app.cloud.refresh(provider, force = true) }
                 data == null -> Skeleton()
                 region == null || priced == null -> ErrorCard("У ${info.name} сейчас нечего купить: нет тарифов ни в одном месте.") { app.cloud.refresh(provider, force = true) }
                 else -> {
@@ -539,7 +540,7 @@ private fun ProvidersScreen(app: App, initial: String?, busy: Boolean, onBusy: (
         verticalArrangement = Arrangement.spacedBy(Space.S),
     ) {
         Text(
-            "Приложение само купит сервер через API хостера и установит на него AmneziaWG. Токен API вводится один раз и хранится зашифрованным только на этом телефоне.",
+            "Приложение само купит сервер через API хостера и установит на него AmneziaWG. Токен API вводится один раз и хранится зашифрованным только на этом ${LocalUiPlatform.current.deviceWhere}.",
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(4.dp))

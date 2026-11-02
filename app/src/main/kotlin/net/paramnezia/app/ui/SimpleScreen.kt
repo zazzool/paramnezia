@@ -48,8 +48,8 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
     val update by app.updater.status.collectAsState()
     val servers = rememberServerCount(app)
     val p = protection(tunnel, servers)
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val paste = rememberPasteKey(app) { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show() }
+    val platform = LocalUiPlatform.current
+    val paste = rememberPasteKey(app) { platform.toast(it) }
 
     // Same rhythm as the full screen, one screen high: title, the button (or the "no servers"
     // hero), the status and the info panel; details one tap away.

@@ -1,0 +1,78 @@
+# End-to-end check of the Windows build on a windows-latest runner (administrator):
+# installs the real installer silently, talks to the service over its pipe the way the app does,
+# brings a tunnel up (Wintun adapter, address, route) and down, uses the "direct" proxy,
+# then uninstalls and checks that the service is gone.
+$ErrorActionPreference = 'Stop'
+$root = (Resolve-Path "$PSScriptRoot\..\..").Path
+$setup = Get-ChildItem "$root\desktop\build\installer\Paramnezia-Setup-*.exe" | Select-Object -First 1
+if (-not $setup) { throw "no installer" }
+
+function Ask($req) {
+    $pipe = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'paramnezia', [System.IO.Pipes.PipeDirection]::InOut)
+    $pipe.Connect(10000)
+    $w = New-Object System.IO.StreamWriter($pipe); $w.AutoFlush = $true
+    $r = New-Object System.IO.StreamReader($pipe)
+    $w.WriteLine(($req | ConvertTo-Json -Compress -Depth 5))
+    $line = $r.ReadLine()
+    $pipe.Dispose()
+    $resp = $line | ConvertFrom-Json
+    Write-Host "$($req.op) -> $line"
+    return $resp
+}
+function Hex32 { -join ((1..32) | ForEach-Object { '{0:x2}' -f (Get-Random -Maximum 256) }) }
+
+Write-Host "== install $($setup.Name)"
+$p = Start-Process $setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/TASKS=vpnfiles', '/LOG=install.log' -Wait -PassThru
+if ($p.ExitCode) { Get-Content install.log -Tail 40; throw "setup exit code $($p.ExitCode)" }
+$app = "${env:ProgramFiles}\Paramnezia"
+foreach ($f in 'Paramnezia.exe', 'service\paramnezia-service.exe', 'service\wintun.dll') {
+    if (-not (Test-Path "$app\$f")) { throw "missing $app\$f" }
+}
+if ((Get-ItemProperty 'Registry::HKEY_CLASSES_ROOT\.vpn').'(default)' -ne 'Paramnezia.Key') { throw ".vpn is not associated" }
+$svc = Get-Service ParamneziaTunnel
+for ($i = 0; $i -lt 30 -and $svc.Status -ne 'Running'; $i++) { Start-Sleep 1; $svc.Refresh() }
+if ($svc.Status -ne 'Running') { throw "service is $($svc.Status)" }
+
+$v = Ask @{ op = 'version' }
+if (-not $v.ok -or -not $v.version) { throw "version failed" }
+
+Write-Host "== tunnel up (dummy peer, only 10.123.0.0/16 routed, the runner keeps its network)"
+$uapi = "private_key=$(Hex32)`nreplace_peers=true`npublic_key=$(Hex32)`nendpoint=192.0.2.1:51820`npersistent_keepalive_interval=25`nallowed_ip=0.0.0.0/0`n"
+$up = Ask @{ op = 'up'; up = @{ name = 'ci'; uapi = $uapi; addresses = @('10.123.0.2/32'); routes = @('10.123.0.0/16'); dnsServers = @() } }
+if (-not $up.ok) { throw "up failed: $($up.error)" }
+$st = Ask @{ op = 'status' }
+if (-not $st.up -or $st.name -ne 'ci') { throw "status does not show the tunnel" }
+if ($st.stats -match 'private_key') { throw "status gives out the private key" }
+$nic = Get-NetAdapter -Name Paramnezia
+Write-Host "adapter: $($nic.InterfaceDescription) $($nic.Status)"
+$addr = Get-NetIPAddress -InterfaceAlias Paramnezia -AddressFamily IPv4 | Where-Object IPAddress -eq '10.123.0.2'
+if (-not $addr) { throw "address not set" }
+$route = Get-NetRoute -InterfaceAlias Paramnezia -DestinationPrefix '10.123.0.0/16' -ErrorAction SilentlyContinue
+if (-not $route) { throw "route not set" }
+# Traffic into the tunnel is handled by amneziawg-go: a ping makes it try a handshake (tx grows).
+ping -n 2 -w 500 10.123.0.1 | Out-Null
+$st = Ask @{ op = 'status' }
+if ($st.stats -notmatch 'tx_bytes=[1-9]') { throw "no traffic went into the tunnel: $($st.stats)" }
+
+Write-Host "== direct proxy (the app's way around the tunnel)"
+$d = Ask @{ op = 'direct' }
+if (-not $d.ok -or -not $d.socks) { throw "direct failed" }
+$ip = curl.exe -sS --max-time 20 --socks5-hostname "$($d.socksUser):$($d.socksPass)@$($d.socks)" https://api.ipify.org
+if ($LASTEXITCODE -or -not $ip) { throw "no answer through the direct proxy" }
+Write-Host "direct address: $ip"
+$bad = curl.exe -s --max-time 10 --socks5-hostname "x:y@$($d.socks)" https://api.ipify.org
+if ($LASTEXITCODE -eq 0) { throw "the direct proxy accepted wrong credentials" }
+
+Write-Host "== tunnel down"
+$down = Ask @{ op = 'down' }
+if (-not $down.ok) { throw "down failed" }
+Start-Sleep 2
+if (Get-NetAdapter -Name Paramnezia -ErrorAction SilentlyContinue) { throw "adapter still present after down" }
+
+Write-Host "== uninstall"
+$p = Start-Process "$app\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+Start-Sleep 3
+if (Get-Service ParamneziaTunnel -ErrorAction SilentlyContinue) { throw "service still installed" }
+if (Test-Path "$app\service\paramnezia-service.exe") { throw "files left behind" }
+Write-Host "OK"
+exit 0

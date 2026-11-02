@@ -1,4 +1,4 @@
-package main
+package dnsfilter
 
 import (
 	"encoding/binary"
@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
-	"golang.org/x/sys/unix"
 )
 
 func query(id uint16, name string, qtype uint16) []byte {
@@ -147,18 +146,14 @@ func TestSplitDNS(t *testing.T) {
 	tunnelAddr, tunnelCount := fakeResolver(t, [4]byte{1, 1, 1, 1})
 	directAddr, _ := fakeResolver(t, [4]byte{77, 88, 55, 60})
 	dc, _ := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-	f, _ := dc.File()
-	dc.Close()
-	directFd, _ := unix.Dup(int(f.Fd()))
-	f.Close()
 
 	rules.Store(parseRules("mc.yandex.ru", "ru", ""))
 	ft := &fakeTun{in: make(chan []byte, 8), out: make(chan []byte, 8)}
-	cfg, ok := parseDNSConfig("virtual=198.18.0.53\ntunnel=" + tunnelAddr + "\ndirect=" + directAddr)
+	cfg, ok := ParseConfig("virtual=198.18.0.53\ntunnel=" + tunnelAddr + "\ndirect=" + directAddr)
 	if !ok {
 		t.Fatal("config")
 	}
-	dt, err := newDNSTun(ft, cfg, directFd)
+	dt, err := NewTun(ft, cfg, dc)
 	if err != nil {
 		t.Fatal(err)
 	}

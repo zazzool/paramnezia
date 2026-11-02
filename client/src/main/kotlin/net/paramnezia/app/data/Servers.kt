@@ -1,6 +1,5 @@
 package net.paramnezia.app.data
 
-import android.os.Build
 import net.paramnezia.app.fleet.FleetManager
 import net.paramnezia.core.amnezia.AmneziaFormat
 import net.paramnezia.core.amnezia.AmneziaKey
@@ -19,6 +18,8 @@ import java.util.UUID
 class Servers(
     private val repo: Repo,
     private val fleet: FleetManager,
+    /** This device's model, for client names on servers ("Paramnezia <model>"). */
+    private val deviceModel: String,
     /** A server was just deployed: put the family page on it (see Links.preparePage). */
     private val onServerReady: (SshCredentials) -> Unit = {},
 ) {
@@ -36,7 +37,7 @@ class Servers(
     suspend fun import(text: String): Imported = withContext(Dispatchers.IO) {
         val t = net.paramnezia.core.amnezia.KeyText.extract(text)
         if (Invite.read(t) != null) {
-            if (!fleet.join(t, Build.MODEL)) throw ConfigException("Приглашение повреждено или устарело")
+            if (!fleet.join(t, deviceModel)) throw ConfigException("Приглашение повреждено или устарело")
             return@withContext Imported.JoinedFleet
         }
         val added = if (t.contains("[Interface]", ignoreCase = true)) {
@@ -48,7 +49,7 @@ class Servers(
                 val tunnel = p.tunnel ?: p.ssh?.let { ssh ->
                     // Full-access key without a client config: make ourselves a client on the server.
                     if (p.protocol == Protocol.XRAY) null
-                    else manager.addClient(ssh, WgKey.generatePrivate(), "Paramnezia ${Build.MODEL}", p.protocol,
+                    else manager.addClient(ssh, WgKey.generatePrivate(), "Paramnezia ${deviceModel}", p.protocol,
                         dns = p.dns.ifEmpty { listOf(AmneziaFormat.DEFAULT_DNS1, AmneziaFormat.DEFAULT_DNS2) })
                 } ?: return@mapNotNull null
                 StoredProfile(UUID.randomUUID().toString(), p.name, WgQuick.write(tunnel), p.protocol.name, p.ssh)
@@ -72,7 +73,7 @@ class Servers(
             manager.install(ssh, ServerManager.InstallOptions(), onStep)
             Protocol.AWG
         }
-        val tunnel = manager.addClient(ssh, WgKey.generatePrivate(), "Paramnezia ${Build.MODEL}", protocol)
+        val tunnel = manager.addClient(ssh, WgKey.generatePrivate(), "Paramnezia ${deviceModel}", protocol)
         onStep(ServerManager.Step.DONE)
         val profile = StoredProfile(UUID.randomUUID().toString(), name.ifBlank { ssh.host }, WgQuick.write(tunnel), protocol.name, ssh)
         repo.update { s -> s.copy(profiles = s.profiles + profile, activeProfile = profile.id) }

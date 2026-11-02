@@ -1,6 +1,5 @@
 package net.paramnezia.app.ui
 
-import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
@@ -18,7 +17,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Canvas
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.dp
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
@@ -28,11 +29,17 @@ import net.paramnezia.core.amnezia.AmneziaKey
 import net.paramnezia.core.amnezia.AmneziaQr
 import kotlinx.coroutines.delay
 
+/** One module per pixel, drawn with Compose's own canvas (the same code on Android and Windows). */
 private fun qrBitmap(text: String): ImageBitmap {
     val m = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, 0, 0, mapOf(EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.L, EncodeHintType.MARGIN to 2))
-    val bmp = Bitmap.createBitmap(m.width, m.height, Bitmap.Config.ARGB_8888)
-    for (y in 0 until m.height) for (x in 0 until m.width) bmp.setPixel(x, y, if (m[x, y]) 0xFF000000.toInt() else 0xFFFFFFFF.toInt())
-    return bmp.asImageBitmap()
+    val bmp = ImageBitmap(m.width, m.height)
+    val canvas = Canvas(bmp)
+    canvas.drawRect(Rect(0f, 0f, m.width.toFloat(), m.height.toFloat()), Paint().apply { color = Color.White })
+    val black = Paint().apply { color = Color.Black; isAntiAlias = false }
+    for (y in 0 until m.height) for (x in 0 until m.width) {
+        if (m[x, y]) canvas.drawRect(Rect(x.toFloat(), y.toFloat(), x + 1f, y + 1f), black)
+    }
+    return bmp
 }
 
 /**

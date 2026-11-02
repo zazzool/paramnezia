@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import net.paramnezia.app.BuildConfig
 import net.paramnezia.app.data.Repo
+import net.paramnezia.app.platform.ReleaseSource
 import net.paramnezia.app.tunnel.Net
 import net.paramnezia.core.fleet.Ed25519
 import net.paramnezia.core.ota.Release
@@ -40,7 +41,7 @@ class Updater(
     private val ed: Ed25519,
     private val scope: CoroutineScope,
     private val inFleet: () -> Boolean,
-) {
+) : ReleaseSource {
     sealed interface Status {
         data object Idle : Status
         data class Available(val release: Release) : Status
@@ -67,7 +68,7 @@ class Updater(
      * The newest signed release this device knows that others may install: the one it runs, or a
      * newer one. Invite links and server copies point at its public URLs.
      */
-    fun shareable(): Pair<Release, String>? = synchronized(checker) {
+    override fun shareable(): Pair<Release, String>? = synchronized(checker) {
         (checker.best ?: checker.installed)?.let { (r, s) -> r to ReleaseCodec.encode(s) }
     }
 
@@ -89,7 +90,7 @@ class Updater(
     }
 
     /** Reads release.json from the public address and, in a fleet, from the server. A few KB. */
-    suspend fun check() = withContext(Dispatchers.IO) {
+    override suspend fun check(): Unit = withContext(Dispatchers.IO) {
         if (!enabled) return@withContext
         val urls = listOfNotNull(BuildConfig.UPDATE_URL.takeIf { it.startsWith("https://") },
             FleetPublisher.TUNNEL_RELEASE_URL.takeIf { inFleet() })

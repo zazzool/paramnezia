@@ -1,5 +1,7 @@
 package net.paramnezia.app
 
+import net.paramnezia.app.platform.Log as PLog
+import net.paramnezia.app.data.Vault
 import net.paramnezia.app.data.Cloud
 import android.app.Application
 import android.net.VpnService
@@ -91,7 +93,16 @@ class App : Application(), TunnelHost {
 
     override fun onCreate() {
         super.onCreate()
-        repo = Repo(this)
+        // Shared client code logs through the platform logger; here that is logcat.
+        PLog.sink = PLog.Sink { level, tag, msg, e ->
+            when (level) {
+                PLog.Level.DEBUG -> Log.d(tag, msg, e)
+                PLog.Level.INFO -> Log.i(tag, msg, e)
+                PLog.Level.WARN -> Log.w(tag, msg, e)
+                PLog.Level.ERROR -> Log.e(tag, msg, e)
+            }
+        }
+        repo = Repo(Vault(this))
         net = Net(this)
         // Server management goes over the phone's own network while our VPN is up, then through it.
         SshConnection.routes = {
@@ -103,7 +114,7 @@ class App : Application(), TunnelHost {
         // Every new server gets the page to share with family and friends, in the background.
         val pageOn: (net.paramnezia.core.profile.SshCredentials) -> Unit = { ssh -> scope.launch { runCatching { links.preparePage(ssh) } } }
         fleet.onServerReady = pageOn
-        servers = Servers(repo, fleet, pageOn)
+        servers = Servers(repo, fleet, android.os.Build.MODEL, pageOn)
 
         // DNS rules follow the settings; loading them is a one-off ~1 ms parse in Go.
         scope.launch(Dispatchers.IO) {
@@ -116,7 +127,7 @@ class App : Application(), TunnelHost {
         // SSH publishing this causes never starts from the background. The open app catches up in
         // healServers.
         scope.launch(Dispatchers.IO) {
-            repo.state.map { it.settings to (it.fleet?.adminSeed != null && it.fleet.sharePolicy) }.distinctUntilChanged().drop(1)
+            repo.state.map { s -> s.settings to (s.fleet?.let { f -> f.adminSeed != null && f.sharePolicy } == true) }.distinctUntilChanged().drop(1)
                 .collectLatest { (settings, share) ->
                     if (!share) return@collectLatest
                     delay(3_000) // a burst of toggles becomes one version

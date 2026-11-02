@@ -14,7 +14,10 @@ package main
 import "C"
 
 import (
+	"errors"
 	"math"
+	"net"
+	"os"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -23,6 +26,8 @@ import (
 	"github.com/amnezia-vpn/amneziawg-go/v3/device"
 	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
 	"golang.org/x/sys/unix"
+
+	"net.paramnezia/tunnel/dnsfilter"
 )
 
 var (
@@ -53,15 +58,23 @@ func pnTurnOn(interfaceName string, tunFd int32, settings string, dns string, dn
 		logger.Errorf("CreateUnmonitoredTUNFromFD: %v", err)
 		return -1
 	}
-	if cfg, ok := parseDNSConfig(dns); ok {
-		if wrapped, err := newDNSTun(tunDev, cfg, int(dnsDirectFd)); err == nil {
+	// The direct DNS socket is ours from here on and is closed exactly once: by udpFromFd (which keeps
+	// a duplicate) or right here. A second close could hit a socket opened meanwhile under the same
+	// number, such as the DNS filter's own tunnel socket.
+	var direct *net.UDPConn
+	if dnsDirectFd >= 0 {
+		direct, _ = udpFromFd(int(dnsDirectFd))
+	}
+	if cfg, ok := dnsfilter.ParseConfig(dns); ok {
+		if wrapped, err := dnsfilter.NewTun(tunDev, cfg, direct); err == nil {
 			tunDev = wrapped
+			direct = nil
 		} else {
 			logger.Errorf("DNS filter disabled: %v", err)
 		}
 	}
-	if dnsDirectFd >= 0 {
-		unix.Close(int(dnsDirectFd)) // newDNSTun keeps its own duplicate
+	if direct != nil {
+		direct.Close()
 	}
 	logger.Verbosef("Attaching to interface %v", name)
 	dev := device.NewDevice(tunDev, conn.NewStdNetBind(), logger)
@@ -169,6 +182,32 @@ func pnSetConfig(handle int32, settings string) int32 {
 	}
 	return 0
 }
+
+func udpFromFd(fd int) (*net.UDPConn, error) {
+	f := os.NewFile(uintptr(fd), "pn-dns-direct")
+	defer f.Close() // FileConn dups the descriptor
+	c, err := net.FileConn(f)
+	if err != nil {
+		return nil, err
+	}
+	u, ok := c.(*net.UDPConn)
+	if !ok {
+		c.Close()
+		return nil, errors.New("not a UDP socket")
+	}
+	return u, nil
+}
+
+// pnSetDnsRules replaces the block / direct / allow lists (one rule per line, `full:` for exact
+// names) for all tunnels, effective for the next query.
+//
+//export pnSetDnsRules
+func pnSetDnsRules(block, direct, allow string) { dnsfilter.SetRules(block, direct, allow) }
+
+// pnDnsBlocked returns how many queries were blocked since the library was loaded.
+//
+//export pnDnsBlocked
+func pnDnsBlocked() int64 { return dnsfilter.Blocked() }
 
 //export pnVersion
 func pnVersion() *C.char {

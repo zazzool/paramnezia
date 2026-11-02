@@ -1,6 +1,5 @@
 package net.paramnezia.app.ui
 
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -8,7 +7,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -30,10 +28,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.journeyapps.barcodescanner.ScanContract
-import com.journeyapps.barcodescanner.ScanOptions
 import net.paramnezia.app.App
 import net.paramnezia.app.data.Cloud
 import net.paramnezia.app.data.Servers
@@ -45,7 +40,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> Unit, toast: (String) -> Unit, onDone: () -> Unit, onConnect: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
+    val platform = LocalUiPlatform.current
     val clipboard = LocalClipboardManager.current
     var text by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -85,20 +80,18 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
         if (pending != null) { onConsumed(); runImport(connectAfter = true) { app.servers.import(pending) } }
     }
 
-    lateinit var scanLauncher: androidx.activity.result.ActivityResultLauncher<ScanOptions>
-    scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
-        val contents = result.contents ?: return@rememberLauncherForActivityResult
+    var scanAgain by remember { mutableStateOf(0) }
+    val scan = platform.rememberQrScanner { contents ->
         val chunk = AmneziaQr.parseChunk(contents)
-        if (chunk == null) { runImport { app.servers.import(contents) }; return@rememberLauncherForActivityResult }
+        if (chunk == null) { runImport { app.servers.import(contents) }; return@rememberQrScanner }
         // AmneziaVPN shows long keys as a series of QR codes: keep scanning until all have been seen.
         val payload = assembler.offer(chunk)
         if (payload != null) { qrProgress = null; runImport { app.servers.importQrPayload(payload) } }
-        else { qrProgress = "QR ${assembler.received} из ${assembler.expected}"; scanLauncher.launch(scanOptions()) }
+        else { qrProgress = "QR ${assembler.received} из ${assembler.expected}"; scanAgain++ }
     }
-    val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        val content = uri?.let { runCatching { context.contentResolver.openInputStream(it)?.use { s -> s.reader().readText() } }.getOrNull() }
-        if (content != null) runImport { app.servers.import(content) }
-    }
+    // The next code of a series: opened again once the result of the previous one is handled.
+    LaunchedEffect(scanAgain) { if (scanAgain > 0) scan() }
+    val pickFile = platform.rememberFilePicker { content -> runImport { app.servers.import(content) } }
 
     Column(
         modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = Space.M, vertical = Space.S),
@@ -115,8 +108,8 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
             runImport(source = clip) { app.servers.import(clip) }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            SmallTile(Glyph.Qr, "QR-код", Modifier.weight(1f), enabled = !busy) { scanLauncher.launch(scanOptions()) }
-            SmallTile(Glyph.File, "Файл", Modifier.weight(1f), enabled = !busy) { fileLauncher.launch(arrayOf("*/*")) }
+            SmallTile(Glyph.Qr, platform.qrLabel, Modifier.weight(1f), enabled = !busy) { scan() }
+            SmallTile(Glyph.File, "Файл", Modifier.weight(1f), enabled = !busy) { pickFile() }
             SmallTile(Glyph.Keyboard, "Ввести", Modifier.weight(1f), selected = manual, enabled = !busy) {
                 manual = !manual; typeNow = manual; keyError = null
             }
@@ -146,13 +139,6 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
         DeployCard(app, toast, onDone)
         Spacer(Modifier.height(Space.M))
     }
-}
-
-private fun scanOptions() = ScanOptions().apply {
-    setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-    setBeepEnabled(false)
-    setOrientationLocked(false)
-    setPrompt("Наведите камеру на QR-код")
 }
 
 /** Own server: bought from a hoster through its API, or an existing VPS over SSH. */
@@ -197,7 +183,7 @@ private fun DeployCard(app: App, toast: (String) -> Unit, onDone: () -> Unit) {
                 }
             },
         ) { Text(if (running) "Устанавливаю…" else "Развернуть сервер") }
-        Text("Совместим с AmneziaVPN. Пароль хранится зашифрованным только на этом телефоне.",
+        Text("Совместим с AmneziaVPN. Пароль хранится зашифрованным только на этом ${LocalUiPlatform.current.deviceWhere}.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

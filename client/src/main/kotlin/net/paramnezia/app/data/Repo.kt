@@ -1,7 +1,7 @@
 package net.paramnezia.app.data
 
-import android.content.Context
-import android.util.Log
+import net.paramnezia.app.platform.Log
+import net.paramnezia.app.platform.StateStore
 import net.paramnezia.deploy.HostKeyStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -13,12 +13,11 @@ import kotlin.concurrent.thread
 /**
  * The app's single source of truth: an in-memory state written through to the [Vault].
  *
- * The vault is decrypted on a background thread as soon as the process starts, so the first frame
- * never waits for the Keystore: the UI starts from [AppState] defaults and recomposes a few
+ * The store is decrypted on a background thread as soon as the process starts, so the first frame
+ * never waits for it: the UI starts from [AppState] defaults and recomposes a few
  * milliseconds later. Code that needs the real state ([current], [update]) waits for the load.
  */
-class Repo(context: Context) {
-    private val vault = Vault(context)
+class Repo(private val vault: StateStore) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
     private val loaded = CountDownLatch(1)
 
