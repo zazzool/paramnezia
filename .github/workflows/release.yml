@@ -78,3 +78,71 @@ jobs:
       - name: Attach release.json to the GitHub release
         env: { GH_TOKEN: "${{ github.token }}" }
         run: gh release upload "$VERSION" release.json --clobber
+
+  # Paramnezia for Windows (docs/WINDOWS.md): the installer next to the APK, and its own signed
+  # release-windows.json (package net.paramnezia.windows) that the Windows app checks.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#release/}" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: tunnel/src/main/go/go.mod, cache-dependency-path: tunnel/src/main/go/go.sum }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Service, app image and installer
+        env:
+          PN_VERSION_CODE: ${{ github.run_number }}
+          PN_VERSION_NAME: ${{ env.VERSION }}
+        run: .github/scripts/windows-build.ps1
+        shell: pwsh
+      - name: Installs, connects the adapter, uninstalls
+        run: .github/scripts/windows-service-check.ps1
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with: { name: paramnezia-windows, path: desktop/build/installer/*.exe }
+
+  windows-publish:
+    needs: [release, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        run: echo "VERSION=${GITHUB_REF_NAME#release/}" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/download-artifact@v4
+        with: { name: paramnezia-windows, path: win }
+      - name: Open the release key
+        env:
+          PN_KEYS_PASSWORD: ${{ secrets.PN_KEYS_PASSWORD }}
+        run: |
+          k="$RUNNER_TEMP/keys"; mkdir -p "$k"
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in keys/release-keys.enc -pass env:PN_KEYS_PASSWORD | tar x -C "$k"
+          while IFS='=' read -r name value; do
+            [ -n "$name" ] || continue
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done < "$k/release.env"
+      - name: Upload the installer and sign release-windows.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLIC_BASE: "https://github.com/${{ github.repository }}/releases/download/${{ env.VERSION }}"
+        run: |
+          ./gradlew -Pparamnezia.jvmOnly=true --no-configuration-cache :releasetool:installDist
+          exe="Paramnezia-Setup-${VERSION#v}.exe"
+          cp "win/$exe" "$exe"
+          gh release upload "$VERSION" "$exe" --clobber
+          releasetool/build/install/releasetool/bin/releasetool sign \
+            --apk "$exe" \
+            --package net.paramnezia.windows \
+            --min-sdk 0 \
+            --version-code "${{ github.run_number }}" \
+            --version-name "$VERSION" \
+            --url "${PUBLIC_BASE}/$exe" \
+            --out release-windows.json
+          gh release upload "$VERSION" release-windows.json --clobber

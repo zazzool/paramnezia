@@ -129,7 +129,7 @@ fun EmptyHero(follower: Boolean, onAdd: (() -> Unit)?, onPaste: () -> Unit, modi
         FitText("Нет ни одного сервера", MaterialTheme.typography.headlineSmall, align = TextAlign.Center, min = 16.sp)
         Spacer(Modifier.height(Space.S))
         Text(
-            if (follower) "Откройте на этом телефоне приглашение от администратора или вставьте ключ vpn://."
+            if (follower) "Откройте на этом ${LocalUiPlatform.current.deviceWhere} приглашение от администратора или вставьте ключ vpn://."
             else "Добавьте сервер, и кнопка включения появится здесь.",
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = Space.M),

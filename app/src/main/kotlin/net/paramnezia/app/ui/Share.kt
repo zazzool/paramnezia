@@ -27,7 +27,7 @@ object Share {
         val dir = File(context.cacheDir, "share").apply { mkdirs() }
         // Old files hold keys: keep only today's.
         dir.listFiles()?.forEach { if (System.currentTimeMillis() - it.lastModified() > 24 * 3600_000L) it.delete() }
-        val file = File(dir, fileName(name))
+        val file = File(dir, settingsFileName(name))
         file.writeText(key.trim() + "\n")
         val uri = FileProvider.getUriForFile(context, context.packageName + ".share", file)
         val send = Intent(Intent.ACTION_SEND)
@@ -38,9 +38,4 @@ object Share {
         context.startActivity(notToSelf(context, Intent.createChooser(send, "Отправить файл настроек").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)))
     }
 
-    /** Safe in every messenger and file system; Cyrillic stays. */
-    fun fileName(name: String): String {
-        val clean = name.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "").trim().replace(Regex("\\s+"), "-").take(40)
-        return (clean.ifEmpty { "paramnezia" }) + ".vpn"
-    }
 }

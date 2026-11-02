@@ -3,6 +3,7 @@ package net.paramnezia.app.data
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import net.paramnezia.app.platform.StateStore
 import java.io.File
 import java.io.FileOutputStream
 import java.security.KeyStore
@@ -21,7 +22,7 @@ import javax.crypto.spec.GCMParameterSpec
  * if neither can be read, the unreadable file is moved aside instead of being overwritten, so nothing
  * is destroyed that a later version (or a developer) could still recover.
  */
-class Vault(context: Context) {
+class Vault(context: Context) : StateStore {
     private val dir = context.noBackupFilesDir
     private val file = File(dir, "state.bin")
     private val backup = File(dir, "state.bak")
@@ -30,10 +31,10 @@ class Vault(context: Context) {
     @Volatile private var fileGood = false
 
     /** Why the last [read] fell back, for logs; null when the main file was fine. */
-    @Volatile var lastProblem: String? = null
+    @Volatile override var lastProblem: String? = null
         private set
 
-    fun read(): String? {
+    override fun read(): String? {
         if (!file.exists() && !backup.exists()) return null
         decrypt(file)?.let { lastProblem = null; fileGood = true; return it }
         lastProblem = if (file.exists()) "state.bin unreadable" else "state.bin missing"
@@ -44,14 +45,14 @@ class Vault(context: Context) {
     }
 
     /** Moves the stored files aside (kept, never deleted) so the next write starts a fresh state. */
-    fun quarantine() {
+    override fun quarantine() {
         val stamp = System.currentTimeMillis()
         if (file.exists()) file.renameTo(File(dir, "state.bin.unreadable-$stamp"))
         if (backup.exists()) backup.renameTo(File(dir, "state.bak.unreadable-$stamp"))
         fileGood = false
     }
 
-    fun write(text: String) {
+    override fun write(text: String) {
         val cipher = Cipher.getInstance(TRANSFORM)
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val out = cipher.iv + cipher.doFinal(text.toByteArray())

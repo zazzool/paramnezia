@@ -1,6 +1,6 @@
 package net.paramnezia.app.fleet
 
-import android.util.Log
+import net.paramnezia.app.platform.Log
 import net.paramnezia.app.data.Repo
 import net.paramnezia.app.data.StoredLink
 import net.paramnezia.app.data.StoredProfile
@@ -9,7 +9,7 @@ import net.paramnezia.core.amnezia.AmneziaKey
 import net.paramnezia.core.crypto.WgKey
 import net.paramnezia.core.profile.Protocol
 import net.paramnezia.core.profile.SshCredentials
-import net.paramnezia.app.ota.Updater
+import net.paramnezia.app.platform.ReleaseSource
 import net.paramnezia.deploy.FleetPublisher
 import net.paramnezia.deploy.InviteLinks
 import net.paramnezia.deploy.ServerManager
@@ -29,7 +29,7 @@ import net.paramnezia.deploy.SshException
 class Links(
     private val repo: Repo,
     private val fleet: FleetManager,
-    private val updater: () -> Updater,
+    private val updater: () -> ReleaseSource,
     private val scope: CoroutineScope,
 ) {
     private val links = InviteLinks(repo.hostKeys)

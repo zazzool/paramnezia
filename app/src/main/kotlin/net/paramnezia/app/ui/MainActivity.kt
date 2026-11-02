@@ -1,6 +1,6 @@
 package net.paramnezia.app.ui
 
-import net.paramnezia.app.tunnel.readUpTo
+import net.paramnezia.app.platform.readUpTo
 
 import android.content.Intent
 import android.os.Bundle
@@ -64,8 +64,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         handle(intent)
+        val platform = AndroidUiPlatform(this)
         setContent {
             PnTheme {
+              androidx.compose.runtime.CompositionLocalProvider(LocalUiPlatform provides platform) {
                 Root(app, incoming, onConnect = ::connect)
                 val refused by vpnRefused.collectAsState()
                 if (refused) VpnRefusedDialog(
@@ -75,6 +77,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onDismiss = { vpnRefused.value = false },
                 )
+              }
             }
         }
     }

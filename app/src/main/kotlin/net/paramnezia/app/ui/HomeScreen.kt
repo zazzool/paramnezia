@@ -39,7 +39,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -66,8 +65,8 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer:
     val tunnel by TunnelRuntime.state.collectAsState()
     val servers = rememberServerCount(app)
     val p = protection(tunnel, servers)
-    val context = LocalContext.current
-    val paste = rememberPasteKey(app) { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_SHORT).show() }
+    val platform = LocalUiPlatform.current
+    val paste = rememberPasteKey(app) { platform.toast(it) }
     var details by remember { mutableStateOf(false) }
 
     Column(modifier.fillMaxSize().padding(horizontal = Space.M + 4.dp).padding(top = Space.S, bottom = Space.M)) {

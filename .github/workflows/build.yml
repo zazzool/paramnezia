@@ -25,9 +25,13 @@ jobs:
       - name: Tests (the deploy e2e installs a real AmneziaWG server in Docker and handshakes with it)
         env: { PN_E2E: "1" }
         run: ./gradlew -Pparamnezia.jvmOnly=true test :releasetool:installDist --no-configuration-cache
+      - name: Windows app screens with sample data (desktop/build/screenshots)
+        run: ./gradlew -Pparamnezia.jvmOnly=true :desktop:screenshots --no-configuration-cache
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: jvm-test-reports, path: "**/build/reports/tests/", if-no-files-found: ignore }
+      - uses: actions/upload-artifact@v4
+        with: { name: windows-screens, path: desktop/build/screenshots/*.png }
 
   go:
     name: Native tunnel (Go tests)
@@ -43,6 +47,32 @@ jobs:
           export CGO_CFLAGS="-I$JAVA_HOME/include -I$JAVA_HOME/include/linux"
           go vet ./...
           go test -race -count=1 ./...
+      - name: Windows service (vet for amd64 and arm64)
+        working-directory: tunnel/src/main/go
+        run: |
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./windows/...
+          GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go vet ./windows/...
+
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: tunnel/src/main/go/go.mod, cache-dependency-path: tunnel/src/main/go/go.sum }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Service, app image and installer
+        env:
+          PN_VERSION_CODE: ${{ github.run_number }}
+        run: .github/scripts/windows-build.ps1
+        shell: pwsh
+      - name: Service answers on its pipe (installs, starts, asks for the version, uninstalls)
+        run: .github/scripts/windows-service-check.ps1
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with: { name: paramnezia-windows, path: desktop/build/installer/*.exe }
 
   android:
     name: Android APK

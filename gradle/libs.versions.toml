@@ -18,6 +18,9 @@ datastore = "1.2.0"
 navigation = "2.8.5"
 profileinstaller = "1.4.1"
 desugar = "2.1.4"
+composeMultiplatform = "1.10.3"
+cmpIcons = "1.7.3"
+jna = "5.18.1"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -50,7 +53,12 @@ android-desugar = { module = "com.android.tools:desugar_jdk_libs", version.ref =
 
 android-gradle = { module = "com.android.tools.build:gradle", version.ref = "agp" }
 
+# Windows app (desktop/): Compose Multiplatform, the same UI toolkit as the Android app.
+cmp-icons-core = { module = "org.jetbrains.compose.material:material-icons-core", version.ref = "cmpIcons" }
+jna-platform = { module = "net.java.dev.jna:jna-platform", version.ref = "jna" }
+
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "composeMultiplatform" }

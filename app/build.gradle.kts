@@ -79,6 +79,7 @@ kotlin {
 dependencies {
     implementation(project(":tunnel"))
     implementation(project(":deploy"))
+    implementation(project(":client"))
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.core.ktx)

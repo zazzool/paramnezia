@@ -1,11 +1,11 @@
 package net.paramnezia.app.fleet
 
-import android.util.Log
+import net.paramnezia.app.platform.Log
 import net.paramnezia.app.data.Repo
 import net.paramnezia.app.data.Settings
 import net.paramnezia.app.data.StoredFleet
 import net.paramnezia.core.fleet.FleetPolicy
-import net.paramnezia.app.tunnel.Net
+import net.paramnezia.app.platform.Http
 import net.paramnezia.core.config.TunnelConfig
 import net.paramnezia.core.crypto.WgKey
 import net.paramnezia.core.fleet.Ed25519
@@ -43,7 +43,7 @@ import net.paramnezia.core.ota.Release
  */
 class FleetManager(
     private val repo: Repo,
-    private val net: Net,
+    private val net: Http,
     private val ed: Ed25519,
     private val scope: CoroutineScope,
     /** Called when a newer manifest arrived, so the tunnel can switch servers at once. */

@@ -2,6 +2,8 @@ package net.paramnezia.app.tunnel
 
 import android.content.Context
 import android.net.Network
+import net.paramnezia.app.platform.Http
+import net.paramnezia.app.platform.readUpTo
 import net.paramnezia.tunnel.TunnelRuntime
 import java.io.File
 import java.net.HttpURLConnection
@@ -12,7 +14,7 @@ import javax.net.SocketFactory
  * Two ways out: through whatever the system routes (the tunnel, when it is up) and straight over the
  * physical network. Channels that must work while our server is blocked use both.
  */
-class Net(private val context: Context) {
+class Net(private val context: Context) : Http {
     fun direct(): Network? = TunnelRuntime.directNetwork(context)
 
     fun directSockets(): SocketFactory = direct()?.socketFactory ?: SocketFactory.getDefault()
@@ -21,7 +23,9 @@ class Net(private val context: Context) {
      * GET [url], first the normal way (split routing decides: tunnel or direct), then, if
      * [fallbackDirect], over the physical network. Null if all fail.
      */
-    fun get(url: String, maxBytes: Int = 1 shl 20, fallbackDirect: Boolean = true, fresh: Boolean = false, timeoutMs: Int = 20_000): String? {
+    override fun hasDirect(): Boolean = direct() != null
+
+    override fun get(url: String, maxBytes: Int, fallbackDirect: Boolean, fresh: Boolean, timeoutMs: Int): String? {
         for (network in if (fallbackDirect) listOf(null, direct()) else listOf(null)) {
             runCatching {
                 val c = open(url, network, timeoutMs)
@@ -39,15 +43,16 @@ class Net(private val context: Context) {
         return null
     }
 
-    /** One answer of [fetch]: the body, or why there is none (for checks that must say what failed). */
-    data class Fetched(val body: String?, val error: String?)
+    override fun fetch(url: String, direct: Boolean, maxBytes: Int, timeoutMs: Int, userAgent: String): Http.Fetched =
+        if (!direct) fetch(url, null as Network?, maxBytes, timeoutMs, userAgent)
+        else this.direct()?.let { fetch(url, it, maxBytes, timeoutMs, userAgent) } ?: Http.Fetched(null, "нет сети")
 
     /**
      * One GET on a fresh connection (never a pooled one: a socket opened before the tunnel came up
      * keeps its old route), over [network] or, when null, the way the system routes it. Unlike
      * [get] it reports the failure: HTTP code, timeout, DNS, TLS, no network.
      */
-    fun fetch(url: String, network: Network? = null, maxBytes: Int = 4096, timeoutMs: Int = 8_000, userAgent: String = "paramnezia"): Fetched =
+    fun fetch(url: String, network: Network?, maxBytes: Int = 4096, timeoutMs: Int = 8_000, userAgent: String = "paramnezia"): Http.Fetched =
         try {
             val c = open(url, network, timeoutMs)
             c.connectTimeout = minOf(timeoutMs, 6_000)
@@ -55,21 +60,21 @@ class Net(private val context: Context) {
             c.setRequestProperty("Connection", "close"); c.useCaches = false
             try {
                 val code = c.responseCode
-                if (code == 200) Fetched(c.inputStream.use { it.readUpTo(maxBytes) }.decodeToString(), null)
-                else Fetched(null, "HTTP $code")
+                if (code == 200) Http.Fetched(c.inputStream.use { it.readUpTo(maxBytes) }.decodeToString(), null)
+                else Http.Fetched(null, "HTTP $code")
             } finally { c.disconnect() }
-        } catch (e: java.net.SocketTimeoutException) { Fetched(null, "нет ответа")
-        } catch (e: java.net.UnknownHostException) { Fetched(null, "имя не найдено")
-        } catch (e: javax.net.ssl.SSLException) { Fetched(null, "ошибка TLS")
-        } catch (e: java.net.ConnectException) { Fetched(null, "соединение отклонено")
-        } catch (e: Exception) { Fetched(null, e.javaClass.simpleName) }
+        } catch (e: java.net.SocketTimeoutException) { Http.Fetched(null, "нет ответа")
+        } catch (e: java.net.UnknownHostException) { Http.Fetched(null, "имя не найдено")
+        } catch (e: javax.net.ssl.SSLException) { Http.Fetched(null, "ошибка TLS")
+        } catch (e: java.net.ConnectException) { Http.Fetched(null, "соединение отклонено")
+        } catch (e: Exception) { Http.Fetched(null, e.javaClass.simpleName) }
 
     /**
      * GET [url] through Orbot's SOCKS port, when Orbot is running. The last way to reach the fleet's
      * HTTPS mirrors when both our server and the direct path are blocked. No Tor code in our app:
      * nothing happens unless the user installed and started Orbot.
      */
-    fun getViaTor(url: String, maxBytes: Int = 1 shl 20): String? {
+    override fun getViaTor(url: String, maxBytes: Int): String? {
         if (!url.startsWith("https://") || !torAvailable()) return null
         return runCatching {
             val proxy = java.net.Proxy(java.net.Proxy.Type.SOCKS, java.net.InetSocketAddress(TOR_HOST, TOR_PORT))
@@ -111,16 +116,4 @@ class Net(private val context: Context) {
         const val TOR_HOST = "127.0.0.1"
         const val TOR_PORT = 9050
     }
-}
-
-/** Reads at most [max] bytes (InputStream.readNBytes needs Android 13). */
-fun java.io.InputStream.readUpTo(max: Int): ByteArray {
-    val out = java.io.ByteArrayOutputStream()
-    val buf = ByteArray(16 * 1024)
-    while (out.size() < max) {
-        val n = read(buf, 0, minOf(buf.size, max - out.size()))
-        if (n < 0) break
-        out.write(buf, 0, n)
-    }
-    return out.toByteArray()
 }

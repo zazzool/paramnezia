@@ -1,10 +1,10 @@
 package net.paramnezia.app.net
 
-import net.paramnezia.app.tunnel.Net
+import net.paramnezia.app.platform.Http
 import net.paramnezia.core.net.GeoAnswer
 import net.paramnezia.core.net.GeoIp
 import net.paramnezia.core.net.GeoVerdict
-import android.util.Log
+import net.paramnezia.app.platform.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -71,7 +71,11 @@ data class Visibility(
  * unrelated services; that is the route Russian sites take when split tunneling is on. When
  * Russian sites are not split off at all, they see what foreign sites see.
  */
-class VisibilityCheck(private val net: Net) {
+class VisibilityCheck(
+    private val net: Http,
+    /** How the physical network is called in error texts ("сеть телефона", "сеть компьютера"). */
+    private val directLabel: String = "сеть телефона",
+) {
     private val geoCache = ConcurrentHashMap<String, GeoVerdict>()
     /** Probes are plain blocking sockets: losers of a race finish here instead of holding the caller. */
     private val probes = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -112,8 +116,8 @@ class VisibilityCheck(private val net: Net) {
 
     private suspend fun russian(vpnUp: Boolean, ruDirect: Boolean): RuProbe {
         val errors = java.util.concurrent.ConcurrentLinkedQueue<String>()
-        fun ask(url: String, network: android.net.Network?, label: String, timeoutMs: Int): String? {
-            val res = net.fetch(url, network, timeoutMs = timeoutMs)
+        fun ask(url: String, direct: Boolean, label: String, timeoutMs: Int): String? {
+            val res = net.fetch(url, direct, timeoutMs = timeoutMs)
             val ip = if (url == GeoIp.CLOUDFLARE_TRACE) res.body?.let(GeoIp::parseCloudflareTrace)?.ip?.takeIf(GeoIp::isPublicIp)
                 else GeoIp.parsePlainIp(res.body)
             if (ip == null) {
@@ -125,26 +129,25 @@ class VisibilityCheck(private val net: Net) {
             }
             return ip
         }
-        val yandex = GeoIp.RUSSIAN_SELF.map { url -> suspend { ask(url, null, "Яндекс", 8_000) } }
+        val yandex = GeoIp.RUSSIAN_SELF.map { url -> suspend { ask(url, false, "Яндекс", 8_000) } }
         // Past the VPN: only meaningful while the tunnel is up and Russian sites are split off.
-        val direct = if (vpnUp && ruDirect) net.direct() else null
         val carrier: Deferred<String?>? = if (vpnUp && ruDirect) {
-            if (direct == null) { errors += "сеть телефона: не найдена"; null }
+            if (!net.hasDirect()) { errors += "$directLabel: не найдена"; null }
             else probes.async {
                 firstOf((GeoIp.RUSSIAN_SELF + GeoIp.CARRIER_SELF + GeoIp.CLOUDFLARE_TRACE).map { url ->
-                    suspend { ask(url, direct, "сеть телефона", 8_000) }
+                    suspend { ask(url, true, directLabel, 8_000) }
                 })
             }
         } else if (!vpnUp) probes.async {
             // No tunnel: every site sees the same address, any service will do.
-            firstOf((GeoIp.CARRIER_SELF + GeoIp.CLOUDFLARE_TRACE).map { url -> suspend { ask(url, null, "сервисы проверки", 8_000) } })
+            firstOf((GeoIp.CARRIER_SELF + GeoIp.CLOUDFLARE_TRACE).map { url -> suspend { ask(url, false, "сервисы проверки", 8_000) } })
         } else null
 
         firstOf(yandex)?.let { return RuProbe(it, RuSource.YANDEX, null) }
         carrier?.await()?.let { return RuProbe(it, if (vpnUp) RuSource.CARRIER else RuSource.SAME, null) }
         // A second try at Yandex: the first one may have raced the tunnel's own start.
         delay(1_000)
-        firstOf(GeoIp.RUSSIAN_SELF.map { url -> suspend { ask(url, null, "Яндекс (повтор)", 12_000) } })?.let { return RuProbe(it, RuSource.YANDEX, null) }
+        firstOf(GeoIp.RUSSIAN_SELF.map { url -> suspend { ask(url, false, "Яндекс (повтор)", 12_000) } })?.let { return RuProbe(it, RuSource.YANDEX, null) }
         return RuProbe(null, null, summarize(errors.toList()))
     }
 

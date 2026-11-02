@@ -2,10 +2,6 @@
 
 package net.paramnezia.app.ui
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Intent
-import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -67,7 +63,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -95,7 +90,7 @@ import kotlinx.coroutines.launch
 fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServer: () -> Unit = {}) {
     val state by app.repo.state.collectAsState()
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
+    val platform = LocalUiPlatform.current
     var busy by remember { mutableStateOf(false) }
     var invite by remember { mutableStateOf<String?>(null) }
     var newDevice by remember { mutableStateOf(false) }
@@ -106,7 +101,6 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
     var link by remember { mutableStateOf<StoredLink?>(null) }
     /** People just added in one go, with what to send each of them. */
     var created by remember { mutableStateOf<List<Links.Created>?>(null) }
-    val clipboard = remember { context.getSystemService(ClipboardManager::class.java) }
     /** Standalone servers to make separate accounts on (no fleet); the dialog lets the admin pick one. */
     var accountOn by remember { mutableStateOf<List<StoredProfile>?>(null) }
 
@@ -126,8 +120,8 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
             busy = false
         }
     }
-    val openUrl: (String) -> Unit = { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(it))) }
-    val shareFamily: (String) -> Unit = { Share.text(context, familyMessage(it), "Отправить страницу") }
+    val openUrl: (String) -> Unit = { platform.openUrl(it) }
+    val shareFamily: (String) -> Unit = { platform.shareText(familyMessage(it), "Отправить страницу") }
     val sync = { work { toast(if (app.fleet.sync()) "Получена новая конфигурация" else "Конфигурация актуальна") } }
 
     Column(
@@ -144,7 +138,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                 return@Column
             }
             // Recommended: a fleet survives a blocked server; plain accounts do not.
-            FleetPitch(managed, busy) { p -> work("Флот создан") { app.fleet.create(p.name, WgQuick.parse(p.conf), p.ssh!!, Build.MODEL) } }
+            FleetPitch(managed, busy) { p -> work("Флот создан") { app.fleet.create(p.name, WgQuick.parse(p.conf), p.ssh!!, platform.deviceModel) } }
             Group {
                 GroupRow(
                     "Пригласить без флота", subtitle = "Каждому свой ключ ссылкой или файлом, сразу нескольким",
@@ -304,8 +298,8 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                             c.name, monogram = c.name.trim().take(1).uppercase().ifEmpty { "?" },
                             trailing = {
                                 FilledTonalButton(onClick = {
-                                    if (c.stored.file) Share.file(context, c.name, c.key)
-                                    else Share.text(context, inviteMessage(c.name, c.stored.url), "Отправить ссылку")
+                                    if (c.stored.file) platform.shareFile(c.name, c.key)
+                                    else platform.shareText(inviteMessage(c.name, c.stored.url), "Отправить ссылку")
                                 }) { Icon(Icons.Filled.Share, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (c.stored.file) "Файл" else "Ссылку") }
                             },
                         )
@@ -315,7 +309,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
             confirmButton = { TextButton(onClick = { created = null }) { Text("Готово") } },
             dismissButton = {
                 if (list.size > 1 && list.none { it.stored.file }) TextButton(onClick = {
-                    clipboard.setPrimaryClip(ClipData.newPlainText("Paramnezia", list.joinToString("\n") { "${it.name}: ${it.stored.url}" }))
+                    platform.copy(list.joinToString("\n") { "${it.name}: ${it.stored.url}" })
                     toast("Все ссылки скопированы")
                 }) { Text("Скопировать все") }
             },
@@ -338,11 +332,11 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                 }
             },
             confirmButton = {
-                Button(onClick = { Share.text(context, inviteMessage(l.name, l.url), "Отправить ссылку") }) { Text("Отправить") }
+                Button(onClick = { platform.shareText(inviteMessage(l.name, l.url), "Отправить ссылку") }) { Text("Отправить") }
             },
             dismissButton = {
                 TextButton(onClick = {
-                    clipboard.setPrimaryClip(ClipData.newPlainText("Paramnezia", l.url))
+                    platform.copy(l.url)
                     toast("Ссылка скопирована")
                 }) { Text("Скопировать") }
             },
@@ -362,7 +356,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
             },
             confirmButton = {
                 TextButton(onClick = {
-                    context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, key), "Отправить ключ"))
+                    platform.shareText(key, "Отправить ключ")
                 }) { Text("Отправить") }
             },
             dismissButton = { TextButton(onClick = { invite = null }) { Text("Готово") } },

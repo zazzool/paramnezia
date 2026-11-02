@@ -1,6 +1,5 @@
 package net.paramnezia.app.ui
 
-import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -48,7 +47,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -156,7 +154,7 @@ fun VisibilityCard(app: App, tunnel: TunnelState) {
             // "Through VPN" only when the check proved it (both sides saw the same address).
             val ruRoute = if (up && v?.russian != null && v.foreign != null && !v.split) Route.TUNNEL else Route.DIRECT
             SeenRow("Российские сайты", ruRoute, v?.russian, loading, v?.russianError)
-            val notes = notes(v, tunnel)
+            val notes = notes(v, tunnel, LocalUiPlatform.current.deviceOf)
             AnimatedVisibility(notes.isNotEmpty()) {
                 Column(Modifier.padding(end = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { notes.forEach { NoteRow(it) } }
             }
@@ -168,7 +166,7 @@ enum class Route(val label: String) { TUNNEL("через VPN"), DIRECT("напр
 
 @Composable
 private fun SeenRow(who: String, route: Route, a: SeenAddress?, loading: Boolean, error: String? = null) {
-    val context = LocalContext.current
+    val platform = LocalUiPlatform.current
     val clipboard = LocalClipboardManager.current
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 8.dp)) {
         Box(Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainerHigh), contentAlignment = Alignment.Center) {
@@ -202,7 +200,7 @@ private fun SeenRow(who: String, route: Route, a: SeenAddress?, loading: Boolean
                     min = 8.sp,
                     modifier = Modifier.clickable {
                         clipboard.setText(AnnotatedString(a.ip))
-                        Toast.makeText(context, "Адрес скопирован", Toast.LENGTH_SHORT).show()
+                        platform.toast("Адрес скопирован")
                     },
                 )
                 a.org?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -234,7 +232,7 @@ private fun NoteRow(n: Note) {
 }
 
 /** Plain-language findings under the two addresses. */
-private fun notes(v: Visibility?, tunnel: TunnelState): List<Note> {
+private fun notes(v: Visibility?, tunnel: TunnelState, deviceOf: String): List<Note> {
     v ?: return emptyList()
     val out = ArrayList<Note>()
     val up = tunnel is TunnelState.Up
@@ -244,7 +242,7 @@ private fun notes(v: Visibility?, tunnel: TunnelState): List<Note> {
         v.foreign != null && v.russian != null -> out += Note(false, "Оба вида сайтов видят один адрес. Проверьте, включено ли «Российское напрямую» в настройках.")
         else -> out += Note(false, "Не удалось проверить один из адресов. Нажмите «Обновить».")
     }
-    if (up && v.russianSource == RuSource.CARRIER) out += Note(null, "Яндекс не показал адрес, поэтому российский адрес узнан по сети телефона в обход VPN: этим путём идут российские сайты.")
+    if (up && v.russianSource == RuSource.CARRIER) out += Note(null, "Яндекс не показал адрес, поэтому российский адрес узнан по сети $deviceOf в обход VPN: этим путём идут российские сайты.")
     if (up && v.foreignIsServer == true) out += Note(true, "Зарубежный адрес совпадает с адресом вашего сервера.")
     if (up && v.foreignIsServer == false) out += Note(null, "Сервер выходит в интернет с другого адреса, чем принимает подключения. Так бывает у хостеров, это не утечка.")
     for ((side, a) in listOf("зарубежного" to v.foreign, "российского" to v.russian.takeIf { it?.ip != v.foreign?.ip })) {

@@ -26,7 +26,9 @@ Android Studio открывает проект как обычно. Если Goo
 core/         чистый Kotlin/JVM, без Android: форматы, криптография, флот, релизы, маршруты
 deploy/       JVM: SSH (JSch), скрипты установки сервера, публикация манифеста, страница приглашений
 tunnel/       Android-библиотека: VpnService, JNI, Go (amneziawg-go + DNS-фильтр)
-app/          Android-приложение: Compose UI, состояние, флот, OTA, виджет, плитка
+client/       JVM: общий код Android и Windows (состояние, импорт, флот, ссылки, видимость адресов)
+app/          Android-приложение: Compose UI, флот, OTA, виджет, плитка
+desktop/      Windows-приложение: те же экраны (Compose Desktop) + служба туннеля на Go, см. WINDOWS.md
 releasetool/  JVM CLI: ключи релизов, публикация релиза
 tools/bypass-lists/  генератор списков «российское напрямую» и блок-листа трекеров
 ```
@@ -67,6 +69,16 @@ tools/bypass-lists/  генератор списков «российское н
 | `go/dns.go` | DNS-фильтр внутри tun: блок, «российское напрямую», кэш |
 | `go/jni.c` | JNI-обвязка |
 | `build-go.sh` | сборка `libparamnezia.so` под ABI (патч Go на CLOCK_BOOTTIME) |
+
+### client (`net.paramnezia.app`, JVM)
+
+`data/AppState`, `Repo`, `Servers`, `Cloud`, `fleet/FleetManager`, `fleet/Links`, `net/Visibility` живут здесь и
+используются обоими приложениями. С системой они говорят через `platform/Platform.kt`: `Log`, `StateStore`
+(Android: `Vault`, Windows: DPAPI), `Http` (Android: `tunnel/Net.kt`, Windows: `DesktopHttp`), `ReleaseSource`.
+
+Экраны (`app/.../ui`) тоже общие: Windows компилирует их без изменений (`desktop/build.gradle.kts`, список
+`sharedUiFiles`). Всё системное они берут из `LocalUiPlatform` (`ui/UiPlatform.kt`): тосты, буфер обмена,
+«поделиться», QR, выбор файла. В общих экранах нельзя импортировать `android.*`: проверяет сборка `:desktop`.
 
 ### app (`net.paramnezia.app`)
 
@@ -123,6 +135,10 @@ OTA в нём выключены (нет `RELEASE_KEY`). Debug имеет `appli
    Затем `ui-shots.sh` ставит debug APK, заполняет его демо-данными (`app/src/debug/…/DemoActivity`: флот с двумя
    серверами, устройства, приглашения; адреса из TEST-NET) и снимает экраны «Добавить» и «Флот» на экране телефона
    1080×2340. Скриншоты `screen-<api>-ui-*.png` лежат в артефакте `smoke-<api>`; задача падает, если приложение упало.
+
+5. **Windows installer** — служба, Wintun, приложение и установщик на `windows-latest`, затем
+   `windows-service-check.ps1` (установка, туннель, прокси, удаление). Экраны Windows с демо-данными снимает
+   задача JVM (артефакт `windows-screens`), подробнее в [WINDOWS.md](WINDOWS.md).
 
 Еженедельно `bypass-lists.yml` обновляет списки и открывает PR (сначала прогоняя `RoutingTest`).
 
