@@ -1,6 +1,7 @@
 package net.paramnezia.desktop
 
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,6 +23,9 @@ import net.paramnezia.app.App
 import net.paramnezia.app.platform.Log
 import net.paramnezia.app.ui.LocalUiPlatform
 import net.paramnezia.app.ui.PnTheme
+import net.paramnezia.app.ui.ThemePrefs
+import net.paramnezia.app.ui.colorsFor
+import net.paramnezia.app.ui.resolveDark
 import net.paramnezia.tunnel.TunnelRuntime
 import net.paramnezia.tunnel.TunnelState
 import java.io.File
@@ -50,6 +54,10 @@ fun main(args: Array<String>) {
     val model = System.getenv("COMPUTERNAME") ?: runCatching { InetAddress.getLocalHost().hostName }.getOrDefault("Windows")
     val platform = DesktopUiPlatform(model)
     val app = App(StateFile(Paths.home), ServiceClient(), Paths.cache, model, DesktopUiPlatform::openInBrowser)
+    // The theme choice is one word in a plain file, read before the window opens (no flash of the wrong theme).
+    val themeFile = File(Paths.home, "theme")
+    ThemePrefs.mode.value = ThemePrefs.parse(runCatching { themeFile.readText().trim() }.getOrNull())
+    ThemePrefs.save = { m -> themeFile.writeText(m.name) }
     app.start()
 
     application {
@@ -88,7 +96,10 @@ fun main(args: Array<String>) {
             state = state,
         ) {
             window.minimumSize = java.awt.Dimension(380, 640)
-            PnTheme {
+            val dark = resolveDark()
+            val scheme = colorsFor(dark)
+            LaunchedEffect(dark) { TitleBar.apply(window, dark, scheme.background, scheme.onBackground) }
+            PnTheme(dark) {
                 CompositionLocalProvider(LocalUiPlatform provides platform) {
                     Root(app, platform, incoming)
                 }

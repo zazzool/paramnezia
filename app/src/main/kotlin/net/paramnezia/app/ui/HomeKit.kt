@@ -12,6 +12,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -50,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -145,22 +147,30 @@ fun EmptyHero(follower: Boolean, onAdd: (() -> Unit)?, onPaste: () -> Unit, modi
 /** Big two-line button: a label and what it does. */
 @Composable
 fun ActionTile(icon: ImageVector?, title: String, sub: String, primary: Boolean, onClick: () -> Unit) {
-    val bg = if (primary) Brush.linearGradient(listOf(Brand.Violet, Brand.Indigo)) else Brush.linearGradient(listOf(Color.Transparent, Color.Transparent))
+    val shape = MaterialTheme.shapes.medium
     val fg = if (primary) Color.White else MaterialTheme.colorScheme.onSurface
-    Surface(
-        shape = MaterialTheme.shapes.medium,
-        color = if (primary) Color.Transparent else MaterialTheme.colorScheme.surfaceContainer,
-        border = if (primary) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).clip(MaterialTheme.shapes.medium).tactile(onClick = onClick),
-    ) {
-        Row(Modifier.background(bg).padding(horizontal = Space.M, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(40.dp).clip(CircleShape).background(fg.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
-                if (icon != null) Icon(icon, null, tint = fg) else ClipboardGlyph(fg, Modifier.size(20.dp))
+    // The signature button: the icon's iris-to-azure gradient, a glassy light along the top and a
+    // coloured glow under it, so the one main action on a screen is unmistakable.
+    val lift = if (primary) Modifier.shadow(10.dp, shape, ambientColor = Brand.Signature[0], spotColor = Brand.Signature[0]) else Modifier.edge(shape)
+    val body = if (primary) Modifier
+        .background(Brush.linearGradient(Brand.Signature), shape)
+        .background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.16f), Color.Transparent, Color.Black.copy(alpha = 0.06f))), shape)
+        .border(BorderStroke(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.35f), Color.White.copy(alpha = 0.04f)))), shape)
+    else Modifier.background(MaterialTheme.colorScheme.surfaceContainer, shape)
+    Box(Modifier.fillMaxWidth().heightIn(min = 64.dp).then(lift).clip(shape).tactile(onClick = onClick).then(body)) {
+        Row(Modifier.padding(horizontal = Space.M, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(40.dp).clip(CircleShape)
+                    .background(if (primary) Color.White.copy(alpha = 0.18f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                val tint = if (primary) Color.White else MaterialTheme.colorScheme.primary
+                if (icon != null) Icon(icon, null, tint = tint) else ClipboardGlyph(tint, Modifier.size(20.dp))
             }
             Spacer(Modifier.width(Space.M))
             Column(Modifier.weight(1f)) {
                 FitText(title, MaterialTheme.typography.titleMedium, color = fg, min = 12.sp)
-                FitText(sub, MaterialTheme.typography.bodySmall, color = fg.copy(alpha = 0.75f), min = 9.sp)
+                FitText(sub, MaterialTheme.typography.bodySmall, color = if (primary) fg.copy(alpha = 0.78f) else MaterialTheme.colorScheme.onSurfaceVariant, min = 9.sp)
             }
         }
     }
@@ -250,7 +260,7 @@ fun InfoPanel(app: App, tunnel: TunnelState, onMore: () -> Unit) {
     Surface(
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceContainer,
-        modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large).tactile(onClick = onMore),
+        modifier = Modifier.fillMaxWidth().edge(MaterialTheme.shapes.large).clip(MaterialTheme.shapes.large).tactile(onClick = onMore),
     ) {
         Column(Modifier.padding(horizontal = Space.M, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(Space.S)) {
             PlaceLine("Зарубежные сайты", v?.foreign, loading, if (up) Brand.Mint else null, v?.foreignError)

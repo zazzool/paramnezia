@@ -51,7 +51,7 @@ top; tap "Ввести" && shot add-type 3
 hide_keyboard
 tap "Семья" && shot fleet-empty
 # Around the dial: «Настройки», then the mini power orb in the header leads back home; system Back does the same.
-tap "Настройки" && shot settings
+tap "Настройки" && { shot settings; scroll; scroll; shot settings-theme; top; }
 tap "Главная, VPN выключен" && shot home-back
 tap "Добавить" && { adb shell input keyevent KEYCODE_BACK; shot back-key; }
 
@@ -81,6 +81,18 @@ tap "Добавить" && { scroll; tap "Купить у хостера"; } && {
   top
   tap "Хостер" && { shot cloud-providers; tap "Vultr" && shot cloud-provider-token; }
 }
+
+# The same screens at night: the system switches to dark, the app follows it («Как в системе»).
+adb shell cmd uimode night yes; sleep 2
+demo server
+shot dark-home
+tap "Настройки" && { shot dark-settings; scroll; scroll; shot dark-settings-theme; }
+demo admin
+tap "Семья" && { shot dark-fleet-admin; scroll; shot dark-fleet-admin-2; }
+demo empty
+shot dark-home-empty
+tap "Добавить" && shot dark-add
+adb shell cmd uimode night no; sleep 1
 
 adb shell wm size reset; adb shell wm density reset
 adb logcat -d > "logcat-$tag-ui.txt"

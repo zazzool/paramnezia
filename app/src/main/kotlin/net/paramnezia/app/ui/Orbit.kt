@@ -17,7 +17,6 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -151,10 +150,11 @@ private fun segmentAt(pos: Offset, half: Float, g: Ring, density: Float): Tab? {
 
 @Composable
 private fun SegmentRing(g: Ring, pressed: Map<Tab, Boolean>, lit: Tab?, modifier: Modifier) {
-    val dark = isSystemInDarkTheme()
+    val dark = isDark()
     val base = MaterialTheme.colorScheme.surfaceContainerHigh
-    val deep = if (dark) Color(0xFF151A2C) else Color(0xFFD3D8EA)
-    val light = if (dark) Color(0xFF2C3458) else Color.White
+    val pn = Pn
+    val deep = pn.slabLo
+    val light = pn.slabHi
     val sinks = Segments.associate { s ->
         val v by animateFloatAsState(if (pressed.getValue(s.tab)) 1f else 0f,
             spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMediumLow), label = "seg")
@@ -190,7 +190,7 @@ private fun SegmentRing(g: Ring, pressed: Map<Tab, Boolean>, lit: Tab?, modifier
             scale(1f - 0.035f * sink, pivot = c) {
                 // Soft shadow under the slab: lifted at rest, flat when pressed.
                 val shadow = slab(Offset(c.x, c.y + 3.dp.toPx() * (1 - sink)), rIn + k, rOut - k, s.center - 60f, 120f, gap / 2 + k)
-                drawPath(shadow, Color.Black.copy(alpha = (if (dark) 0.35f else 0.10f) * (1 - sink)), style = Stroke(2 * k + 2.dp.toPx(), join = StrokeJoin.Round))
+                drawPath(shadow, Color.Black.copy(alpha = pn.shadowAlpha * (1 - sink)), style = Stroke(2 * k + 2.dp.toPx(), join = StrokeJoin.Round))
                 // Convex body: light along the outer edge, deeper towards the button; pressed turns it concave.
                 // Colours are blended here (opaque), so the fill and its rounding stroke overlap without a seam.
                 val wash = 0.07f + 0.20f * sink + if (s.tab == lit) 0.22f * glow else 0f
@@ -205,7 +205,7 @@ private fun SegmentRing(g: Ring, pressed: Map<Tab, Boolean>, lit: Tab?, modifier
                 // Rim light on the outer edge.
                 val inset = (gap / 2 + 2 * k) / rOut * 180f / PI.toFloat()
                 drawArc(
-                    Color.White.copy(alpha = if (dark) 0.10f else 0.85f), s.center - 60f + inset, 120f - 2 * inset, false,
+                    Color.White.copy(alpha = pn.rimAlpha), s.center - 60f + inset, 120f - 2 * inset, false,
                     topLeft = Offset(c.x - rOut + 1.dp.toPx(), c.y - rOut + 1.dp.toPx()),
                     size = Size(2 * rOut - 2.dp.toPx(), 2 * rOut - 2.dp.toPx()),
                     style = Stroke(1.5.dp.toPx(), cap = StrokeCap.Round),
@@ -215,7 +215,7 @@ private fun SegmentRing(g: Ring, pressed: Map<Tab, Boolean>, lit: Tab?, modifier
                 val rad = s.center * PI.toFloat() / 180f
                 val mid = (rIn + rOut) / 2
                 val at = Offset(c.x + mid * cos(rad), c.y + mid * sin(rad))
-                engraved(s.tab, at, (rOut - rIn) * 0.30f, enamels.getValue(s.tab), sink, dark)
+                engraved(s.tab, at, (rOut - rIn) * 0.30f, enamels.getValue(s.tab), sink, pn)
             }
         }
     }
@@ -237,13 +237,14 @@ private fun slab(c: Offset, rIn: Float, rOut: Float, start: Float, sweep: Float,
  */
 @Composable
 fun PlaceBadge(tab: Tab, look: PlaceLook, size: Dp) {
-    val dark = isSystemInDarkTheme()
+    val pn = Pn
     val slab = MaterialTheme.colorScheme.surfaceContainerHigh
     Canvas(Modifier.size(size)) {
         val r = this.size.minDimension / 2
-        drawCircle(Brush.verticalGradient(listOf(if (dark) Color(0xFF2C3458) else Color.White, slab)), r)
-        drawCircle(Color.White.copy(alpha = if (dark) 0.08f else 0.8f), r - 0.75.dp.toPx(), style = Stroke(1.dp.toPx()))
-        engraved(tab, center, r * 0.62f, look.gradient[1], 0f, dark)
+        drawCircle(Color.Black.copy(alpha = pn.shadowAlpha * 0.6f), r - 1.dp.toPx(), center + Offset(0f, 1.5.dp.toPx()))
+        drawCircle(Brush.verticalGradient(listOf(pn.slabHi, slab)), r - 1.dp.toPx())
+        drawCircle(Color.White.copy(alpha = pn.rimAlpha * 0.8f), r - 1.75.dp.toPx(), style = Stroke(1.dp.toPx()))
+        engraved(tab, center, r * 0.62f, look.gradient[1], 0f, pn)
     }
 }
 
@@ -251,10 +252,10 @@ fun PlaceBadge(tab: Tab, look: PlaceLook, size: Dp) {
  * An engraving with enamel: the glyph is cut into the surface (a dark lip on the upper-left edge of
  * the cut, a light one on the lower-right), then filled with glossy enamel slightly below the surface.
  */
-private fun DrawScope.engraved(tab: Tab, at: Offset, r: Float, enamel: Color, pressed: Float, dark: Boolean) {
+private fun DrawScope.engraved(tab: Tab, at: Offset, r: Float, enamel: Color, pressed: Float, pn: PnPalette) {
     val d = 1.dp.toPx()
-    glyph(tab, at + Offset(0f, d), r, Color.White.copy(alpha = if (dark) 0.08f else 0.75f), 1f)
-    glyph(tab, at - Offset(0f, d * 0.9f), r, Color.Black.copy(alpha = if (dark) 0.45f else 0.18f), 1f)
+    glyph(tab, at + Offset(0f, d), r, pn.engraveHi, 1f)
+    glyph(tab, at - Offset(0f, d * 0.9f), r, pn.engraveLo, 1f)
     glyph(tab, at, r, enamel, 1f)
     // The enamel's gloss: a faint, thinner pass shifted up.
     glyph(tab, at - Offset(0f, d * 0.5f), r, Color.White.copy(alpha = 0.16f * (1 - pressed)), 0.4f)

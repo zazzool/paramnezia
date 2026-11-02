@@ -135,7 +135,7 @@ fun VisibilityCard(app: App, tunnel: TunnelState) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(v) { while (true) { now = System.currentTimeMillis(); delay(15_000) } }
 
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceContainer)) {
+    Card(Modifier.fillMaxWidth().edge(CardDefaults.shape), colors = CardDefaults.cardColors(MaterialTheme.colorScheme.surfaceContainer)) {
         Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
