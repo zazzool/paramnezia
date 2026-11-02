@@ -119,8 +119,12 @@ SHA-256) и положить его в `apk/<sha256>` и `release.json` внут
 (`intent://<ключ без vpn://>#Intent;scheme=vpn;package=net.paramnezia;S.browser_fallback_url=<страница>;end`,
 плюс ключ для копирования). iPhone/iPad получает ключ и `.conf` для AmneziaVPN; прочее — выбор.
 
-**`app.json`** (пишет `invite-server.sh` из `PN_APP_JSON`): `{"version", "sha256", "urls": [только https]}`.
+**`app.json`** (пишет `invite-server.sh` из `PN_APP_JSON`): `{"version", "sha256", "urls": [только https],
+"windows": {"version", "sha256", "urls"}}` (`windows` — если админ-устройство знает подписанный `release-windows.json`).
 **`/paramnezia.apk`** — копия того же релиза, которую сервер скачал сам (`release-mirror.sh`, `PN_INVITE=1`).
+**`/Paramnezia-Setup.exe`** — так же скачанная и сверенная по SHA-256 копия установщика Windows (`PN_WIN_SHA256`,
+`PN_WIN_URLS`; неудача не мешает APK). Без копий кнопки ведут на `releases/latest/download/paramnezia.apk` и
+`…/Paramnezia-Setup.exe` (постоянные имена в каждом релизе).
 
 **CGI** `GET /cgi-bin/get?<токен>&<что>`, `что` = `app` (приглашение для Paramnezia) | `key` (ключ без флота,
 для AmneziaVPN) | `conf`. Первый запрос атомарно (`mv t/T c/T`) гасит ссылку и запоминает `время адрес`;

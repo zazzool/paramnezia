@@ -48,12 +48,15 @@ class Updater(
     private val checker = UpdateChecker(PACKAGE, BuildConfig.VERSION_CODE, Int.MAX_VALUE, listOf(BuildConfig.RELEASE_KEY), ed)
     /** Android releases: versionCode 0 so the newest one always counts as "best". */
     private val androidChecker = UpdateChecker(ANDROID_PACKAGE, 0, Int.MAX_VALUE, listOf(BuildConfig.RELEASE_KEY), ed)
+    /** Windows releases for the family page: any version counts, not only ones newer than this build. */
+    private val windowsShare = UpdateChecker(PACKAGE, 0, Int.MAX_VALUE, listOf(BuildConfig.RELEASE_KEY), ed)
 
-    /** Release info for invite pages and server copies: always about the Android app. */
+    /** Release info for invite pages and server copies: the Android app, plus the Windows installer. */
     val android: ReleaseSource = object : ReleaseSource {
         override fun shareable(): Pair<Release, String>? = synchronized(androidChecker) {
             androidChecker.best?.let { (r, s) -> r to ReleaseCodec.encode(s) }
         }
+        override fun windows(): Release? = synchronized(windowsShare) { windowsShare.best?.first }
         override suspend fun check() = this@Updater.check()
     }
 
@@ -63,6 +66,7 @@ class Updater(
 
     private fun offer(text: String) {
         if (!enabled) return
+        synchronized(windowsShare) { windowsShare.offer(text) }
         val accepted = synchronized(checker) { checker.offer(text) }
         if (accepted) _status.value = Status.Available(checker.best!!.first)
     }

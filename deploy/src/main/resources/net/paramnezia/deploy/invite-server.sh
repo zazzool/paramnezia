@@ -24,7 +24,7 @@ printf '%s\n' "${PN_INVITE_ASSETS:-}" | while read -r name data; do
   case "$name" in ''|*[!A-Za-z0-9._-]*|.*) continue ;; esac
   printf '%s' "$data" | base64 -d | $SUDO tee "$ROOT/www/$name.new" >/dev/null && $SUDO mv "$ROOT/www/$name.new" "$ROOT/www/$name"
 done
-put "$ROOT/www/httpd.conf" "$(printf '.webp:image/webp\n.svg:image/svg+xml\n.apk:application/vnd.android.package-archive\n')"
+put "$ROOT/www/httpd.conf" "$(printf '.webp:image/webp\n.svg:image/svg+xml\n.apk:application/vnd.android.package-archive\n.exe:application/octet-stream\n')"
 if [ -n "${PN_APP_JSON:-}" ]; then put "$ROOT/www/app.json" "$PN_APP_JSON"; fi
 # Version 1.0 kept a personalised APK template here; links no longer carry an APK.
 $SUDO rm -f "$ROOT/data/app.apk" "$ROOT/data/app.slot" "$ROOT/data/app.sha" "$ROOT/data/app.apk.new" "$ROOT/data/app.slot.new"

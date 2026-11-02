@@ -68,6 +68,16 @@
   .seg button { flex: 1; padding: .55rem; border-radius: 12px; border: 1px solid var(--line); background: transparent; color: var(--text);
                 font: inherit; cursor: pointer; }
   .seg button.on { background: rgba(255,255,255,.10); border-color: rgba(255,255,255,.3); }
+  .app { display: grid; grid-template-columns: 2.6rem 1fr; gap: .2rem .85rem; align-items: center; padding: .9rem 0; border-top: 1px solid var(--line); }
+  .app:first-of-type { border-top: 0; padding-top: .2rem; }
+  .app .ico { width: 2.6rem; height: 2.6rem; border-radius: 12px; display: grid; place-items: center; background: rgba(255,255,255,.08); }
+  .app .ico svg { width: 1.5rem; height: 1.5rem; fill: var(--text); }
+  .app h3 { margin: 0; font-size: 1.05rem; }
+  .app .body { grid-column: 1 / -1; }
+  .app .btn { margin: .5rem 0 .2rem; }
+  .app .alt-link { display: inline-block; margin: .35rem 0 0; font-size: .9rem; }
+  .note { margin: .5rem 0 0; padding: .6rem .75rem; border-radius: 12px; background: rgba(14,165,233,.10); border: 1px solid rgba(14,165,233,.30); font-size: .88rem; color: var(--muted); }
+  .note b { color: var(--text); }
   footer { text-align: center; color: var(--muted); font-size: .8rem; margin-top: 2rem; }
   a { color: #93c5fd; }
   [hidden] { display: none !important; }
@@ -99,7 +109,7 @@
     <div id="android" hidden>
       <ol class="steps">
         <li><b>Установите Paramnezia</b><br><small>Если приложение уже есть, этот шаг пропустите.</small>
-          <a class="btn" data-apk hidden>Скачать Paramnezia</a></li>
+          <a class="btn" data-apk>Скачать Paramnezia</a></li>
         <li><b>Откройте приглашение</b><br><small>Приложение подключится само.</small>
           <button class="btn mint" id="have">Открыть приглашение в Paramnezia</button></li>
       </ol>
@@ -126,10 +136,15 @@
     </div>
 
     <div id="other" hidden>
-      <p>Установите <a href="https://amnezia.org/downloads" rel="noreferrer">AmneziaVPN</a> и добавьте ключ или файл настроек.</p>
-      <button class="btn mint" id="getkey2">Получить ключ</button>
-      <a class="btn alt" id="conf2">Скачать файл настроек</a>
-      <a class="btn alt" data-apk hidden>Скачать Paramnezia для Android</a>
+      <ol class="steps">
+        <li><b>Установите Paramnezia для Windows</b><br><small>На Mac и Linux вместо неё поставьте <a href="https://amnezia.org/downloads" rel="noreferrer">AmneziaVPN</a>.</small>
+          <a class="btn" data-exe>Скачать для Windows</a>
+          <p class="note">Windows может написать «Система Windows защитила ваш компьютер». Нажмите <b>«Подробнее»</b>, затем <b>«Выполнить в любом случае»</b>.</p></li>
+        <li><b>Получите ключ</b> и вставьте его в приложении на вкладке «Добавить».
+          <button class="btn mint" id="getkey2">Получить ключ</button>
+          <a class="btn alt" id="conf2">Или скачать файл настроек</a></li>
+      </ol>
+      <a class="btn alt" data-apk>Скачать Paramnezia для Android</a>
     </div>
   </section>
 
@@ -141,15 +156,40 @@
   </div>
   <p class="caption">Так выглядит приложение. Нажали кнопку — защищено.</p>
 
+  <!-- Always the newest releases: this server's verified copy when it has one (reachable wherever
+       this page is), and GitHub's releases/latest address (never out of date). -->
+  <section class="card" id="apps">
+    <h2>Скачать приложение</h2>
+    <div class="app" id="app-android">
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.6 9.48l1.84-3.18a.38.38 0 0 0-.66-.38l-1.86 3.22A11.4 11.4 0 0 0 12 8.12c-1.77 0-3.43.38-4.92 1.02L5.22 5.92a.38.38 0 0 0-.66.38L6.4 9.48A10.8 10.8 0 0 0 1 18h22a10.8 10.8 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z"/></svg></span>
+      <div><h3>Android</h3><small data-ver="android">Последняя версия</small></div>
+      <div class="body">
+        <a class="btn" data-apk>Скачать для Android</a>
+        <a class="alt-link" data-apk-alt hidden></a>
+        <p class="note">Откройте скачанный файл и установите. Если телефон предупредит, нажмите <b>«Подробнее»</b> → <b>«Всё равно установить»</b>.</p>
+      </div>
+    </div>
+    <div class="app" id="app-windows">
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 4.6l8.2-1.1v7.9H2zm9.2-1.3L22 2v9.4H11.2zM2 12.4h8.2v7.9L2 19.2zm9.2 0H22V22l-10.8-1.5z"/></svg></span>
+      <div><h3>Windows</h3><small data-ver="windows">Последняя версия · Windows 10 и 11</small></div>
+      <div class="body">
+        <a class="btn" data-exe>Скачать для Windows</a>
+        <a class="alt-link" data-exe-alt hidden></a>
+        <p class="note">Запустите скачанный файл. Windows может написать «Система Windows защитила ваш компьютер»: нажмите <b>«Подробнее»</b>, затем <b>«Выполнить в любом случае»</b>. Так Windows встречает любые программы без платной подписи.</p>
+      </div>
+    </div>
+    <div class="app" id="app-ios">
+      <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.4 12.6c0-2.5 2-3.7 2.1-3.8a4.6 4.6 0 0 0-3.6-2c-1.5-.2-3 .9-3.8.9s-2-.9-3.3-.9a4.9 4.9 0 0 0-4.1 2.5c-1.8 3-.5 7.6 1.3 10 .8 1.2 1.8 2.6 3.1 2.5 1.2 0 1.7-.8 3.2-.8s1.9.8 3.2.8 2.2-1.2 3-2.4a10 10 0 0 0 1.4-2.8 4.3 4.3 0 0 1-2.5-3.9zM14 5.2A4.3 4.3 0 0 0 15 2a4.4 4.4 0 0 0-2.9 1.5 4.1 4.1 0 0 0-1 3.1A3.6 3.6 0 0 0 14 5.2z"/></svg></span>
+      <div><h3>iPhone и iPad</h3><small>Через приложение AmneziaVPN</small></div>
+      <div class="body"><a class="btn alt" href="https://apps.apple.com/app/id1600529900" rel="noreferrer">AmneziaVPN в App Store</a></div>
+    </div>
+  </section>
+
   <section class="card" id="get">
     <h2>Как подключиться</h2>
     <ol class="steps">
-      <li><b>Скачайте приложение</b>
-        <a class="btn" data-apk hidden>Скачать для Android</a>
-        <a class="btn alt" id="apkhere" href="/paramnezia.apk" hidden>Скачать с этого сервера</a>
-        <small id="noapk" hidden>Ссылка на приложение пока не готова. Попросите прислать файл Paramnezia.<br></small>
-        <small>Откройте скачанный файл и установите. <span id="ver"></span></small><br>
-        <small>На iPhone вместо него поставьте <a href="https://apps.apple.com/app/id1600529900" rel="noreferrer">AmneziaVPN</a> из App Store.</small></li>
+      <li><b>Установите приложение</b><br>
+        <small>Кнопки выше: для Android, Windows или iPhone.</small></li>
       <li><b>Получите свои настройки</b><br>
         <small>Тот, кто прислал вам эту страницу, отправит личную ссылку или файл. У каждого они свои, поэтому на этой странице их нет.</small></li>
       <li><b>Откройте ссылку или файл</b><br>
@@ -171,10 +211,12 @@
     <h2>Если что-то не так</h2>
     <details><summary>Телефон предупреждает при установке</summary>
       <p>Так Android встречает любые приложения не из Google Play. Нажмите «Подробнее» → «Всё равно установить». Если предложат отправить приложение на проверку, соглашайтесь.</p></details>
+    <details><summary>Windows пишет «Система Windows защитила ваш компьютер»</summary>
+      <p>Так Windows встречает программы без платной подписи. Нажмите «Подробнее», затем «Выполнить в любом случае». Если кнопки нет, нажмите на файл правой кнопкой → «Свойства» → отметьте «Разблокировать» → «ОК» и запустите снова.</p></details>
     <details><summary>Ссылка не открывает приложение</summary>
       <p>Сначала установите приложение (шаг 1), потом снова откройте ссылку. Если не помогло, на странице ссылки есть ключ: скопируйте его и вставьте в приложении на вкладке «Добавить».</p></details>
     <details><summary>Как обновлять приложение</summary>
-      <p>Приложение само подскажет, когда выйдет новая версия. Обновление ставится поверх, настройки сохраняются.</p></details>
+      <p>Приложение само подскажет, когда выйдет новая версия. Обновление ставится поверх, настройки сохраняются. На этой странице всегда лежит последняя версия.</p></details>
     <details><summary>Это безопасно?</summary>
       <p>Да. Приложение одно и то же для всех, его исходный код открыт. Ваш интернет идёт только через сервер того, кто вас пригласил.</p></details>
   </section>
@@ -187,9 +229,14 @@
   var t = location.hash.slice(1), $ = function (id) { return document.getElementById(id); };
   var all = function (sel) { return [].slice.call(document.querySelectorAll(sel)); };
 
-  // The app: the same signed release for everyone, from public HTTPS mirrors first. The user starts
-  // the download; nothing downloads by itself.
-  function setApk(href) { all('[data-apk]').forEach(function (a) { a.href = href; a.hidden = false; }); }
+  // The apps: the same signed releases for everyone. This server's own copy comes first (it is
+  // reachable wherever this page is and was checked against the signed release), GitHub's
+  // releases/latest second (always the newest). The user starts the download; nothing downloads by itself.
+  var GH = 'https://github.com/zazzool/paramnezia/releases/latest/download/';
+  var apps = {
+    apk: { here: '/paramnezia.apk', latest: GH + 'paramnezia.apk', ver: 'android', hint: '' },
+    exe: { here: '/Paramnezia-Setup.exe', latest: GH + 'Paramnezia-Setup.exe', ver: 'windows', hint: ' · Windows 10 и 11' }
+  };
   function get(path, done, fail) {
     var x = new XMLHttpRequest();
     x.open('GET', path);
@@ -197,24 +244,30 @@
     x.onerror = function () { fail(0); };
     x.send();
   }
-  var haveApk = false;
+  function setApp(kind, version) {
+    var a = apps[kind], h = new XMLHttpRequest();
+    all('[data-' + kind + ']').forEach(function (b) { b.href = a.latest; });
+    var label = all('[data-ver="' + a.ver + '"]')[0];
+    h.open('HEAD', a.here);
+    h.onload = function () {
+      if (h.status !== 200) return;
+      all('[data-' + kind + ']').forEach(function (b) { b.href = a.here; });
+      all('[data-' + kind + '-alt]').forEach(function (b) {
+        b.href = a.latest; b.textContent = 'Не скачивается? Свежая версия с GitHub'; b.hidden = false;
+      });
+      if (label && version) label.textContent = 'Версия ' + version.replace(/^v/, '') + a.hint;
+    };
+    h.send();
+  }
   get('/app.json', function (text) {
     var a = null; try { a = JSON.parse(text); } catch (e) {}
-    if (a && a.urls && a.urls.length) {
-      setApk(a.urls[0]); haveApk = true;
-      $('ver').textContent = 'Версия ' + a.version + '.';
-    }
-    var h = new XMLHttpRequest();
-    h.open('HEAD', '/paramnezia.apk');
-    h.onload = function () {
-      if (h.status !== 200) { if (!haveApk) $('noapk').hidden = false; return; }
-      if (haveApk) { $('apkhere').hidden = false; return; }
-      // No public mirror known: this server's copy is the only one.
-      setApk('/paramnezia.apk'); haveApk = true;
-    };
-    h.onerror = function () { if (!haveApk) $('noapk').hidden = false; };
-    h.send();
-  }, function () { $('noapk').hidden = false; });
+    setApp('apk', a && a.version);
+    setApp('exe', a && a.windows && a.windows.version);
+  }, function () { setApp('apk'); setApp('exe'); });
+  // The visitor's own platform first.
+  var ua0 = navigator.userAgent || '';
+  if (/Windows/i.test(ua0)) $('apps').insertBefore($('app-windows'), $('app-android'));
+  else if (/iPhone|iPad|iPod/i.test(ua0)) $('apps').insertBefore($('app-ios'), $('app-android'));
 
   if (!t) return; // The public page: nothing personal to do.
 
