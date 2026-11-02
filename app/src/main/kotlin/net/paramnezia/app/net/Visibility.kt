@@ -113,11 +113,13 @@ class VisibilityCheck(private val net: Net) {
     private suspend fun russian(vpnUp: Boolean, ruDirect: Boolean): RuProbe {
         val errors = java.util.concurrent.ConcurrentLinkedQueue<String>()
         fun ask(url: String, network: android.net.Network?, label: String, timeoutMs: Int): String? {
-            val res = net.fetch(url, network, timeoutMs = timeoutMs, userAgent = if ("yandex" in url) BROWSER_UA else "paramnezia")
+            val res = net.fetch(url, network, timeoutMs = timeoutMs)
             val ip = if (url == GeoIp.CLOUDFLARE_TRACE) res.body?.let(GeoIp::parseCloudflareTrace)?.ip?.takeIf(GeoIp::isPublicIp)
                 else GeoIp.parsePlainIp(res.body)
             if (ip == null) {
-                val why = res.error ?: "непонятный ответ"
+                // Yandex answers "127.0.0.1" to requests it does not want to tell the address to
+                // (that is what made the Russian side always fail): a real answer, just not an address.
+                val why = res.error ?: if (res.body?.trim()?.trim('"')?.startsWith("127.") == true) "скрыл адрес" else "непонятный ответ"
                 errors += "$label: $why"
                 Log.i(TAG, "$label $url: $why${res.body?.let { " «" + it.take(80).replace('\n', ' ') + "»" } ?: ""}")
             }
@@ -172,8 +174,6 @@ class VisibilityCheck(private val net: Net) {
 
     companion object {
         private const val TAG = "ParamneziaSeen"
-        /** Yandex's anti-bot screens odd user agents with a captcha page; a phone browser's is never one. */
-        private const val BROWSER_UA = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36"
 
         /** Distinct reasons, shortest first, e.g. "Яндекс: нет ответа; сеть телефона: HTTP 403". */
         internal fun summarize(errors: List<String>): String {

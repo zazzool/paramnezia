@@ -244,7 +244,7 @@ private fun notes(v: Visibility?, tunnel: TunnelState): List<Note> {
         v.foreign != null && v.russian != null -> out += Note(false, "Оба вида сайтов видят один адрес. Проверьте, включено ли «Российское напрямую» в настройках.")
         else -> out += Note(false, "Не удалось проверить один из адресов. Нажмите «Обновить».")
     }
-    if (up && v.russianSource == RuSource.CARRIER) out += Note(null, "Яндекс не ответил, поэтому российский адрес узнан по сети телефона в обход VPN: этим путём идут российские сайты.")
+    if (up && v.russianSource == RuSource.CARRIER) out += Note(null, "Яндекс не показал адрес, поэтому российский адрес узнан по сети телефона в обход VPN: этим путём идут российские сайты.")
     if (up && v.foreignIsServer == true) out += Note(true, "Зарубежный адрес совпадает с адресом вашего сервера.")
     if (up && v.foreignIsServer == false) out += Note(null, "Сервер выходит в интернет с другого адреса, чем принимает подключения. Так бывает у хостеров, это не утечка.")
     for ((side, a) in listOf("зарубежного" to v.foreign, "российского" to v.russian.takeIf { it?.ip != v.foreign?.ip })) {
