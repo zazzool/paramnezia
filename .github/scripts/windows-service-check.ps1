@@ -63,6 +63,28 @@ Write-Host "direct address: $ip"
 $bad = curl.exe -s --max-time 10 --socks5-hostname "x:y@$($d.socks)" https://api.ipify.org
 if ($LASTEXITCODE -eq 0) { throw "the direct proxy accepted wrong credentials" }
 
+Write-Host "== programs past the VPN (1.1.1.1 routed into a tunnel that goes nowhere)"
+$probeDir = "$env:RUNNER_TEMP\splitprobe"
+New-Item -ItemType Directory -Force $probeDir | Out-Null
+Push-Location "$root\tunnel\src\main\go"
+$env:CGO_ENABLED = '0'
+go build -o "$probeDir\pn-direct-probe.exe" ./windows/splitprobe
+if ($LASTEXITCODE) { throw "probe build failed" }
+Pop-Location
+Copy-Item "$probeDir\pn-direct-probe.exe" "$probeDir\pn-tunnel-probe.exe"
+$up = Ask @{ op = 'up'; up = @{ name = 'ci-split'; uapi = $uapi; addresses = @('10.123.0.2/32'); routes = @('10.123.0.0/16', '1.1.1.1/32'); dnsServers = @(); excludedApps = @('pn-direct-probe.exe') } }
+if (-not $up.ok) { throw "up with excluded programs failed: $($up.error)" }
+$inTunnel = & "$probeDir\pn-tunnel-probe.exe" 1.1.1.1 | ConvertFrom-Json
+Write-Host "program not on the list: tcp=$($inTunnel.tcp) udp=$($inTunnel.udp)"
+if ($inTunnel.tcp -or $inTunnel.udp) { throw "a program not on the list got past the tunnel" }
+$direct = & "$probeDir\pn-direct-probe.exe" 1.1.1.1 | ConvertFrom-Json
+Write-Host "program on the list: tcp=$($direct.tcp) udp=$($direct.udp)"
+if (-not $direct.tcp -or -not $direct.udp) {
+    Get-Content "$env:ProgramData\Paramnezia\service.log" -Tail 30 -ErrorAction SilentlyContinue
+    throw "the program on the list did not get past the VPN"
+}
+if (-not (Select-String -Path "$env:ProgramData\Paramnezia\service.log" -Pattern 'pn-direct-probe.exe goes past the VPN' -Quiet)) { throw "service.log does not mention the excluded program" }
+
 Write-Host "== tunnel down"
 $down = Ask @{ op = 'down' }
 if (-not $down.ok) { throw "down failed" }

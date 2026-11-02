@@ -47,6 +47,8 @@ type upSpec struct {
 	DNSServers []string `json:"dnsServers"`
 	DNSSearch  []string `json:"dnsSearch,omitempty"`
 	MTU        int      `json:"mtu,omitempty"`
+	// ExcludedApps go past the VPN: program file names ("telegram.exe") or full paths.
+	ExcludedApps []string `json:"excludedApps,omitempty"`
 }
 
 type response struct {

@@ -52,6 +52,7 @@ class SpecBuilder(private val asset: (String) -> String) {
             serverId, serverName, config, plan.include,
             keepaliveActive = settings.battery.screenOn, keepaliveIdle = settings.battery.screenOff,
             dns = if (useDns) DnsPolicy(tunnel = dnsServers, direct = directDns) else null,
+            excludedApps = Programs.excluded(settings.forceDirect),
         )
     }
 
@@ -80,6 +81,7 @@ class SpecBuilder(private val asset: (String) -> String) {
             dnsServers = dns?.let { listOf(it.virtual) } ?: spec.config.iface.dns,
             dnsSearch = spec.config.iface.dnsSearch,
             mtu = spec.config.iface.mtu ?: 1280,
+            excludedApps = spec.excludedApps,
         )
     }
 

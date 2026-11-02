@@ -97,6 +97,17 @@ func (t *tunnel) up(s *upSpec) (err error) {
 		}
 	}
 
+	if len(s.ExcludedApps) > 0 {
+		ours := func() winipcfg.LUID { return winipcfg.LUID(t.luid.Load()) }
+		if wrapped, err := newSplit(dev, s.ExcludedApps, mtu, addrs, dnsServers, ours, log.Printf); err == nil {
+			dev = wrapped
+			t.tun = wrapped
+			log.Printf("split tunnel: %d programs past the VPN", len(s.ExcludedApps))
+		} else {
+			log.Printf("split tunnel disabled: %v", err)
+		}
+	}
+
 	t.bind = conn.NewDefaultBind()
 	t.dev = device.NewDevice(dev, t.bind, newLogger(s.Name))
 	if err := t.dev.IpcSet(s.UAPI); err != nil {

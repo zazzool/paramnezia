@@ -15,6 +15,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -40,7 +41,8 @@ import net.paramnezia.app.ota.Updater
 /**
  * Settings on Windows: the same routing, privacy and interface choices as on Android (so a fleet
  * policy means the same everywhere), plus what only Windows has: start with Windows and the
- * service. Per-app routing is an Android feature and is not offered here.
+ * service. Programs past the VPN are the Windows form of Android's per-app choice: the service
+ * decides per connection by the program that opened it (tunnel/src/main/go/splitapp).
  */
 @Composable
 fun SettingsScreen(app: App, platform: DesktopUiPlatform, modifier: Modifier, toast: (String) -> Unit, askService: Boolean = true) {
@@ -66,6 +68,7 @@ fun SettingsScreen(app: App, platform: DesktopUiPlatform, modifier: Modifier, to
         if (follower) Hint("Эти настройки приходят от администратора флота.")
         Toggle("Российские сайты напрямую", "Банки, Госуслуги, маркетплейсы, Яндекс, VK и другие идут мимо VPN", s.bypassRussia) { v -> change { it.copy(bypassRussia = v) } }
         Toggle("Локальная сеть напрямую", "Роутер, принтер, общие папки и телевизор остаются доступны", s.bypassLan) { v -> change { it.copy(bypassLan = v) } }
+        ProgramsSection(s.forceDirect, enabled = !follower, pick = { platform.pickProgram() }) { f -> change { it.copy(forceDirect = f(it.forceDirect)) } }
 
         HorizontalDivider()
         Section("Приватность")
@@ -128,6 +131,46 @@ fun SettingsScreen(app: App, platform: DesktopUiPlatform, modifier: Modifier, to
             Hint("Эта сборка без ключа релизов: проверка обновлений выключена.")
         }
         Text("Версия ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) для Windows", style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+/** Programs past the VPN: the list, "choose a program" and a pick from what is running now. */
+@Composable
+private fun ProgramsSection(forceDirect: Set<String>, enabled: Boolean, pick: () -> String?, edit: ((Set<String>) -> Set<String>) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var running by remember { mutableStateOf<List<Pair<String, String>>?>(null) }
+    val list = Programs.excluded(forceDirect)
+    Text("Программы мимо VPN", Modifier.padding(top = 4.dp))
+    Hint("Эти программы ходят в интернет напрямую, с вашим обычным адресом, даже когда VPN включён: например, игры, банк-клиент или торрент. Остальные идут через VPN.")
+    for (entry in list) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(Programs.label(entry))
+                Text(entry, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+            }
+            if (enabled) TextButton(onClick = { edit { Programs.remove(it, entry) } }) { Text("Убрать") }
+        }
+    }
+    if (!enabled) return
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = { pick()?.let { e -> edit { Programs.add(it, e) } } }) { Text("Выбрать программу…") }
+        OutlinedButton(onClick = {
+            if (running != null) running = null
+            else scope.launch { running = withContext(Dispatchers.IO) { runCatching { Programs.running() }.getOrDefault(emptyList()) } }
+        }) { Text(if (running == null) "Из запущенных" else "Скрыть") }
+    }
+    running?.let { all ->
+        val left = all.filter { (e, _) -> list.none { it.equals(e, ignoreCase = true) } }
+        if (left.isEmpty()) Hint("Других запущенных программ не нашлось.")
+        for ((entry, path) in left) {
+            Row(Modifier.fillMaxWidth().clickable { edit { Programs.add(it, entry) } }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(Programs.label(entry))
+                    Text(path, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline, maxLines = 1)
+                }
+                Text("Добавить", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+            }
+        }
     }
 }
 

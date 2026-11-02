@@ -60,7 +60,7 @@ object Screenshots {
         }
         shot(out, "fleet-server", serverState(), Tab.FLEET)
         shot(out, "fleet-admin", adminState(), Tab.FLEET)
-        shot(out, "settings", serverState(), Tab.SETTINGS)
+        shot(out, "settings", serverState().let { it.copy(settings = it.settings.copy(forceDirect = setOf("steam.exe", "Telegram.exe"))) }, Tab.SETTINGS)
         shot(out, "home-follower", adminState().let { it.copy(fleet = it.fleet!!.copy(adminSeed = null)) }, Tab.HOME)
         println("screenshots in ${out.absolutePath}")
     }

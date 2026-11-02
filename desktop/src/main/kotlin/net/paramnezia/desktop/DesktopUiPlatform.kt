@@ -83,6 +83,9 @@ class DesktopUiPlatform(override val deviceModel: String) : UiPlatform {
         }
     }
 
+    /** A program for the "past the VPN" list: its entry ("telegram.exe"), or null. */
+    fun pickProgram(): String? = pickFile("Программа мимо VPN", "*.exe")?.let { Programs.entryFor(it.path) }
+
     private fun pickFile(title: String, filter: String): File? {
         val dialog = FileDialog(null as Frame?, title, FileDialog.LOAD).apply {
             file = filter // Windows reads this as the file type filter

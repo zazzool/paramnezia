@@ -22,6 +22,8 @@ class ServiceClient(private val pipe: String = PIPE) {
         val dnsServers: List<String> = emptyList(),
         val dnsSearch: List<String> = emptyList(),
         val mtu: Int = 1280,
+        /** Programs past the VPN, by file name; the service matches them per connection. */
+        val excludedApps: List<String> = emptyList(),
     )
 
     @Serializable
