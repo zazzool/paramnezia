@@ -46,6 +46,8 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
@@ -218,6 +220,10 @@ private fun BezelText(outer: Line, inner: Line, g: DialGeometry, modifier: Modif
     }
     val i = remember(inner.text, g.size, density) {
         with(density) { arcLayout(measurer, inner.text.uppercase(), innerStyle, g.innerText.toPx(), 170f) }
+    }
+    // Screen readers (and UI tests) get both lines as plain text.
+    Box(modifier.semantics { contentDescription = outer.text.replaceFirstChar { it.uppercase() } }) {
+        Box(Modifier.size(1.dp).semantics { contentDescription = inner.text.replaceFirstChar { it.uppercase() } })
     }
     Canvas(modifier) {
         drawArcText(o, g.outerText.toPx(), outer.color)
