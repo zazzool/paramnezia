@@ -58,19 +58,23 @@ func pnTurnOn(interfaceName string, tunFd int32, settings string, dns string, dn
 		logger.Errorf("CreateUnmonitoredTUNFromFD: %v", err)
 		return -1
 	}
+	// The direct DNS socket is ours from here on and is closed exactly once: by udpFromFd (which keeps
+	// a duplicate) or right here. A second close could hit a socket opened meanwhile under the same
+	// number, such as the DNS filter's own tunnel socket.
+	var direct *net.UDPConn
+	if dnsDirectFd >= 0 {
+		direct, _ = udpFromFd(int(dnsDirectFd))
+	}
 	if cfg, ok := dnsfilter.ParseConfig(dns); ok {
-		var direct *net.UDPConn
-		if dnsDirectFd >= 0 {
-			direct, _ = udpFromFd(int(dnsDirectFd))
-		}
 		if wrapped, err := dnsfilter.NewTun(tunDev, cfg, direct); err == nil {
 			tunDev = wrapped
+			direct = nil
 		} else {
 			logger.Errorf("DNS filter disabled: %v", err)
 		}
 	}
-	if dnsDirectFd >= 0 {
-		unix.Close(int(dnsDirectFd)) // udpFromFd keeps its own duplicate
+	if direct != nil {
+		direct.Close()
 	}
 	logger.Verbosef("Attaching to interface %v", name)
 	dev := device.NewDevice(tunDev, conn.NewStdNetBind(), logger)
