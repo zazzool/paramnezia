@@ -93,9 +93,9 @@ fun OrbitDial(app: App, tunnel: TunnelState, p: Protection, size: Dp, servers: I
     val (outer, inner) = when (p) {
         Protection.NO_SERVER -> Line("нет ни одного сервера", Brand.Coral) to Line("добавьте сервер или вставьте ключ", muted)
         Protection.CONNECTING -> Line("подключаюсь", Brand.Amber) to Line(serverLabel, muted)
-        Protection.ON -> Line("через VPN · " + place(v?.foreign, v?.foreignError), mint) to
+        Protection.ON -> Line("VPN · " + place(v?.foreign, v?.foreignError), mint) to
             Line("напрямую · " + place(v?.russian, v?.russianError), muted)
-        Protection.OFF, Protection.FAILED -> Line("сайты видят · " + place(v?.russian ?: v?.foreign, v?.russianError), muted) to
+        Protection.OFF, Protection.FAILED -> Line("без VPN · " + place(v?.russian ?: v?.foreign, v?.russianError), muted) to
             Line(serverLabel, muted.copy(alpha = 0.8f))
     }
 
@@ -144,7 +144,7 @@ private class DialGeometry(val size: Dp) {
     val orbit = size / 2 - SAT / 2 - 4.dp
     val outerText = orbit - 24.dp
     val innerText = outerText - 15.dp
-    val disc = (innerText - 13.dp) * 2
+    val disc = (innerText - 19.dp) * 2
 }
 
 /** Largest dial that leaves room for the status lines in [height]. */
@@ -216,10 +216,10 @@ private fun BezelText(outer: Line, inner: Line, g: DialGeometry, modifier: Modif
     val outerStyle = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.4.sp)
     val innerStyle = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Medium, letterSpacing = 1.2.sp)
     val o = remember(outer.text, g.size, density) {
-        with(density) { arcLayout(measurer, outer.text.uppercase(), outerStyle, g.outerText.toPx(), 210f) }
+        with(density) { arcLayout(measurer, outer.text.uppercase(), outerStyle, g.outerText.toPx(), 168f) }
     }
     val i = remember(inner.text, g.size, density) {
-        with(density) { arcLayout(measurer, inner.text.uppercase(), innerStyle, g.innerText.toPx(), 170f) }
+        with(density) { arcLayout(measurer, inner.text.uppercase(), innerStyle, g.innerText.toPx(), 140f) }
     }
     // Screen readers (and UI tests) get both lines as plain text.
     Box(modifier.semantics { contentDescription = outer.text.replaceFirstChar { it.uppercase() } }) {
