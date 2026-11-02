@@ -64,7 +64,7 @@ class Links(
 
     /** Fleet admin: a new trusted device, joined through a link or a file. */
     suspend fun forFleetDevice(name: String, delivery: Delivery = Delivery.LINK): Created = withContext(Dispatchers.IO) {
-        val (server, ssh) = fleet.managedServer() ?: error("Нет SSH-доступа ни к одному серверу флота")
+        val (server, ssh) = fleet.managedServer() ?: error("Нет SSH-доступа ни к одному серверу семьи")
         val invite = fleet.addDevice(name)
         val pub = Invite.read(invite)?.let { WgKey.fromBase64(it.privateKey).publicKey().toBase64() }
         if (delivery == Delivery.FILE) return@withContext Created(name, storeFile(name, server.id, pub, fleetDevice = true), invite)

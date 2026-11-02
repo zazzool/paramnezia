@@ -122,7 +122,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Tab(val title: String) { HOME("Главная"), ADD("Добавить"), FLEET("Флот"), SETTINGS("Настройки") }
+private enum class Tab(val title: String) { HOME("Главная"), ADD("Добавить"), FLEET("Семья"), SETTINGS("Настройки") }
 
 @Composable
 private fun Root(app: App, incoming: MutableSharedFlow<String>, onConnect: () -> Unit) {

@@ -1,6 +1,6 @@
 # Paramnezia для Windows
 
-Тот же клиент, что на Android: те же экраны, ключи `vpn://`, приглашения, флот, манифесты и серверы.
+Тот же клиент, что на Android: те же экраны, ключи `vpn://`, приглашения, семейная группа, манифесты и серверы.
 Windows 10 и 11, x64. Установщик `Paramnezia-Setup-<версия>.exe` лежит в каждом
 [релизе](https://github.com/zazzool/paramnezia/releases/latest) рядом с APK.
 
@@ -11,7 +11,7 @@ desktop/                    Windows-приложение (Kotlin, Compose Deskto
   build.gradle.kts          берёт экраны из app/src/main/kotlin/.../ui без изменений (задача syncSharedUi)
   src/.../desktop/          Windows-слой: служба, DPAPI, трей, автозапуск, файлы, скриншоты
   installer/paramnezia.iss  установщик (Inno Setup)
-client/                     общий код Android и Windows: состояние, импорт, флот, ссылки, «как вас видят сайты»
+client/                     общий код Android и Windows: состояние, импорт, семейная группа (fleet), ссылки, «как вас видят сайты»
 tunnel/src/main/go/
   dnsfilter/                DNS-фильтр (общий с Android)
   windows/                  служба paramnezia-service.exe: amneziawg-go v3 на Wintun
@@ -46,7 +46,7 @@ UDP-соединения она смотрит в таблицах соедин�
 уже открытые соединения не переключаются (перезапустите программу).
 
 **Сторож.** Раз в минуту приложение смотрит рукопожатие и проверяет DNS через туннель; после двух неудач
-переподключается и переходит на резервный сервер флота, как на Android.
+переподключается и переходит на резервный сервер семьи, как на Android.
 
 **Хранилище.** `%LOCALAPPDATA%\Paramnezia`: состояние шифруется AES-GCM, ключ защищён DPAPI (только этот
 пользователь на этом компьютере). Журнал службы: `%ProgramData%\Paramnezia\service.log`.

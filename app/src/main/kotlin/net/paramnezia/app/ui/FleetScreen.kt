@@ -131,17 +131,17 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
         val fleet = state.fleet
         if (fleet == null) {
             val managed = state.profiles.filter { it.ssh != null }
-            ScreenTitle("Флот", "Раздайте VPN семье и друзьям")
+            ScreenTitle("Семья", "Раздайте VPN семье и друзьям")
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (managed.isEmpty()) {
                 NeedServer(onAddServer)
                 return@Column
             }
             // Recommended: a fleet survives a blocked server; plain accounts do not.
-            FleetPitch(managed, busy) { p -> work("Флот создан") { app.fleet.create(p.name, WgQuick.parse(p.conf), p.ssh!!, platform.deviceModel) } }
+            FleetPitch(managed, busy) { p -> work("Семейная группа создана") { app.fleet.create(p.name, WgQuick.parse(p.conf), p.ssh!!, platform.deviceModel) } }
             Group {
                 GroupRow(
-                    "Пригласить без флота", subtitle = "Каждому свой ключ ссылкой или файлом, сразу нескольким",
+                    "Просто выдать ключи", subtitle = "Каждому свой ключ ссылкой или файлом, без автообновления серверов",
                     icon = Glyph.PersonAdd, onClick = { if (!busy) accountOn = managed },
                     trailing = { Chevron() },
                 )
@@ -160,7 +160,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
         val devices = manifest?.devices.orEmpty()
 
         ScreenTitle(
-            "Флот",
+            "Семья",
             if (isAdmin) "Вы администратор · ${plural(devices.size, "устройство", "устройства", "устройств")}, ${plural(servers.size, "сервер", "сервера", "серверов")}"
             else "Серверы и настройки приходят от администратора",
         ) {
@@ -196,9 +196,9 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
             servers.forEachIndexed { i, s ->
                 val actions = buildList<Pair<String, () -> Unit>> {
                     if (isAdmin && i > 0) add("Сделать основным" to { work("${s.name} теперь основной") { app.fleet.promote(s.id) } })
-                    if (isAdmin && servers.size > 1) add("Удалить из флота" to {
+                    if (isAdmin && servers.size > 1) add("Убрать сервер" to {
                         val bought = app.cloud.serverAt(s.host)
-                        work("Сервер удалён из флота") { app.fleet.removeServer(s.id); boughtRemoved = bought }
+                        work("Сервер убран из семьи") { app.fleet.removeServer(s.id); boughtRemoved = bought }
                     })
                 }
                 GroupRow(
@@ -246,15 +246,15 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                     openTokenPage = { openUrl(GITHUB_TOKEN_PAGE) })
             }
         } else if (manifest?.policy != null) {
-            Hint("Обход российских сайтов и блокировку рекламы настраивает администратор флота, они обновляются сами.", Icons.Filled.Info)
+            Hint("Обход российских сайтов и блокировку рекламы настраивает администратор семьи, они обновляются сами.", Icons.Filled.Info)
         }
         Spacer(Modifier.height(Space.M))
     }
 
     if (newDevice) {
         PeopleDialog(
-            title = "Пригласить во флот",
-            hint = "Устройства флота сами получают новые серверы и ваши настройки.",
+            title = "Пригласить в семью",
+            hint = "Устройства семьи сами получают новые серверы и ваши настройки.",
             allowQr = true,
             onDismiss = { newDevice = false },
             onQr = { name -> newDevice = false; work { invite = app.fleet.addDevice(name) } },
@@ -266,7 +266,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
 
     accountOn?.let { choices ->
         PeopleDialog(
-            title = "Пригласить без флота",
+            title = "Выдать ключи",
             hint = "Каждому свой ключ на выбранном сервере.",
             allowQr = false,
             servers = choices,
@@ -383,10 +383,10 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
         AlertDialog(
             onDismissRequest = { newServer = false },
             icon = { Icon(Glyph.Server, null) },
-            title = { Text("Свой VPS во флот") },
+            title = { Text("Свой VPS для семьи") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("AmneziaWG установится сам, все устройства флота получат доступ к серверу.", style = MaterialTheme.typography.bodyMedium)
+                    Text("AmneziaWG установится сам, все устройства семьи получат доступ к серверу.", style = MaterialTheme.typography.bodyMedium)
                     SshFields(form, enabled = true, toast = toast, showName = true)
                     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { master = !master }, verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(master, { master = it })
@@ -398,7 +398,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                 Button(enabled = form.ready, onClick = {
                     newServer = false
                     val creds = form.credentials()
-                    work("Сервер добавлен во флот") { app.fleet.addServer(form.name.ifBlank { creds.host }, creds, master) {} }
+                    work("Сервер добавлен в семью") { app.fleet.addServer(form.name.ifBlank { creds.host }, creds, master) {} }
                 }) { Text("Развернуть") }
             },
             dismissButton = { TextButton(onClick = { newServer = false }) { Text("Отмена") } },
@@ -415,7 +415,7 @@ private fun NeedServer(onAddServer: () -> Unit) {
                 Icon(Glyph.Server, null, Modifier.size(28.dp), tint = Brand.Coral)
             }
             Text("Сначала нужен свой сервер", style = MaterialTheme.typography.titleLarge)
-            Text("Приглашать людей и собирать флот можно на сервере, который вы купили в приложении или развернули на своём VPS.",
+            Text("Приглашать людей и создавать семейную группу можно на сервере, который вы купили в приложении или развернули на своём VPS.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Button(onClick = onAddServer, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Добавить сервер") }
         }
@@ -424,7 +424,7 @@ private fun NeedServer(onAddServer: () -> Unit) {
     Group {
         GroupRow("Свой сервер", subtitle = "Купленный у хостера из приложения или ваш VPS", icon = Glyph.Server)
         GroupRow("Приглашения", subtitle = "Ссылкой, файлом или QR-кодом, сразу всей семье", icon = Glyph.PersonAdd)
-        GroupRow("Одна кнопка", subtitle = "Люди подключаются без настроек, при блокировке флот сам переходит на резервный сервер", icon = Glyph.Shield)
+        GroupRow("Одна кнопка", subtitle = "Люди подключаются без настроек, при блокировке все сами переходят на резервный сервер", icon = Glyph.Shield)
     }
 }
 
@@ -436,7 +436,7 @@ private fun FleetPitch(managed: List<StoredProfile>, busy: Boolean, onCreate: (S
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Glyph.Shield, null, Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
                 Spacer(Modifier.width(12.dp))
-                Text("Создать флот", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.weight(1f))
+                Text("Создать семейную группу", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.weight(1f))
                 Pill("рекомендую", MaterialTheme.colorScheme.onSecondaryContainer)
             }
             for (line in listOf(
@@ -448,7 +448,7 @@ private fun FleetPitch(managed: List<StoredProfile>, busy: Boolean, onCreate: (S
                 Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
             }
             for (p in managed) Button(enabled = !busy, onClick = { onCreate(p) }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
-                Text(if (managed.size == 1) "Создать флот" else "Создать флот на «${p.name}»", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (managed.size == 1) "Создать семейную группу" else "Создать на «${p.name}»", maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -626,7 +626,7 @@ private fun ReserveChannel(on: Boolean, error: String?, busy: Boolean, toast: (S
                 "Резервный канал GitHub",
                 subtitle = when {
                     error != null -> "Не обновляется: $error"
-                    on -> "Флот переживёт блокировку всех серверов сразу"
+                    on -> "Семья останется с VPN, даже если заблокируют все серверы"
                     else -> "Выключен: устройства узнают о новых серверах только через старые"
                 },
                 icon = Glyph.Globe,

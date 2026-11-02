@@ -65,7 +65,7 @@ fun SettingsScreen(app: App, platform: DesktopUiPlatform, modifier: Modifier, to
 
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Section("Маршрутизация")
-        if (follower) Hint("Эти настройки приходят от администратора флота.")
+        if (follower) Hint("Эти настройки приходят от администратора семьи.")
         Toggle("Российские сайты напрямую", "Банки, Госуслуги, маркетплейсы, Яндекс, VK и другие идут мимо VPN", s.bypassRussia) { v -> change { it.copy(bypassRussia = v) } }
         Toggle("Локальная сеть напрямую", "Роутер, принтер, общие папки и телевизор остаются доступны", s.bypassLan) { v -> change { it.copy(bypassLan = v) } }
         ProgramsSection(s.forceDirect, enabled = !follower, pick = { platform.pickProgram() }) { f -> change { it.copy(forceDirect = f(it.forceDirect)) } }
@@ -98,7 +98,7 @@ fun SettingsScreen(app: App, platform: DesktopUiPlatform, modifier: Modifier, to
         HorizontalDivider()
         Section("Интерфейс")
         for ((mode, title, sub) in listOf(
-            Triple(UiMode.AUTO, "Автоматически", "Простой на ведомых устройствах флота, полный на остальных"),
+            Triple(UiMode.AUTO, "Автоматически", "Простой на устройствах, приглашённых в семью, полный на остальных"),
             Triple(UiMode.SIMPLE, "Простой", "Одна кнопка. Полный режим: долгое нажатие на заголовок"),
             Triple(UiMode.FULL, "Полный", "Все настройки"),
         )) {
