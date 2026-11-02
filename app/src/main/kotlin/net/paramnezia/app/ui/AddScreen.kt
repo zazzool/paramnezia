@@ -61,7 +61,7 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
             runCatching { block() }
                 .onSuccess {
                     toast(when (it) {
-                        Servers.Imported.JoinedFleet -> "Устройство добавлено во флот"
+                        Servers.Imported.JoinedFleet -> "Устройство добавлено в семью"
                         is Servers.Imported.Profiles -> "Добавлено: ${it.names.joinToString()}"
                     })
                     text = ""; manual = false
@@ -120,7 +120,7 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
                 PasteField(
                     text, { text = it; keyError = null }, "Ключ или конфиг",
                     placeholder = "vpn://… или [Interface]…", singleLine = false, minLines = 3, maxLines = 6, mono = true,
-                    supporting = keyError ?: "Ключи AmneziaVPN, приглашения во флот, конфиги WireGuard и AmneziaWG",
+                    supporting = keyError ?: "Ключи AmneziaVPN, приглашения в семью, конфиги WireGuard и AmneziaWG",
                     isError = keyError != null, enabled = !busy, startTyping = typeNow,
                     onEmptyClipboard = { toast("Буфер обмена пуст") },
                 )

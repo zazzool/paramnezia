@@ -61,8 +61,8 @@ object Screenshots {
         }
         shot(out, "fleet-server", serverState(), Tab.FLEET)
         shot(out, "fleet-admin", adminState(), Tab.FLEET)
-        shot(out, "settings", serverState(), Tab.SETTINGS)
-        // The dock's mini power orb glows while the VPN is on, on every screen.
+        shot(out, "settings", serverState().let { it.copy(settings = it.settings.copy(forceDirect = setOf("steam.exe", "Telegram.exe"))) }, Tab.SETTINGS)
+        // The header's mini power orb glows while the VPN is on, on every screen.
         shot(out, "fleet-on", adminState(), Tab.FLEET) {
             TunnelRuntime.set(TunnelState.Up("Нидерланды", "demo", System.currentTimeMillis() - 754_000))
         }

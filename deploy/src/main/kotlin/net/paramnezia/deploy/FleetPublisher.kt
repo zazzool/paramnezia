@@ -43,8 +43,9 @@ class FleetPublisher(private val hostKeys: HostKeyStore) {
     /**
      * Has the server fetch an app release itself (from [urls], HTTPS only) and verify it against
      * [sha256]; then serves it inside the tunnel next to [signedRelease] (devices update even when
-     * every public host is blocked) and, if [forInvites], on the invite page. The phone uploads
-     * nothing: the server downloads the same public release everyone gets.
+     * every public host is blocked) and, if [forInvites], on the invite page, together with the
+     * [windows] installer when given. The phone uploads nothing: the server downloads the same
+     * public release everyone gets. A Windows installer that cannot be fetched does not fail the call.
      */
     fun mirrorRelease(
         creds: SshCredentials,
@@ -53,6 +54,7 @@ class FleetPublisher(private val hostKeys: HostKeyStore) {
         signedRelease: String?,
         forInvites: Boolean,
         protocol: Protocol? = Protocol.AWG,
+        windows: InviteLinks.AppDownload? = null,
     ) {
         require(sha256.matches(Regex("[0-9a-f]{64}"))) { "bad sha256" }
         SshConnection.open(creds, hostKeys).use { ssh ->
@@ -62,6 +64,10 @@ class FleetPublisher(private val hostKeys: HostKeyStore) {
                 signedRelease?.let { put("PN_RELEASE", it) }
                 protocol?.let { put("CONTAINER", it.amneziaContainer) }
                 put("PN_INVITE", if (forInvites) "1" else "0")
+                if (forInvites && windows != null) {
+                    put("PN_WIN_SHA256", windows.sha256)
+                    put("PN_WIN_URLS", windows.urls.filter { it.startsWith("https://") }.joinToString("\n"))
+                }
             }
             val r = ssh.run(ServerManager.script("release-mirror.sh"), env = env, timeoutMs = 10 * 60_000)
             r.error?.let { throw SshException("mirror_failed", "Server could not get the app: $it") }

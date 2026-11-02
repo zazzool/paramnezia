@@ -50,7 +50,7 @@ if tap "Ввести с клавиатуры"; then shot add-keyboard 3; hide_ke
 top; tap "Ввести" && shot add-type 3
 hide_keyboard
 tap "Семья" && shot fleet-empty
-# The dock: «Настройки», then the mini power orb leads back home; system Back does the same.
+# Around the dial: «Настройки», then the mini power orb in the header leads back home; system Back does the same.
 tap "Настройки" && shot settings
 tap "Главная, VPN выключен" && shot home-back
 tap "Добавить" && { adb shell input keyevent KEYCODE_BACK; shot back-key; }

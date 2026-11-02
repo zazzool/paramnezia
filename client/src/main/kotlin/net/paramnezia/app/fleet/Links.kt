@@ -64,7 +64,7 @@ class Links(
 
     /** Fleet admin: a new trusted device, joined through a link or a file. */
     suspend fun forFleetDevice(name: String, delivery: Delivery = Delivery.LINK): Created = withContext(Dispatchers.IO) {
-        val (server, ssh) = fleet.managedServer() ?: error("Нет SSH-доступа ни к одному серверу флота")
+        val (server, ssh) = fleet.managedServer() ?: error("Нет SSH-доступа ни к одному серверу семьи")
         val invite = fleet.addDevice(name)
         val pub = Invite.read(invite)?.let { WgKey.fromBase64(it.privateKey).publicKey().toBase64() }
         if (delivery == Delivery.FILE) return@withContext Created(name, storeFile(name, server.id, pub, fleetDevice = true), invite)
@@ -126,7 +126,7 @@ class Links(
             runCatching {
                 val url = links.prepare(ssh, app)
                 repo.update { s -> s.copy(pages = s.pages + (ssh.host to url)) }
-                app?.let { publisher.mirrorRelease(ssh, it.sha256, it.urls, null, forInvites = true, protocol = null) }
+                app?.let { publisher.mirrorRelease(ssh, it.sha256, it.urls, null, forInvites = true, protocol = null, windows = it.windows) }
             }.onSuccess { prepared += key }.onFailure { Log.w(TAG, "prepare ${ssh.host}: ${it.message}") }
         }
     }
@@ -137,17 +137,23 @@ class Links(
      */
     private suspend fun appDownload(): InviteLinks.AppDownload? {
         val u = updater()
-        if (u.shareable() == null) runCatching { u.check() }
+        val now = System.currentTimeMillis()
+        if ((u.shareable() == null || u.windows() == null) && now - lastCheck > 10 * 60_000L) {
+            lastCheck = now
+            runCatching { u.check() }
+        }
         val (release, _) = u.shareable() ?: return null
-        val urls = release.publicApkUrls()
-        return InviteLinks.AppDownload(release.versionName, release.sha256, urls)
+        val windows = u.windows()?.let { InviteLinks.AppDownload(it.versionName, it.sha256, it.publicApkUrls()) }
+        return InviteLinks.AppDownload(release.versionName, release.sha256, release.publicApkUrls(), windows)
     }
 
-    /** The server's own verified copy of the app for the invite page, in the background. */
+    @Volatile private var lastCheck = 0L
+
+    /** The server's own verified copies of the apps (Android, Windows) for the page, in the background. */
     private fun mirrorForInvites(ssh: SshCredentials, protocol: Protocol? = null) = scope.launch(Dispatchers.IO) {
         val app = appDownload() ?: return@launch
         val shared = updater().shareable()?.second
-        runCatching { publisher.mirrorRelease(ssh, app.sha256, app.urls, shared, forInvites = true, protocol = protocol) }
+        runCatching { publisher.mirrorRelease(ssh, app.sha256, app.urls, shared, forInvites = true, protocol = protocol, windows = app.windows) }
             .onFailure { Log.w(TAG, "mirror to ${ssh.host}: ${it.message}") }
     }
 

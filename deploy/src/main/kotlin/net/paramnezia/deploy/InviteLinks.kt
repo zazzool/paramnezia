@@ -5,6 +5,7 @@ import net.paramnezia.core.amnezia.AmneziaKey
 import net.paramnezia.core.config.WgQuick
 import net.paramnezia.core.fleet.Invite
 import net.paramnezia.core.profile.SshCredentials
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -22,19 +23,33 @@ import java.util.Base64
  *    drive-by downloads are exactly what Play Protect treats as malware distribution.
  *  - iPhone: the plain key and config for the original AmneziaVPN.
  *  - anything else: a choice.
+ * The public part of the page links the newest releases for Android and Windows: GitHub's
+ * `releases/latest/download/...` addresses (never out of date) and this server's own verified copies
+ * (reachable whenever the page is, even where GitHub is not).
  * The first fetch of the invite claims the link (see `invite/get.cgi`).
  */
 class InviteLinks(private val hostKeys: HostKeyStore) {
 
-    /** Where people without the app get it: the signed release the admin itself runs. */
-    data class AppDownload(val versionName: String, val sha256: String, val urls: List<String>) {
+    /**
+     * Where people without the app get it: the signed Android release the admin itself runs and,
+     * if known, the newest signed Windows installer ([windows]).
+     */
+    data class AppDownload(
+        val versionName: String,
+        val sha256: String,
+        val urls: List<String>,
+        val windows: AppDownload? = null,
+    ) {
         init { require(sha256.matches(HEX64)) { "bad sha256" } }
 
-        internal fun json(): String = buildJsonObject {
+        internal fun json(): String = obj().toString()
+
+        private fun obj(): JsonObject = buildJsonObject {
             put("version", versionName)
             put("sha256", sha256)
             putJsonArray("urls") { urls.filter { it.startsWith("https://") }.forEach { add(it) } }
-        }.toString()
+            windows?.let { put("windows", it.obj()) }
+        }
     }
 
     data class Link(val url: String, val token: String, val expiresAt: Long)

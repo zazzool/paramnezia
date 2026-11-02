@@ -46,7 +46,7 @@ import net.paramnezia.tunnel.TunnelRuntime
 import net.paramnezia.tunnel.TunnelState
 
 /**
- * The window's content: the same places and dock as the Android app, the same screens (shared code),
+ * The window's content: the same dial and places as the Android app, the same screens (shared code),
  * and a Windows settings screen. [incoming] carries keys from opened `.vpn` files.
  */
 @Composable

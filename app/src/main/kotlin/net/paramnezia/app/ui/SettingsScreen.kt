@@ -87,7 +87,7 @@ fun SettingsScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
         HorizontalDivider()
         Text("Интерфейс", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         for ((mode, title, sub) in listOf(
-            Triple(UiMode.AUTO, "Автоматически", "Простой на ведомых устройствах флота, полный на остальных"),
+            Triple(UiMode.AUTO, "Автоматически", "Простой на устройствах, приглашённых в семью, полный на остальных"),
             Triple(UiMode.SIMPLE, "Простой", "Одна кнопка. Полный режим: долгое нажатие на заголовок"),
             Triple(UiMode.FULL, "Полный", "Все настройки"),
         )) {
