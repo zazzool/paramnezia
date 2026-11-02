@@ -23,11 +23,22 @@ class TimewebProvider(token: String, transport: CloudHttp.Transport = CloudHttp.
 
     private fun presets(): List<JsonObject> = http.get("/presets/servers").obj()?.get("server_presets").arr().mapNotNull { it.obj() }
 
-    override fun regions(): List<CloudRegion> = presets().mapNotNull { it.str("location") }.distinct()
+    override fun regions(): List<CloudRegion> = regionsOf(presets())
+
+    override fun plans(region: String): List<CloudPlan> = plansOf(presets(), region)
+
+    /** One request: the preset list has every location and price. */
+    override fun catalog(): CloudCatalog {
+        val all = presets()
+        val regions = regionsOf(all)
+        return CloudCatalog.of(info.id, regions, regions.associate { it.id to plansOf(all, it.id) })
+    }
+
+    private fun regionsOf(presets: List<JsonObject>): List<CloudRegion> = presets.mapNotNull { it.str("location") }.distinct()
         .map { CloudRegion(it, LOCATIONS[it]?.first ?: it, LOCATIONS[it]?.second ?: it.substringBefore('-').uppercase()) }
         .sortedWith(compareBy({ it.inRussia }, { ORDER.indexOf(it.id).let { i -> if (i < 0) 99 else i } }))
 
-    override fun plans(region: String): List<CloudPlan> = presets().filter { it.str("location") == region }.mapNotNull { p ->
+    private fun plansOf(presets: List<JsonObject>, region: String): List<CloudPlan> = presets.filter { it.str("location") == region }.mapNotNull { p ->
         val id = p.int("id") ?: return@mapNotNull null
         val ram = p.int("ram") ?: 0
         val cpu = p.int("cpu") ?: 0
@@ -42,7 +53,7 @@ class TimewebProvider(token: String, transport: CloudHttp.Transport = CloudHttp.
             currency = "RUB",
             extra = mapOf("bandwidth" to (p.int("bandwidth") ?: 200).toString()),
         )
-    }.sortedBy { it.monthly ?: Double.MAX_VALUE }
+    }.let(CloudProviders::dedupe)
 
     override fun create(name: String, region: String, plan: CloudPlan, authorizedKey: String, userData: String, idempotencyKey: String): CloudServer {
         val body = buildJsonObject {
@@ -114,6 +125,8 @@ class TimewebProvider(token: String, transport: CloudHttp.Transport = CloudHttp.
             tokenUrl = "https://timeweb.cloud/my/api-keys",
             tokenHint = "Панель Timeweb Cloud → API и Terraform → «Создать токен»",
             currency = "RUB",
+            blurb = "Российские карты, ₽ · Европа и Казахстан",
+            color = 0xFF4F46E5,
         )
 
         /** Location → (name, country). From `twc` (ServiceRegion) and timeweb.cloud. */

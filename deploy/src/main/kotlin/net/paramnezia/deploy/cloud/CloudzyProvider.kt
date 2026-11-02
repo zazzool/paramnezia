@@ -21,17 +21,37 @@ class CloudzyProvider(token: String, transport: CloudHttp.Transport = CloudHttp.
 
     override fun verify() { http.get("/auth/me") }
 
-    override fun regions(): List<CloudRegion> = http.get("/regions").arr().mapNotNull { it.obj() }
+    override fun regions(): List<CloudRegion> = parseRegions(http.get("/regions"))
+
+    override fun plans(region: String): List<CloudPlan> = parsePlans(http.get("/pricing/catalog").obj(), region)
+
+    /** Two requests at once (regions and the price list), instead of one price list per region. */
+    override fun catalog(): CloudCatalog {
+        val (regionsJson, priceJson) = Parallel.both({ http.get("/regions") }, { http.get("/pricing/catalog").obj() })
+        val regions = parseRegions(regionsJson)
+        return CloudCatalog.of(info.id, regions, regions.associate { it.id to parsePlans(priceJson, it.id) })
+    }
+
+    /** The catalog leaves out the IPv4 address; the quote has the real monthly sum. */
+    override fun exactPrice(plan: CloudPlan): Double? = runCatching {
+        val q = http.post("/pricing/quote", buildJsonObject {
+            put("planId", plan.id); put("region", plan.region); put("billingCycle", CYCLE)
+            put("quantity", 1); put("includeIpv4", true); putJsonObject("extras") {}
+        }).obj()
+        q?.num("subtotalMonthlyCents")?.let { it / 100.0 }
+    }.getOrNull()
+
+    private fun parseRegions(json: kotlinx.serialization.json.JsonElement): List<CloudRegion> = json.arr().mapNotNull { it.obj() }
         .filter { it.bool("isHidden") != true && it.bool("isActive") != false && it.bool("isOutOfStock") != true }
         .mapNotNull { r ->
             val id = r.str("id") ?: return@mapNotNull null
             val name = r.str("name") ?: id
-            CloudRegion(id, name, countryOf(r.str("countryCode") ?: r.str("country") ?: r.str("abbr") ?: name))
+            CloudRegion(id, name, countryOf(r.str("countryCode") ?: r.str("country") ?: name, r.str("abbr"), id))
         }
         .sortedWith(compareBy({ it.inRussia }, { it.name }))
 
-    override fun plans(region: String): List<CloudPlan> {
-        val catalog = http.get("/pricing/catalog").obj() ?: return emptyList()
+    private fun parsePlans(catalog: JsonObject?, region: String): List<CloudPlan> {
+        catalog ?: return emptyList()
         val prices = catalog["prices"].arr().mapNotNull { it.obj() }
         return catalog["plans"].arr().mapNotNull { it.obj() }.mapNotNull { p ->
             val id = p.str("id") ?: return@mapNotNull null
@@ -48,7 +68,7 @@ class CloudzyProvider(token: String, transport: CloudHttp.Transport = CloudHttp.
                 monthly = price.num("monthlyEquivCents")?.let { it / 100.0 },
                 currency = price.str("currency") ?: "USD",
             )
-        }.sortedBy { it.monthly ?: Double.MAX_VALUE }
+        }.let(CloudProviders::dedupe)
     }
 
     override fun create(name: String, region: String, plan: CloudPlan, authorizedKey: String, userData: String, idempotencyKey: String): CloudServer {
@@ -113,18 +133,13 @@ class CloudzyProvider(token: String, transport: CloudHttp.Transport = CloudHttp.
             tokenUrl = "https://dash.cloudzy.com/",
             tokenHint = "Панель Cloudzy → Developer API → новый токен (права: серверы, SSH-ключи, просмотр цен)",
             currency = "USD",
+            blurb = "Криптовалюта и карты · 15+ стран · от 5 $",
+            color = 0xFF2F6BFF,
         )
 
         private fun seg(id: String) = java.net.URLEncoder.encode(id, "UTF-8")
 
-        /** Cloudzy names regions by city; this is enough to tell Russian ones from foreign ones. */
-        internal fun countryOf(text: String): String {
-            val t = text.lowercase()
-            return when {
-                t.length == 2 -> t.uppercase()
-                listOf("moscow", "russia", "petersburg").any { it in t } -> "RU"
-                else -> "??"
-            }
-        }
+        /** Cloudzy names regions by city ("New York City") and gives a short code (`abbr`). */
+        internal fun countryOf(vararg hints: String?): String = Geo.country(*hints)
     }
 }

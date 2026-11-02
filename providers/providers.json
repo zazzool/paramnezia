@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-01",
+  "updated": "2026-11-02",
   "providers": [
     {
       "id": "cloudzy",
@@ -38,13 +38,87 @@
         "delete": "DELETE /servers/{id}"
       },
       "cloudInit": "cloud_init",
-      "locations": {"nl-1": "Amsterdam", "de-1": "Frankfurt", "pl-1": "Gdansk", "kz-1": "Almaty", "ru-1": "Saint Petersburg", "ru-2": "Novosibirsk", "ru-3": "Moscow"},
+      "locations": {
+        "nl-1": "Amsterdam",
+        "de-1": "Frankfurt",
+        "pl-1": "Gdansk",
+        "kz-1": "Almaty",
+        "ru-1": "Saint Petersburg",
+        "ru-2": "Novosibirsk",
+        "ru-3": "Moscow"
+      },
       "tokenPage": "https://timeweb.cloud/my/api-keys",
       "source": "https://github.com/timeweb-cloud/twc/blob/master/twc/api/client.py"
     },
-    {"id": "vultr", "name": "Vultr", "enabled": false, "api": "https://api.vultr.com/v2", "reason": "service to customers in Russia not confirmed"},
-    {"id": "hetzner", "name": "Hetzner Cloud", "enabled": false, "api": "https://api.hetzner.cloud/v1", "reason": "no contracts with Russian addresses since Dec 2023"},
-    {"id": "digitalocean", "name": "DigitalOcean", "enabled": false, "api": "https://api.digitalocean.com/v2", "reason": "blocked by Roskomnadzor since Apr 2024"},
-    {"id": "aeza", "name": "Aeza", "enabled": false, "reason": "OFAC sanctions (Jul 2025)"}
+    {
+      "id": "vultr",
+      "name": "Vultr",
+      "enabled": true,
+      "api": "https://api.vultr.com/v2",
+      "auth": "Authorization: Bearer <API key> (Access Control: allow 0.0.0.0/0)",
+      "endpoints": {
+        "verify": "GET /account",
+        "regions": "GET /regions",
+        "plans": "GET /plans",
+        "images": "GET /os",
+        "sshKeys": "GET|POST /ssh-keys",
+        "create": "POST /instances",
+        "get": "GET /instances/{id}",
+        "list": "GET /instances?label=",
+        "delete": "DELETE /instances/{id}"
+      },
+      "cloudInit": "user_data (base64)",
+      "tokenPage": "https://my.vultr.com/settings/#settingsapi",
+      "source": "https://github.com/vultr/govultr/blob/master/instance.go",
+      "payment": "foreign card or PayPal"
+    },
+    {
+      "id": "hetzner",
+      "name": "Hetzner Cloud",
+      "enabled": true,
+      "api": "https://api.hetzner.cloud/v1",
+      "auth": "Authorization: Bearer <project token, Read & Write>",
+      "endpoints": {
+        "verify": "GET /servers",
+        "regions": "GET /locations",
+        "plans": "GET /server_types (prices per location)",
+        "sshKeys": "GET|POST /ssh_keys",
+        "create": "POST /servers",
+        "get": "GET /servers/{id}",
+        "list": "GET /servers?name=",
+        "delete": "DELETE /servers/{id}"
+      },
+      "cloudInit": "user_data",
+      "tokenPage": "https://console.hetzner.cloud/projects",
+      "source": "https://github.com/hetznercloud/hcloud-go/blob/main/hcloud/schema/server.go",
+      "payment": "no contracts with Russian addresses since Dec 2023: needs a foreign account"
+    },
+    {
+      "id": "digitalocean",
+      "name": "DigitalOcean",
+      "enabled": true,
+      "api": "https://api.digitalocean.com/v2",
+      "auth": "Authorization: Bearer <personal access token>",
+      "endpoints": {
+        "verify": "GET /account",
+        "regions": "GET /regions",
+        "plans": "GET /sizes",
+        "sshKeys": "GET|POST /account/keys",
+        "create": "POST /droplets",
+        "get": "GET /droplets/{id}",
+        "list": "GET /droplets?tag_name=paramnezia",
+        "delete": "DELETE /droplets/{id}"
+      },
+      "cloudInit": "user_data",
+      "tokenPage": "https://cloud.digitalocean.com/account/api/tokens",
+      "source": "https://github.com/digitalocean/godo/blob/main/droplets.go",
+      "payment": "foreign card; site blocked in Russia since Apr 2024 (API works through the VPN)"
+    },
+    {
+      "id": "aeza",
+      "name": "Aeza",
+      "enabled": false,
+      "reason": "OFAC sanctions (Jul 2025)"
+    }
   ]
 }

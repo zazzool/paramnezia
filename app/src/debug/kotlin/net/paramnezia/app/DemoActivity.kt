@@ -14,6 +14,9 @@ import net.paramnezia.core.fleet.FleetCrypto
 import net.paramnezia.core.fleet.FleetPolicy
 import net.paramnezia.core.fleet.FleetServer
 import net.paramnezia.core.profile.SshCredentials
+import net.paramnezia.deploy.cloud.CloudCatalog
+import net.paramnezia.deploy.cloud.CloudPlan
+import net.paramnezia.deploy.cloud.CloudRegion
 import net.paramnezia.tunnel.NativeEd25519
 import java.util.Base64
 import java.util.UUID
@@ -24,7 +27,7 @@ import kotlin.concurrent.thread
  * on an emulator without real servers (CI screenshots for pull requests). Addresses are from
  * TEST-NET-3 (203.0.113.0/24) and never answer.
  *
- * `adb shell am start -n net.paramnezia.debug/net.paramnezia.app.DemoActivity --es demo admin|server|empty`
+ * `adb shell am start -n net.paramnezia.debug/net.paramnezia.app.DemoActivity --es demo admin|server|empty|cloud`
  */
 class DemoActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,6 +55,10 @@ class DemoActivity : Activity() {
         val pages = mapOf("203.0.113.10" to "http://203.0.113.10/")
         return when (demo) {
             "empty" -> AppState()
+            "cloud" -> {
+                writeCatalogs()
+                AppState(cloud = net.paramnezia.app.data.CloudState(tokens = mapOf("cloudzy" to "demo", "timeweb" to "demo"), lastProvider = "cloudzy"))
+            }
             "server" -> AppState(profiles = listOf(profile), activeProfile = profile.id, links = links, pages = pages)
             else -> {
                 val (admin, empty) = FleetAdmin.create("Нидерланды", NativeEd25519)
@@ -75,6 +82,27 @@ class DemoActivity : Activity() {
                 AppState(fleet = fleet, links = links.map { it.copy(serverRef = main.id, fleetDevice = true) }, pages = pages)
             }
         }
+    }
+
+    /** Hoster catalogs as Cloudzy and Timeweb return them (fresh, so the picker does not go online). */
+    private fun writeCatalogs() {
+        fun plan(id: String, r: String, cpu: Int, ram: Int, disk: Int, price: Double, cur: String) = CloudPlan(id, r, id, cpu, ram, disk, price, cur)
+        fun usd(r: String, k: Double = 1.0) = listOf(
+            plan("p05", r, 1, 512, 20, 4.95 * k, "USD"), plan("p1", r, 1, 1024, 25, 6.95 * k, "USD"),
+            plan("p1b", r, 1, 1024, 25, 6.95 * k, "USD"), plan("p2", r, 1, 2048, 60, 14.95 * k, "USD"),
+            plan("p4", r, 2, 4096, 120, 28.95 * k, "USD"), plan("p8", r, 4, 8192, 240, 52.95 * k, "USD"),
+        )
+        val cz = listOf(
+            "Amsterdam" to "NL", "Bern" to "CH", "Dallas" to "US", "Frankfurt" to "DE", "Las Vegas" to "US", "London" to "GB",
+            "Los Angeles" to "US", "New York City" to "US", "Sydney" to "AU", "Singapore" to "SG", "Dubai" to "AE", "Moscow" to "RU",
+        ).map { (n, c) -> CloudRegion(n.lowercase().replace(' ', '-'), n, c) }
+        val tw = listOf("nl-1" to "NL", "de-1" to "DE", "pl-1" to "PL", "kz-1" to "KZ", "ru-1" to "RU")
+            .map { (id, c) -> CloudRegion(id, net.paramnezia.deploy.cloud.TimewebProvider.LOCATIONS[id]!!.first, c) }
+        val twPlans = tw.associate { r -> r.id to listOf(plan("1", r.id, 1, 1024, 15, 477.0, "RUB"), plan("2", r.id, 1, 2048, 30, 657.0, "RUB"), plan("3", r.id, 2, 2048, 40, 877.0, "RUB")) }
+        for ((id, cat) in listOf(
+            "cloudzy" to CloudCatalog.of("cloudzy", cz, cz.associate { it.id to usd(it.id) }),
+            "timeweb" to CloudCatalog.of("timeweb", tw, twPlans),
+        )) java.io.File(cacheDir, "cloud-catalog-$id.json").writeText(CloudCatalog.encode(cat))
     }
 
     private fun conf(host: String) = """
