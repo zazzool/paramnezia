@@ -69,7 +69,7 @@ import kotlin.math.sin
  * The home dial. In the middle, the power button. Around it, a bezel with two lines of text bent
  * along the circle: where sites see you, through the VPN and directly (country and address). On the
  * outer orbit, the three places sit like satellites under the button, in the thumb's reach:
- * «Добавить», «Флот», «Настройки». The orbit itself tells the state: a mint ring with a slowly
+ * «Добавить», «Семья», «Настройки». The orbit itself tells the state: a mint ring with a slowly
  * circling light while protected, an amber arc running round while connecting, a dashed ring
  * with no server. Like a watch face with complications, everything is read at a glance.
  */
@@ -79,7 +79,7 @@ fun OrbitDial(app: App, tunnel: TunnelState, p: Protection, size: Dp, servers: I
     val (v, loading, _) = rememberVisibility(app, tunnel)
     val state by app.repo.state.collectAsState()
     val serverLabel = when {
-        state.fleet != null -> "флот · серверов: $servers"
+        state.fleet != null -> "семья · серверов: $servers"
         else -> (state.profiles.firstOrNull { it.id == state.activeProfile } ?: state.profiles.firstOrNull())?.name?.let { "сервер · $it" } ?: ""
     }
     fun place(a: net.paramnezia.app.net.SeenAddress?, err: String?): String = when {

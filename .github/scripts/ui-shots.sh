@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Screenshots of the «Добавить» and «Флот» screens for pull requests, on a phone-sized screen. Uses the
+# Screenshots of the «Добавить» and «Семья» screens for pull requests, on a phone-sized screen. Uses the
 # debug APK: its DemoActivity fills the app with sample data (a fleet with two servers, devices and
 # invitations), so admin screens can be shown without real servers. Fails only if the app crashes.
 # Usage: ui-shots.sh <debug apk> <tag>
@@ -49,7 +49,7 @@ tap "Свой VPS" && { sleep 1; scroll; shot add-vps; }
 if tap "Ввести с клавиатуры"; then shot add-keyboard 3; hide_keyboard; fi
 top; tap "Ввести" && shot add-type 3
 hide_keyboard
-tap "Флот" && shot fleet-empty
+tap "Семья" && shot fleet-empty
 # The dock: «Настройки», then the mini power orb leads back home; system Back does the same.
 tap "Настройки" && shot settings
 tap "Главная, VPN выключен" && shot home-back
@@ -58,12 +58,12 @@ tap "Добавить" && { adb shell input keyevent KEYCODE_BACK; shot back-key
 # An admin with a server of their own but no fleet yet.
 demo server
 shot home
-tap "Флот" && shot fleet-server
+tap "Семья" && shot fleet-server
 scroll; shot fleet-server-2
 
 # A fleet admin: devices, servers, sharing, delivery.
 demo admin
-tap "Флот" && shot fleet-admin
+tap "Семья" && shot fleet-admin
 scroll; shot fleet-admin-2
 scroll; shot fleet-admin-3
 scroll; shot fleet-admin-4

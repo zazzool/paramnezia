@@ -44,7 +44,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -86,7 +86,7 @@ import kotlin.math.hypot
 import kotlin.math.max
 
 /** The app's places. Home is the hub: the dial with the big button; the others open out of it. */
-enum class Tab(val title: String) { HOME("Главная"), ADD("Добавить"), FLEET("Флот"), SETTINGS("Настройки") }
+enum class Tab(val title: String) { HOME("Главная"), ADD("Добавить"), FLEET("Семья"), SETTINGS("Настройки") }
 
 /**
  * Where each place's satellite sits on the home dial (root coordinates), so a screen can grow out
@@ -204,7 +204,7 @@ class PlaceLook(val icon: ImageVector, val tintLight: Color, val tintDark: Color
 
 val PlaceLooks = mapOf(
     Tab.ADD to PlaceLook(Icons.Rounded.Add, Color(0xFF00839C), Brand.Cyan, listOf(Brand.Cyan, Brand.Indigo)),
-    Tab.FLEET to PlaceLook(Icons.Rounded.Share, Color(0xFF5B3DD6), Color(0xFFA48BFF), listOf(Brand.Violet, Color(0xFFE040FB))),
+    Tab.FLEET to PlaceLook(Icons.Rounded.Favorite, Color(0xFF5B3DD6), Color(0xFFA48BFF), listOf(Brand.Violet, Color(0xFFE040FB))),
     Tab.SETTINGS to PlaceLook(Icons.Rounded.Settings, Color(0xFF59607A), Color(0xFFBAC1DC), listOf(Color(0xFF8A93B2), Color(0xFF4A5275))),
 )
 
