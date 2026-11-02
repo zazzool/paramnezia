@@ -175,10 +175,16 @@ func configure(luid winipcfg.LUID, addrs, routes []netip.Prefix, dns []netip.Add
 				fa = append(fa, a)
 			}
 		}
+		// On-link routes: the next hop must be the unspecified address of the family (a zero
+		// netip.Addr is rejected with "The parameter is incorrect").
+		nextHop := netip.IPv6Unspecified()
+		if is4 {
+			nextHop = netip.IPv4Unspecified()
+		}
 		var fr []*winipcfg.RouteData
 		for _, r := range routes {
 			if r.Addr().Is4() == is4 {
-				fr = append(fr, &winipcfg.RouteData{Destination: r.Masked(), Metric: 0})
+				fr = append(fr, &winipcfg.RouteData{Destination: r.Masked(), NextHop: nextHop, Metric: 0})
 			}
 		}
 		if len(fa) == 0 {
