@@ -42,9 +42,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -72,7 +69,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
@@ -199,13 +195,13 @@ private fun androidx.compose.animation.AnimatedContentScope.Revealed(t: Tab, orb
     }
 }
 
-/** Colours of each place: the glyph tint and the orb gradient. */
-class PlaceLook(val icon: ImageVector, val tintLight: Color, val tintDark: Color, val gradient: List<Color>)
+/** Colours of each place: the glyph tint and the badge gradient. */
+class PlaceLook(val tintLight: Color, val tintDark: Color, val gradient: List<Color>)
 
 val PlaceLooks = mapOf(
-    Tab.ADD to PlaceLook(Icons.Rounded.Add, Color(0xFF00839C), Brand.Cyan, listOf(Brand.Cyan, Brand.Indigo)),
-    Tab.FLEET to PlaceLook(Icons.Rounded.Favorite, Color(0xFF5B3DD6), Color(0xFFA48BFF), listOf(Brand.Violet, Color(0xFFE040FB))),
-    Tab.SETTINGS to PlaceLook(Icons.Rounded.Settings, Color(0xFF59607A), Color(0xFFBAC1DC), listOf(Color(0xFF8A93B2), Color(0xFF4A5275))),
+    Tab.ADD to PlaceLook(Color(0xFF00839C), Brand.Cyan, listOf(Color(0xFF26E0FF), Brand.Indigo)),
+    Tab.FLEET to PlaceLook(Color(0xFF5B3DD6), Color(0xFFA48BFF), listOf(Color(0xFFB388FF), Color(0xFF6A3DF0))),
+    Tab.SETTINGS to PlaceLook(Color(0xFF59607A), Color(0xFFBAC1DC), listOf(Color(0xFFFFC46B), Color(0xFFFF7A59))),
 )
 
 /** Inside a place: home (with the VPN state) on the left, the other two places on the right. */
@@ -249,34 +245,11 @@ fun Modifier.orbPress(label: String, onClick: () -> Unit): Modifier {
         .scale(s)
 }
 
-/**
- * A place as a round, glassy orb: a tinted well with a soft rim light; [lit] fills it with the
- * place's gradient (used to draw the eye, e.g. «Добавить» while there is no server).
- */
+/** A place in a screen's header: its glossy badge, springy under the finger. */
 @Composable
-fun PlaceOrb(tab: Tab, look: PlaceLook, size: Dp, modifier: Modifier = Modifier, lit: Boolean = false, onClick: () -> Unit) {
-    val dark = isSystemInDarkTheme()
-    val tint = if (dark) look.tintDark else look.tintLight
-    val icon by animateColorAsState(if (lit) Color.White else tint, tween(300), label = "icon")
-    val well = MaterialTheme.colorScheme.surfaceContainerHigh
+fun PlaceOrb(tab: Tab, look: PlaceLook, size: Dp, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(modifier.size(size).orbPress(tab.title, onClick), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.fillMaxSize()) {
-            val r = this.size.minDimension / 2
-            if (lit) {
-                drawCircle(Brush.linearGradient(look.gradient, Offset.Zero, Offset(this.size.width, this.size.height)), r)
-            } else {
-                drawCircle(well, r)
-                drawCircle(tint.copy(alpha = 0.14f), r)
-            }
-            // Glossy top light and a hairline rim: reads as a physical button.
-            drawCircle(
-                Brush.radialGradient(listOf(Color.White.copy(alpha = if (dark) 0.10f else 0.55f), Color.Transparent),
-                    Offset(center.x - r * 0.3f, center.y - r * 0.45f), r),
-                r,
-            )
-            drawCircle(tint.copy(alpha = if (lit) 0f else 0.28f), r - 0.5.dp.toPx(), style = Stroke(1.dp.toPx()))
-        }
-        Icon(look.icon, contentDescription = null, tint = icon, modifier = Modifier.size(size * 0.46f))
+        PlaceBadge(tab, look, size)
     }
 }
 

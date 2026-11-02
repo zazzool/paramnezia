@@ -55,9 +55,9 @@ fun TunnelState.power(): PowerState = when (this) {
 }
 
 /**
- * The home screen fits one screen, without scrolling: header, the dial (the power button with the
- * places orbiting it and where sites see you written round its bezel, sized to the space left),
- * the status, and a slim strip with speed and the way to the details. Everything else is one tap away.
+ * The home screen fits one screen, without scrolling: header, the dial (the power button inside a
+ * ring of three segment buttons for the other places, sized to the space left), the status, and
+ * the panel with where sites see you and the speed. Everything else is one tap away.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,7 +75,7 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer:
             val dial = dialFor(maxHeight, maxWidth)
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 OrbitDial(
-                    app, tunnel, p, dial, servers,
+                    tunnel, p, dial,
                     onPower = {
                         when {
                             p == Protection.NO_SERVER -> onAddServer()
@@ -89,7 +89,7 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer:
             }
         }
         if (p == Protection.NO_SERVER) ActionTile(Glyph.Paste, "Вставить ключ", "vpn://, приглашение или конфиг из буфера", primary = false, onClick = paste)
-        else StatsStrip(tunnel, onMore = { details = true })
+        else InfoPanel(app, tunnel, onMore = { details = true })
     }
 
     if (details) {

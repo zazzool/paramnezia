@@ -320,7 +320,7 @@ fun StatusBlock(tunnel: TunnelState, p: Protection) {
                 Protection.CONNECTING -> "Подключаюсь…"
                 Protection.FAILED -> "Нет соединения"
                 Protection.OFF -> "VPN выключен"
-                Protection.NO_SERVER -> "Нет сервера"
+                Protection.NO_SERVER -> "Нет ни одного сервера"
             },
             MaterialTheme.typography.headlineMedium, align = TextAlign.Center, min = 18.sp,
             color = when (p) { Protection.ON, Protection.CONNECTING, Protection.FAILED -> protectionColor(p); else -> MaterialTheme.colorScheme.onSurface },
