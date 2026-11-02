@@ -4,11 +4,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.paramnezia.core.profile.SshCredentials
 import net.paramnezia.deploy.ServerManager
 import net.paramnezia.deploy.SshException
+import net.paramnezia.deploy.cloud.CloudCatalog
 import net.paramnezia.deploy.cloud.CloudException
 import net.paramnezia.deploy.cloud.CloudPlan
 import net.paramnezia.deploy.cloud.CloudProvider
@@ -16,6 +18,7 @@ import net.paramnezia.deploy.cloud.CloudProviders
 import net.paramnezia.deploy.cloud.CloudProvisioner
 import net.paramnezia.deploy.cloud.CloudRegion
 import net.paramnezia.deploy.cloud.SshKeyPair
+import java.io.File
 
 /**
  * Buying servers from hosting providers (admin only). Every call here is made on the admin's tap
@@ -24,7 +27,56 @@ import net.paramnezia.deploy.cloud.SshKeyPair
  * A purchase runs in the application scope, not the screen's: leaving the screen or turning the
  * phone does not abandon a server that is already being paid for. [job] shows its progress.
  */
-class Cloud(private val repo: Repo, private val scope: CoroutineScope) {
+class Cloud(private val repo: Repo, private val scope: CoroutineScope, private val cacheDir: File? = null) {
+
+    /** A provider's catalog as the picker sees it: shown at once from the cache, refreshed behind. */
+    data class Catalog(val data: CloudCatalog? = null, val loading: Boolean = false, val error: String? = null)
+
+    private val _catalogs = MutableStateFlow<Map<String, Catalog>>(emptyMap())
+    val catalogs: StateFlow<Map<String, Catalog>> = _catalogs
+
+    private fun setCatalog(provider: String, f: (Catalog) -> Catalog) = _catalogs.update { it + (provider to f(it[provider] ?: Catalog())) }
+
+    private fun cacheFile(provider: String) = cacheDir?.let { File(it, "cloud-catalog-$provider.json") }
+
+    /**
+     * Makes the catalogs of every provider with a token ready: the saved copy at once, then a fresh
+     * one from the API (both providers in parallel, each in one or two requests) when the copy is
+     * older than [maxAgeMs] or [force]. Called when the admin opens «Добавить» or the picker.
+     */
+    fun prefetch(force: Boolean = false, maxAgeMs: Long = 10 * 60_000L) {
+        for (id in repo.current.cloud.tokens.keys) refresh(id, force, maxAgeMs)
+    }
+
+    fun refresh(provider: String, force: Boolean = false, maxAgeMs: Long = 10 * 60_000L) {
+        val cur = _catalogs.value[provider]
+        if (cur?.loading == true) return
+        setCatalog(provider) { it.copy(loading = true, error = null) }
+        scope.launch(Dispatchers.IO) {
+            var data = cur?.data
+            if (data == null) {
+                data = runCatching { cacheFile(provider)?.takeIf { it.exists() }?.readText()?.let(CloudCatalog::decode) }.getOrNull()
+                if (data != null) setCatalog(provider) { it.copy(data = data) }
+            }
+            if (!force && data != null && System.currentTimeMillis() - data.fetchedAt < maxAgeMs) {
+                setCatalog(provider) { it.copy(loading = false) }
+                return@launch
+            }
+            try {
+                val fresh = open(provider).catalog()
+                setCatalog(provider) { Catalog(fresh) }
+                runCatching { cacheFile(provider)?.writeText(CloudCatalog.encode(fresh)) }
+            } catch (e: Throwable) {
+                setCatalog(provider) { it.copy(loading = false, error = describe(e)) }
+            }
+        }
+    }
+
+    /** The real monthly price with everything the order adds (null: the catalog price is exact). */
+    suspend fun exactPrice(provider: String, plan: CloudPlan): Double? = withContext(Dispatchers.IO) {
+        runCatching { open(provider).exactPrice(plan) }.getOrNull()
+    }
+
 
     /** Progress of the current (or last) purchase. */
     data class Job(
@@ -34,6 +86,10 @@ class Cloud(private val repo: Repo, private val scope: CoroutineScope) {
         val error: String? = null,
         /** The bought server, once the provider has accepted the order: offered for deletion on failure. */
         val server: CloudServerRef? = null,
+        /** 0 order, 1 start, 2 boot, 3 install, 4 done: the step list in the picker. */
+        val stage: Int = 0,
+        /** What is being bought, for the progress screen: "🇳🇱 Амстердам · 1 vCPU · 1 ГБ". */
+        val what: String = "",
     )
 
     private val _job = MutableStateFlow<Job?>(null)
@@ -48,15 +104,17 @@ class Cloud(private val repo: Repo, private val scope: CoroutineScope) {
     suspend fun saveToken(provider: String, token: String) = withContext(Dispatchers.IO) {
         CloudProviders.open(provider, token).verify()
         repo.update { s -> s.copy(cloud = s.cloud.copy(tokens = s.cloud.tokens + (provider to token.trim()), lastProvider = provider)) }
+        refresh(provider, force = true)
     }
 
-    fun forgetToken(provider: String) = repo.update { s ->
-        s.copy(cloud = s.cloud.copy(tokens = s.cloud.tokens - provider, lastProvider = s.cloud.lastProvider.takeIf { it != provider }))
+    fun forgetToken(provider: String) {
+        repo.update { s ->
+            s.copy(cloud = s.cloud.copy(tokens = s.cloud.tokens - provider, lastProvider = s.cloud.lastProvider.takeIf { it != provider }))
+        }
+        _catalogs.update { it - provider }
+        runCatching { cacheFile(provider)?.delete() }
     }
 
-    suspend fun regions(provider: String): List<CloudRegion> = withContext(Dispatchers.IO) { open(provider).regions() }
-
-    suspend fun plans(provider: String, region: String): List<CloudPlan> = withContext(Dispatchers.IO) { open(provider).plans(region) }
 
     private fun adminKey(): SshKeyPair {
         val c = repo.current.cloud
@@ -78,7 +136,7 @@ class Cloud(private val repo: Repo, private val scope: CoroutineScope) {
     ) {
         if (_job.value?.let { !it.done && it.error == null } == true) return
         val providerName = CloudProviders.info(provider)?.name ?: provider
-        _job.value = Job(provider, "Заказываю сервер у $providerName…")
+        _job.value = Job(provider, "Заказываю сервер у $providerName…", what = "${region.flag} ${region.city} · $providerName · ${plan.cpu} vCPU · ${plan.ramText}")
         repo.update { s -> s.copy(cloud = s.cloud.copy(lastProvider = provider, lastRegion = region.id)) }
         scope.launch(Dispatchers.IO) {
             var ref: CloudServerRef? = null
@@ -86,11 +144,11 @@ class Cloud(private val repo: Repo, private val scope: CoroutineScope) {
                 val api = open(provider)
                 val name = CloudProvisioner.newName()
                 val ssh = CloudProvisioner(repo.hostKeys).provision(api, region.id, plan, adminKey(), name, onStage = { st ->
-                    update(when (st) {
-                        CloudProvisioner.Stage.CREATE -> "Заказываю сервер у $providerName…"
-                        CloudProvisioner.Stage.BOOT -> "Хостер запускает сервер…"
-                        CloudProvisioner.Stage.SSH -> "Жду, пока сервер загрузится…"
-                    })
+                    when (st) {
+                        CloudProvisioner.Stage.CREATE -> update("Заказываю сервер у $providerName…", 0)
+                        CloudProvisioner.Stage.BOOT -> update("Хостер запускает сервер…", 1)
+                        CloudProvisioner.Stage.SSH -> update("Жду, пока сервер загрузится…", 2)
+                    }
                 }) { id ->
                     ref = CloudServerRef(provider, id, name, createdAt = System.currentTimeMillis(), price = plan.priceText())
                     repo.update { s -> s.copy(cloud = s.cloud.copy(servers = s.cloud.servers + ref!!)) }
@@ -100,15 +158,15 @@ class Cloud(private val repo: Repo, private val scope: CoroutineScope) {
                 ref = located
                 repo.update { s -> s.copy(cloud = s.cloud.copy(servers = s.cloud.servers.map { if (it.serverId == located.serverId && it.provider == provider) located else it })) }
                 _job.value = _job.value?.copy(server = located)
-                install("${region.name} · $providerName", ssh) { step -> update(stepLabel(step)) }
-                _job.value = _job.value?.copy(label = "Сервер в ${region.name} готов", done = true)
+                install("${region.city} · $providerName", ssh) { step -> update(stepLabel(step), 3) }
+                _job.value = _job.value?.copy(label = "Сервер готов: ${region.city}", done = true, stage = 4)
             } catch (e: Throwable) {
                 _job.value = (_job.value ?: Job(provider, "")).copy(error = describe(e), server = ref)
             }
         }
     }
 
-    private fun update(label: String) { _job.value = _job.value?.copy(label = label) }
+    private fun update(label: String, stage: Int) { _job.value = _job.value?.copy(label = label, stage = stage) }
 
     fun dismissJob() { _job.value = null }
 
