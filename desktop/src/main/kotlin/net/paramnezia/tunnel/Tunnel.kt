@@ -25,6 +25,8 @@ data class TunnelSpec(
     val keepaliveIdle: String,
     /** Split DNS with tracker blocking; null leaves DNS to the config. */
     val dns: DnsPolicy? = null,
+    /** Programs past the VPN, by file name ("telegram.exe"). */
+    val excludedApps: List<String> = emptyList(),
 )
 
 /** Same meaning as on Android: blocked names, Russian names outside, the rest through the tunnel. */

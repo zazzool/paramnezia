@@ -47,7 +47,7 @@ func startDirectProxy(ours func() winipcfg.LUID) (*directProxy, error) {
 	p.resolver = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
 		var last error
 		for _, r := range directResolvers {
-			c, err := p.dialer(3 * time.Second).DialContext(ctx, network, r)
+			c, err := p.dialer(3*time.Second).DialContext(ctx, network, r)
 			if err == nil {
 				return c, nil
 			}
@@ -82,21 +82,7 @@ func (p *directProxy) dialer(timeout time.Duration) *net.Dialer {
 		if err != nil {
 			return nil // no physical default route: let the system decide
 		}
-		var serr error
-		err = rc.Control(func(fd uintptr) {
-			if v6 {
-				serr = windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IPV6, 31 /* IPV6_UNICAST_IF */, int(index))
-			} else {
-				// IP_UNICAST_IF takes the index in network byte order.
-				var b [4]byte
-				binary.BigEndian.PutUint32(b[:], index)
-				serr = windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IP, 31 /* IP_UNICAST_IF */, int(binary.LittleEndian.Uint32(b[:])))
-			}
-		})
-		if err != nil {
-			return err
-		}
-		return serr
+		return bindToInterface(rc, v6, index)
 	}}
 }
 
