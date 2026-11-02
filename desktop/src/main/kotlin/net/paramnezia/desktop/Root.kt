@@ -109,7 +109,7 @@ fun Root(app: App, platform: DesktopUiPlatform, incoming: MutableSharedFlow<Stri
         top = { if (!serviceOk) ServiceBanner() },
     ) { t, m ->
         when (t) {
-            Tab.HOME -> HomeScreen(app, m, onConnect, onAddServer = { tab = Tab.ADD })
+            Tab.HOME -> HomeScreen(app, m, onConnect, onAddServer = { tab = Tab.ADD }, onOpen = { tab = it })
             Tab.ADD -> AddScreen(app, m, pending, onConsumed = { pending = null }, toast = toast, onDone = { tab = Tab.HOME }, onConnect = onConnect)
             Tab.FLEET -> FleetScreen(app, m, toast, onAddServer = { tab = Tab.ADD })
             Tab.SETTINGS -> SettingsScreen(app, platform, m, toast, askService = watchService)

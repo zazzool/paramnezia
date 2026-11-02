@@ -150,7 +150,7 @@ private fun Root(app: App, incoming: MutableSharedFlow<String>, onConnect: () ->
         backHandler = { enabled, onBack -> BackHandler(enabled, onBack) },
     ) { t, m ->
         when (t) {
-            Tab.HOME -> HomeScreen(app, m, onConnect, onAddServer = { tab = Tab.ADD })
+            Tab.HOME -> HomeScreen(app, m, onConnect, onAddServer = { tab = Tab.ADD }, onOpen = { tab = it })
             Tab.ADD -> AddScreen(app, m, pending, onConsumed = { pending = null }, toast = toast, onDone = { tab = Tab.HOME }, onConnect = onConnect)
             Tab.FLEET -> FleetScreen(app, m, toast, onAddServer = { tab = Tab.ADD })
             Tab.SETTINGS -> SettingsScreen(app, m, toast)
