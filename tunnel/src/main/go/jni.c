@@ -12,6 +12,7 @@
 struct go_string { const char *str; long n; };
 extern int pnTurnOn(struct go_string ifname, int tun_fd, struct go_string settings, struct go_string dns, int dns_direct_fd);
 extern void pnSetDnsRules(struct go_string block, struct go_string direct, struct go_string allow);
+extern void pnSetLocalDns(struct go_string servers);
 extern long long pnDnsBlocked(void);
 extern void pnTurnOff(int handle);
 extern int pnGetSocketV4(int handle);
@@ -60,6 +61,14 @@ JNIEXPORT void JNICALL FN(setDnsRules)(JNIEnv *env, jclass c, jstring block, jst
 	(*env)->ReleaseStringUTFChars(env, block, a);
 	(*env)->ReleaseStringUTFChars(env, direct, b);
 	(*env)->ReleaseStringUTFChars(env, allow, d);
+}
+
+JNIEXPORT void JNICALL FN(setLocalDns)(JNIEnv *env, jclass c, jstring servers)
+{
+	const char *a;
+	struct go_string ga = gs(env, servers, &a);
+	pnSetLocalDns(ga);
+	(*env)->ReleaseStringUTFChars(env, servers, a);
 }
 
 JNIEXPORT jlong JNICALL FN(dnsBlocked)(JNIEnv *env, jclass c) { return pnDnsBlocked(); }

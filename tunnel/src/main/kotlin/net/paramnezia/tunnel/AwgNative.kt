@@ -18,6 +18,9 @@ object AwgNative {
     /** Block / direct / allow domain rules for the DNS filter, one per line (`full:` = exact name). */
     @JvmStatic external fun setDnsRules(block: String, direct: String, allow: String)
 
+    /** Resolvers of the local network (comma-separated, IPv4) for local names; "" = none. */
+    @JvmStatic external fun setLocalDns(servers: String)
+
     /** Queries blocked so far in this process. */
     @JvmStatic external fun dnsBlocked(): Long
 

@@ -36,6 +36,7 @@ data class FleetManifest(
 @Serializable
 data class FleetPolicy(
     val bypassRussia: Boolean = true,
+    /** Ignored since 2.11.0 (the local network is always direct); kept for older apps. */
     val bypassLan: Boolean = true,
     val blockTrackers: Boolean = true,
     val forceTunnel: Set<String> = emptySet(),

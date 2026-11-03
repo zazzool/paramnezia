@@ -70,7 +70,7 @@ fun SettingsScreen(app: App, platform: DesktopUiPlatform, modifier: Modifier, to
         Section("Маршрутизация")
         if (follower) Hint("Эти настройки приходят от администратора семьи.")
         Toggle("Российские сайты напрямую", "Банки, Госуслуги, маркетплейсы, Яндекс, VK и другие идут мимо VPN", s.bypassRussia) { v -> change { it.copy(bypassRussia = v) } }
-        Toggle("Локальная сеть напрямую", "Роутер, принтер, общие папки и телевизор остаются доступны", s.bypassLan) { v -> change { it.copy(bypassLan = v) } }
+        Hint("Локальная сеть всегда напрямую: роутер, принтер, общие папки и телевизор доступны и с включённым VPN, по адресу и по имени (nas.lan, printer.local).")
         ProgramsSection(s.forceDirect, enabled = !follower, pick = { platform.pickProgram() }) { f -> change { it.copy(forceDirect = f(it.forceDirect)) } }
 
         HorizontalDivider()

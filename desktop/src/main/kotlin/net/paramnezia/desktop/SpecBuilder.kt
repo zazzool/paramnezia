@@ -38,15 +38,20 @@ class SpecBuilder(private val asset: (String) -> String) {
 
     fun build(serverId: String, serverName: String, config: TunnelConfig, settings: Settings): TunnelSpec {
         val dnsServers = config.iface.dns.filter { it.first().isDigit() || ':' in it }.ifEmpty { listOf("1.1.1.1", "1.0.0.1") }
-        val useDns = settings.blockTrackers || settings.bypassRussia
+        // Always on: besides blocking and Russian names, the filter sends local names (nas.lan,
+        // printer.local) to the router of the physical network (the service finds it).
+        val useDns = true
         val directDns = settings.directDns.ifEmpty { DnsPolicy(emptyList()).direct }
         val keep = config.iface.addresses.map { a -> if (!a.isV6 && a.length > 24) IpPrefix.parse("${a.address.hostAddress}/24") else a } +
             dnsServers.mapNotNull { host(it) }
-        val key = listOf(keep, settings.bypassRussia, settings.bypassLan)
+        // The local network is always direct, whatever the settings or the family policy say.
+        // Windows needs no extra networks of the current Wi-Fi: its own on-link routes are more
+        // specific than ours, so a LAN on public addresses still wins over the tunnel.
+        val key = listOf(keep, settings.bypassRussia)
         val plan = cachedPlan.takeIf { cachedKey == key } ?: RoutePlanner.plan(
             if (settings.bypassRussia) v4 else emptyList(),
             if (settings.bypassRussia) v6 else emptyList(),
-            keep, supportsExcludeRoute = false, bypassLan = settings.bypassLan, budget = ROUTE_BUDGET,
+            keep, supportsExcludeRoute = false, budget = ROUTE_BUDGET,
         ).also { cachedKey = key; cachedPlan = it }
         return TunnelSpec(
             serverId, serverName, config, plan.include,
@@ -69,7 +74,8 @@ class SpecBuilder(private val asset: (String) -> String) {
         val addresses = spec.config.iface.addresses.map { it.toString() }.toMutableList()
         if (spec.config.iface.addresses.none { it.isV6 }) {
             addresses += FALLBACK_V6
-            if (routes.none { it.isV6 }) routes += IpPrefix.ANY_V6
+            // Everything IPv6 but the local network (ULA, link-local, multicast stay on the LAN).
+            if (routes.none { it.isV6 }) routes += minus(listOf(IpPrefix.ANY_V6), RoutePlanner.LOCAL_V6)
         }
         val dns = spec.dns
         return ServiceClient.UpSpec(

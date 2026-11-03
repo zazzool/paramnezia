@@ -244,8 +244,9 @@ func (t *tunnel) watchDefaultInterface(ours winipcfg.LUID) {
 	update := func() {
 		mu.Lock()
 		defer mu.Unlock()
-		if i, err := defaultInterface(windows.AF_INET, ours); err == nil && i != last4 {
-			if binder.BindSocketToInterface4(i, false) == nil {
+		if i, err := defaultInterface(windows.AF_INET, ours); err == nil {
+			setLocalDNS(i)
+			if i != last4 && binder.BindSocketToInterface4(i, false) == nil {
 				last4 = i
 			}
 		}
@@ -270,6 +271,27 @@ func (t *tunnel) watchDefaultInterface(ours winipcfg.LUID) {
 	}); err == nil {
 		t.watches = append(t.watches, cb)
 	}
+}
+
+// setLocalDNS hands the resolvers of the physical network (normally the router) to the DNS filter,
+// which asks them for local names (nas.lan, printer.local, a bare "nas"): the local network
+// never goes through the tunnel, and only the router knows its own names.
+func setLocalDNS(index uint32) {
+	luid, err := winipcfg.LUIDFromIndex(index)
+	if err != nil {
+		return
+	}
+	addrs, err := luid.DNS()
+	if err != nil {
+		return
+	}
+	var list []string
+	for _, a := range addrs {
+		if a.Is4() {
+			list = append(list, a.String())
+		}
+	}
+	dnsfilter.SetLocalServers(list)
 }
 
 // defaultInterface is the index of the interface with the best default route, not counting ours
