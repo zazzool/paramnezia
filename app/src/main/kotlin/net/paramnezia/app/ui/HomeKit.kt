@@ -16,6 +16,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -106,14 +108,18 @@ fun FitText(
     )
 }
 
-/** Press feedback shared by every tappable surface here: a spring sink and a haptic tick. */
+/**
+ * Press feedback shared by every tappable surface here: a spring sink and a haptic tick. With a TV
+ * remote or a keyboard, the focused surface grows a little and gets a ring ([focusRing]).
+ */
 @Composable
 fun Modifier.tactile(role: Role = Role.Button, onClick: () -> Unit): Modifier {
     val haptic = LocalHapticFeedback.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val s by animateFloatAsState(if (pressed) 0.96f else 1f, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium), label = "press")
-    return this.scale(s).clickable(interaction, indication = androidx.compose.material3.ripple(), role = role) {
+    val focused by interaction.collectIsFocusedAsState()
+    val s by animateFloatAsState(if (pressed) 0.96f else if (focused) 1.03f else 1f, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium), label = "press")
+    return this.scale(s).focusRing(interaction, RoundedCornerShape(16.dp)).clickable(interaction, indication = androidx.compose.material3.ripple(), role = role) {
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         onClick()
     }
@@ -353,3 +359,13 @@ fun buttonFor(height: Dp, width: Dp, max: Dp): Dp {
 
 @Composable
 fun FillBox(modifier: Modifier, content: @Composable () -> Unit) = Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) { content() }
+
+/**
+ * D-pad and keyboard focus made visible (Android TV, Tab on Windows): a ring in the accent colour
+ * while [interaction] is focused. Touch never focuses these surfaces, so phones never see it.
+ */
+@Composable
+fun Modifier.focusRing(interaction: androidx.compose.foundation.interaction.InteractionSource, shape: androidx.compose.ui.graphics.Shape = CircleShape): Modifier {
+    val focused by interaction.collectIsFocusedAsState()
+    return if (focused) this.border(BorderStroke(3.dp, MaterialTheme.colorScheme.primary), shape) else this
+}

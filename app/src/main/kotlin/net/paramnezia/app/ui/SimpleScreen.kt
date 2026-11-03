@@ -67,7 +67,10 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
             val button = buttonFor(maxHeight, maxWidth, 232.dp)
             if (p == Protection.NO_SERVER) {
                 Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), contentAlignment = Alignment.Center) {
-                    EmptyHero(follower = true, onAdd = null, onPaste = paste, modifier = Modifier.padding(vertical = Space.M))
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        NearbyOffers(app, { platform.toast(it) }, onDone = onConnect)
+                        EmptyHero(follower = true, onAdd = null, onPaste = paste, modifier = Modifier.padding(vertical = Space.M))
+                    }
                 }
             } else {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {

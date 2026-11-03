@@ -120,6 +120,7 @@ fun PowerButton(state: PowerState, onClick: () -> Unit, modifier: Modifier = Mod
             Modifier
                 .size(size)
                 .scale(scale)
+                .focusRing(interaction)
                 .clip(CircleShape)
                 .clickable(interactionSource = interaction, indication = null, role = Role.Switch) {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)

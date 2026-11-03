@@ -60,3 +60,10 @@ fun KeyQr(key: String) {
         if (codes.size > 1) Text("QR ${i + 1} из ${codes.size}")
     }
 }
+
+/** A short text (an address) as one QR code, for a phone camera. */
+@Composable
+fun AddressQr(text: String, size: androidx.compose.ui.unit.Dp = 168.dp) {
+    val bitmap = remember(text) { qrBitmap(text) }
+    Image(bitmap, contentDescription = "QR: $text", modifier = Modifier.size(size), filterQuality = FilterQuality.None)
+}

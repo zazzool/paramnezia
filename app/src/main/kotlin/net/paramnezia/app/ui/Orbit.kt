@@ -113,6 +113,7 @@ fun OrbitDial(tunnel: TunnelState, p: Protection, size: Dp, onPower: () -> Unit,
                     .size(g.band * 0.8f)
                     .onGloballyPositioned { orbit.satellites[s.tab] = it.positionInRoot() + Offset(it.size.width / 2f, it.size.height / 2f) }
                     .semantics { contentDescription = s.tab.title }
+                    .focusRing(interactions.getValue(s.tab))
                     .clickable(interactions.getValue(s.tab), indication = null, role = Role.Button) { open(s.tab) },
             )
         }

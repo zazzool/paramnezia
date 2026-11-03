@@ -98,6 +98,8 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         ScreenTitle("Добавить", "Ключ, который вам прислали, или свой сервер")
+        // A family device next to this one shares settings: the quickest way of all (a TV, a new PC).
+        NearbyOffers(app, toast, onDone = { onDone(); onConnect() })
 
         // 1. Someone sent a key: the most common case, one tap from the clipboard.
         SectionTitle("Мне прислали ключ")
@@ -115,6 +117,7 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
             }
         }
         qrProgress?.let { Hint(it, Glyph.Qr, MaterialTheme.colorScheme.primary) }
+        LanAddressTile(app, toast, onDone = { onDone(); onConnect() })
         AnimatedVisibility(manual) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 PasteField(

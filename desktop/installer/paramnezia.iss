@@ -4,7 +4,9 @@
 ; What it does, and nothing else (docs/WINDOWS.md, "Defender and SmartScreen"):
 ;   * copies the app (with its own Java runtime) to Program Files;
 ;   * registers the ParamneziaTunnel service, which only starts a tunnel when the app asks for one;
-;   * adds Start menu shortcuts and, if the user ticks it, the .vpn file association.
+;   * adds Start menu shortcuts and, if the user ticks it, the .vpn file association;
+;   * allows incoming connections to Paramnezia.exe in Windows Firewall, so devices in the same network
+;     can reach the share the user opens («Раздать по Wi-Fi», docs/LAN-SHARE.md). Nothing listens otherwise.
 ; The app never installs or updates itself: a new version is this installer, downloaded by the user.
 
 #ifndef AppVersion
@@ -76,10 +78,13 @@ Root: HKA; Subkey: "Software\Classes\Paramnezia.Key\DefaultIcon"; ValueType: str
 Root: HKA; Subkey: "Software\Classes\Paramnezia.Key\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\Paramnezia.exe"" ""%1"""; Tasks: vpnfiles
 
 [Run]
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Paramnezia LAN"""; StatusMsg: "Настройка брандмауэра…"; Flags: runhidden waituntilterminated
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""Paramnezia LAN"" dir=in action=allow program=""{app}\Paramnezia.exe"" enable=yes profile=any description=""Paramnezia: sharing the app and settings in the local network"""; StatusMsg: "Настройка брандмауэра…"; Flags: runhidden waituntilterminated
 Filename: "{app}\service\paramnezia-service.exe"; Parameters: "install"; StatusMsg: "Регистрация службы Paramnezia…"; Flags: runhidden waituntilterminated
 Filename: "{app}\Paramnezia.exe"; Description: "{cm:LaunchProgram,Paramnezia}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Paramnezia LAN"""; RunOnceId: "RemoveFirewallRule"; Flags: runhidden waituntilterminated
 Filename: "{app}\service\paramnezia-service.exe"; Parameters: "uninstall"; RunOnceId: "RemoveService"; Flags: runhidden waituntilterminated
 
 [UninstallDelete]
