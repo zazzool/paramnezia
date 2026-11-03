@@ -103,6 +103,8 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
     var created by remember { mutableStateOf<List<Links.Created>?>(null) }
     /** Standalone servers to make separate accounts on (no fleet); the dialog lets the admin pick one. */
     var accountOn by remember { mutableStateOf<List<StoredProfile>?>(null) }
+    /** «Раздать по Wi-Fi» is open (the share runs while it is). */
+    var lanShare by remember { mutableStateOf(false) }
 
     // Which links have been used: asked only while some are still open.
     LaunchedEffect(Unit) {
@@ -147,6 +149,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                 )
             }
             SectionTitle("Раздача")
+            Group { LanShareRow("Телевизору и компьютеру рядом: приложение и ключ") { if (!busy) lanShare = true } }
             FamilyPage(state.pages[managed.first().ssh!!.host], busy, onCreate = { work { app.links.familyPage() } }, onShare = shareFamily, onOpen = openUrl)
             LinkList(state.links, busy, onOpen = { link = it }) { l -> work("Ссылка отозвана") { app.links.revoke(l) } }
             Spacer(Modifier.height(Space.M))
@@ -171,6 +174,9 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
 
         if (isAdmin) ActionTile(Glyph.PersonAdd, "Пригласить", "Ссылкой, файлом или QR-кодом, сразу нескольким", primary = true) {
             if (!busy) newDevice = true
+        }
+        if (isAdmin) ActionTile(Glyph.Wifi, "Раздать по Wi-Fi", "Телевизору и компьютеру рядом: приложение и настройки, без интернета", primary = false) {
+            if (!busy) lanShare = true
         }
 
         SectionTitle("Устройства") { Pill(devices.size.toString()) }
@@ -245,11 +251,17 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                     onDisable = { work("Резервный канал отключён") { app.fleet.clearReserveChannel() } },
                     openTokenPage = { openUrl(GITHUB_TOKEN_PAGE) })
             }
-        } else if (manifest?.policy != null) {
-            Hint("Обход российских сайтов и блокировку рекламы настраивает администратор семьи, они обновляются сами.", Icons.Filled.Info)
+        } else {
+            if (manifest?.policy != null) {
+                Hint("Обход российских сайтов и блокировку рекламы настраивает администратор семьи, они обновляются сами.", Icons.Filled.Info)
+            }
+            SectionTitle("Раздача")
+            Group { LanShareRow("Приложение для телевизора и компьютера рядом; настройки выдаёт администратор") { lanShare = true } }
         }
         Spacer(Modifier.height(Space.M))
     }
+
+    if (lanShare) LanShareDialog(app, onDismiss = { lanShare = false }, toast = toast)
 
     if (newDevice) {
         PeopleDialog(
@@ -465,6 +477,11 @@ private fun SyncStatus(lastSync: Long, via: String?) {
     Hint("Конфигурация актуальна: проверено ${ago(System.currentTimeMillis() - lastSync)}, $from",
         Icons.Filled.CheckCircle, Brand.Mint)
 }
+
+@Composable
+private fun LanShareRow(subtitle: String, onClick: () -> Unit) = GroupRow(
+    "Раздать по Wi-Fi", subtitle = subtitle, icon = Glyph.Wifi, onClick = onClick, trailing = { Chevron() },
+)
 
 @Composable
 private fun Chevron() = Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)

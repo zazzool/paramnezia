@@ -18,6 +18,7 @@ import net.paramnezia.app.data.Servers
 import net.paramnezia.app.data.StoredProfile
 import net.paramnezia.app.fleet.FleetManager
 import net.paramnezia.app.fleet.Links
+import net.paramnezia.app.lan.LanHub
 import net.paramnezia.app.net.Visibility
 import net.paramnezia.app.net.VisibilityCheck
 import net.paramnezia.app.ota.Updater
@@ -29,6 +30,7 @@ import net.paramnezia.core.fleet.Ed25519
 import net.paramnezia.core.fleet.FailoverPolicy
 import net.paramnezia.deploy.SshConnection
 import net.paramnezia.desktop.DesktopHttp
+import net.paramnezia.desktop.DesktopLan
 import net.paramnezia.desktop.ServiceClient
 import net.paramnezia.desktop.SpecBuilder
 import net.paramnezia.desktop.TunnelEngine
@@ -63,6 +65,8 @@ class App(
     val updater = Updater(repo, net, ed, scope, openUrl)
     val links: Links by lazy { Links(repo, fleet, { updater.android }, scope) }
     val cloud: Cloud by lazy { Cloud(repo, scope, cacheDir) }
+    /** Sharing the app and settings with devices in the same network, and finding such shares. */
+    val lan: LanHub by lazy { LanHub(DesktopLan(cacheDir), repo, fleet, { links }, { updater.android }, deviceModel, scope) }
     val servers: Servers
     private val visibilityCheck by lazy { VisibilityCheck(net, directLabel = "сеть компьютера") }
     private val _visibility = MutableStateFlow<Visibility?>(null)

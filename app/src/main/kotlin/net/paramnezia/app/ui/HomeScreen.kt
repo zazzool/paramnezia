@@ -88,7 +88,12 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer:
                 StatusBlock(tunnel, p)
             }
         }
-        if (p == Protection.NO_SERVER) ActionTile(Glyph.Paste, "Вставить ключ", "vpn://, приглашение или конфиг из буфера", primary = false, onClick = paste)
+        if (p == Protection.NO_SERVER) {
+            // A new TV or computer: the family device that shares nearby is found by itself.
+            NearbyOffers(app, { platform.toast(it) }, onDone = onConnect)
+            Spacer(Modifier.height(Space.S))
+            ActionTile(Glyph.Paste, "Вставить ключ", "vpn://, приглашение или конфиг из буфера", primary = false, onClick = paste)
+        }
         else InfoPanel(app, tunnel, onMore = { details = true })
     }
 

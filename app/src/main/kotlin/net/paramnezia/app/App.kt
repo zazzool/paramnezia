@@ -37,6 +37,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import net.paramnezia.app.data.Servers
 import net.paramnezia.app.fleet.Links
+import net.paramnezia.app.lan.AndroidLan
+import net.paramnezia.app.lan.LanHub
 import net.paramnezia.app.net.Visibility
 import net.paramnezia.app.net.VisibilityCheck
 import net.paramnezia.app.ui.QuickTile
@@ -58,6 +60,8 @@ class App : Application(), TunnelHost {
     val links: Links by lazy { Links(repo, fleet, { updater }, scope) }
     /** Buying servers from hosting providers (admin). */
     val cloud: Cloud by lazy { Cloud(repo, scope, cacheDir) }
+    /** Sharing the app and settings with devices in the same Wi-Fi, and finding such shares. */
+    val lan: LanHub by lazy { LanHub(AndroidLan(this), repo, fleet, { links }, { updater }, android.os.Build.MODEL, scope) }
     private val visibilityCheck by lazy { VisibilityCheck(net) }
     private val _visibility = kotlinx.coroutines.flow.MutableStateFlow<Visibility?>(null)
     /** What foreign and Russian sites last saw; refreshed by the home screen. */

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android TV launcher banner (320×180): the icon's gradient and mark, wide. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient android:angle="0" android:startColor="#FF7C3AED" android:centerColor="#FF4338CA" android:endColor="#FF0EA5E9" />
+            <size android:width="320dp" android:height="180dp" />
+        </shape>
+    </item>
+    <item android:drawable="@drawable/ic_launcher_foreground" android:gravity="center" android:width="180dp" android:height="180dp" />
+</layer-list>

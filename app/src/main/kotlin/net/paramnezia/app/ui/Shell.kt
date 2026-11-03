@@ -237,6 +237,7 @@ fun Modifier.orbPress(label: String, onClick: () -> Unit): Modifier {
     val s by animateFloatAsState(if (pressed) 0.86f else 1f, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium), label = "press")
     return this
         .semantics(mergeDescendants = true) { contentDescription = label }
+        .focusRing(interaction)
         .clip(CircleShape)
         .clickable(interaction, indication = null, role = Role.Button) {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -310,6 +311,7 @@ private fun Modifier.orbPressPill(label: String, onClick: () -> Unit): Modifier 
     return this
         .semantics(mergeDescendants = true) { contentDescription = label }
         .scale(s)
+        .focusRing(interaction)
         .edge(CircleShape)
         .clip(CircleShape)
         .background(MaterialTheme.colorScheme.surfaceContainer)
