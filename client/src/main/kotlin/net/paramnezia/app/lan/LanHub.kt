@@ -59,7 +59,7 @@ class LanHub(
     private val _sharing = MutableStateFlow<Sharing?>(null)
     val sharing: StateFlow<Sharing?> = _sharing
     private val _preparing = MutableStateFlow<String?>(null)
-    /** What is being downloaded on the person's tap ("Установщик для Windows 2.12.0: 40 %"), or null. */
+    /** What is being downloaded on the person's tap ("Установщик для Windows 2.11.0: 40 %"), or null. */
     val preparing: StateFlow<String?> = _preparing
 
     private var server: LanServer? = null

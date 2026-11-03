@@ -100,7 +100,7 @@ object Screenshots {
         shot(out, "home-follower", adminState().let { it.copy(fleet = it.fleet!!.copy(adminSeed = null)) }, Tab.HOME)
         // A new computer next to a family phone that shares over Wi-Fi.
         shot(out, "home-nearby", AppState(), Tab.HOME) { app ->
-            app.lan.preview(null, listOf(LanPeer("Pixel 9", "192.168.1.5", 8080, LanInfo(name = "Pixel 9", version = "2.12.0", settings = true, apk = true, exe = true))))
+            app.lan.preview(null, listOf(LanPeer("Pixel 9", "192.168.1.5", 8080, LanInfo(name = "Pixel 9", version = "2.11.0", settings = true, apk = true, exe = true))))
         }
         lanShare(out)
     }
@@ -110,10 +110,10 @@ object Screenshots {
         val home = Files.createTempDirectory("pn-shot").toFile()
         val app = App(StateFile(home), ServiceClient("""\\.\pipe\paramnezia-none"""), File(home, "cache").apply { mkdirs() }, "DESKTOP-PC", {})
         app.repo.update { adminState() }
-        val apk = LanFile("paramnezia-2.12.0.apk", LanFile.APK_MIME, 6_700_000, "2.12.0") { ByteArray(0).inputStream() }
+        val apk = LanFile("paramnezia-2.11.0.apk", LanFile.APK_MIME, 6_700_000, "2.11.0") { ByteArray(0).inputStream() }
         app.lan.preview(LanHub.Sharing(
             addresses = listOf("192.168.1.5"), port = 80, name = "DESKTOP-PC", apk = apk, exe = null, settings = true,
-            downloads = listOf(LanHub.Download("exe", "2.12.0")),
+            downloads = listOf(LanHub.Download("exe", "2.11.0")),
             asks = listOf(LanServer.Ask("demo", "Sony BRAVIA 4K", "tv", "192.168.1.40", System.currentTimeMillis())),
             served = mapOf("apk" to 1),
         ))
