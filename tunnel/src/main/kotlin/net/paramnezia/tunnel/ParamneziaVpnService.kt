@@ -6,7 +6,10 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.IpPrefix as AndroidIpPrefix
+import android.net.LinkProperties
 import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
 import android.os.Handler
@@ -60,7 +63,14 @@ class ParamneziaVpnService : VpnService() {
         registerReceiver(screenReceiver, IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_SCREEN_OFF)
         })
-        getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
+        val cm = getSystemService(ConnectivityManager::class.java)
+        cm.registerDefaultNetworkCallback(networkCallback)
+        runCatching {
+            cm.registerNetworkCallback(NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
+                .build(), lanCallback)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -81,6 +91,7 @@ class ParamneziaVpnService : VpnService() {
     override fun onDestroy() {
         runCatching { unregisterReceiver(screenReceiver) }
         runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }
+        runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(lanCallback) }
         main.removeCallbacksAndMessages(null)
         val h = handle
         handle = -1
@@ -129,6 +140,9 @@ class ParamneziaVpnService : VpnService() {
                 for (r in next.excludedRoutes) builder.excludeRoute(AndroidIpPrefix(r.address, r.length))
             }
             for (pkg in next.excludedApps) runCatching { builder.addDisallowedApplication(pkg) }
+            // The local network is never in the tunnel (see RoutePlanner.LOCAL_V4); its router
+            // also answers local names (nas.lan, printer.local) behind our DNS filter.
+            TunnelRuntime.setLocalDns(TunnelRuntime.localNetwork(this).dns)
             // Our own app stays inside the VPN, so the in-tunnel manifest URL works. Channels that
             // must work while the server is blocked (mirrors, update check) bind to
             // TunnelRuntime.directNetwork() instead.
@@ -281,6 +295,36 @@ class ParamneziaVpnService : VpnService() {
         }
     }
 
+    // --- local network ----------------------------------------------------------------------
+
+    /**
+     * Wi-Fi or Ethernet came, went or changed. The router's address for local names is updated in
+     * place; only when the network itself sits on addresses outside the private ranges (public
+     * addresses at some providers and hotels, the provider's IPv6 /64) do the routes change, and
+     * then the tunnel is rebuilt so those addresses stay reachable directly too.
+     */
+    private val lanCheck = Runnable {
+        scope.launch {
+            lock.withLock {
+                val current = spec ?: return@withLock
+                if (handle < 0) return@withLock
+                val local = TunnelRuntime.localNetwork(this@ParamneziaVpnService)
+                TunnelRuntime.setLocalDns(local.dns)
+                if (local.prefixes != current.lan) {
+                    Log.i(TAG, "local network changed: ${local.prefixes}, rebuilding routes")
+                    connect(host?.currentSpec() ?: return@withLock)
+                }
+            }
+        }
+    }
+
+    private val lanCallback = object : ConnectivityManager.NetworkCallback() {
+        private fun changed() { main.removeCallbacks(lanCheck); main.postDelayed(lanCheck, LAN_SETTLE_MS) }
+        override fun onAvailable(network: Network) = changed()
+        override fun onLost(network: Network) = changed()
+        override fun onLinkPropertiesChanged(network: Network, lp: LinkProperties) = changed()
+    }
+
     // --- battery-aware keepalive -----------------------------------------------------------
 
     private val screenReceiver = object : BroadcastReceiver() {
@@ -307,6 +351,8 @@ class ParamneziaVpnService : VpnService() {
         private const val FIRST_CHECK_MS = 20_000L
         private const val NETWORK_CHANGE_CHECK_MS = 15_000L
         private const val SCREEN_ON_CHECK_MS = 3_000L
+        /** Link properties arrive in bursts while Wi-Fi connects; look once they settle. */
+        private const val LAN_SETTLE_MS = 2_000L
         private const val WATCH_SCREEN_ON_MS = 60_000L
         private const val WATCH_SCREEN_OFF_MS = 15 * 60_000L
         private const val RETRY_BASE_MS = 10_000L

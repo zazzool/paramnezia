@@ -6,6 +6,8 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import net.paramnezia.core.config.TunnelConfig
 import net.paramnezia.core.net.IpPrefix
+import net.paramnezia.core.routing.RoutePlanner
+import java.net.Inet4Address
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,7 +28,19 @@ data class TunnelSpec(
     val keepaliveScreenOff: String,
     /** Split DNS with tracker blocking; null leaves DNS to the config. */
     val dns: DnsPolicy? = null,
+    /**
+     * Networks of the current Wi-Fi/Ethernet that went direct on top of the private ranges
+     * ([LocalNetwork.prefixes] when the spec was built). The service rebuilds the tunnel when they change.
+     */
+    val lan: List<IpPrefix> = emptyList(),
 )
+
+/**
+ * The Wi-Fi or Ethernet the phone is on: [prefixes] are its own networks that the always-direct
+ * private ranges do not cover ([RoutePlanner.extraLan]), [dns] its IPv4 resolvers (normally the
+ * router), which answer local names such as nas.lan. Empty on mobile data.
+ */
+data class LocalNetwork(val prefixes: List<IpPrefix>, val dns: List<String>)
 
 /**
  * Apps resolve through [virtual], an address answered inside the tun device: blocked names get an
@@ -119,6 +133,28 @@ object TunnelRuntime {
                 c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
         }
     }
+
+    /** The current [LocalNetwork]; reads link properties only, no network traffic. */
+    @Suppress("DEPRECATION")
+    fun localNetwork(context: Context): LocalNetwork = runCatching {
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+        val prefixes = ArrayList<IpPrefix>()
+        val dns = ArrayList<String>()
+        for (n in cm.allNetworks) {
+            val c = cm.getNetworkCapabilities(n) ?: continue
+            if (c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue
+            if (!c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && !c.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) continue
+            val lp = cm.getLinkProperties(n) ?: continue
+            for (la in lp.linkAddresses) {
+                IpPrefix.parseOrNull("${la.address.hostAddress?.substringBefore('%')}/${la.prefixLength}")?.let(prefixes::add)
+            }
+            for (d in lp.dnsServers) if (d is Inet4Address) d.hostAddress?.let(dns::add)
+        }
+        LocalNetwork(RoutePlanner.extraLan(prefixes), dns.distinct())
+    }.getOrDefault(LocalNetwork(emptyList(), emptyList()))
+
+    /** Tells the DNS filter which resolvers answer local names (see [LocalNetwork.dns]). */
+    internal fun setLocalDns(servers: List<String>) { runCatching { AwgNative.setLocalDns(servers.joinToString(",")) } }
 
     internal fun parseStats(uapi: String): TunnelStats {
         var rx = 0L; var tx = 0L; var hs = 0L

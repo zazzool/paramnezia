@@ -60,7 +60,8 @@ fun SettingsScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
         ScreenTitle("Настройки", "Маршруты, приватность и обновления")
         Text("Маршрутизация", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         Toggle("Российские сайты и приложения напрямую", "Банки, Госуслуги, маркетплейсы, Яндекс, VK, Max и другие идут мимо VPN", s.bypassRussia) { v -> change { it.copy(bypassRussia = v) } }
-        Toggle("Локальная сеть напрямую", "Роутер, принтер, телевизор остаются доступны", s.bypassLan) { v -> change { it.copy(bypassLan = v) } }
+        Text("Локальная сеть всегда напрямую: роутер, принтер, телевизор и общие папки доступны и с включённым VPN, по адресу и по имени (nas.lan, printer.local)",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
         OutlinedButton(onClick = { apps = true }) { Text("Выбрать приложения…") }
 
         HorizontalDivider()

@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +21,10 @@ import (
 //
 // The VPN announces one virtual resolver address. Queries to it never reach the network as-is:
 //   - ad, tracking and telemetry names get an empty answer right here (0.0.0.0 / ::);
+//   - local names (nas.lan, printer.local, a bare "nas", the router's own sites such as
+//     my.keenetic.net, reverse lookups of private addresses) go to the resolver of the local network,
+//     the router, over the same direct socket: the local network is never in the tunnel, and only
+//     the router knows its own names;
 //   - Russian names go to a Russian resolver over a socket the app protected from the VPN, so
 //     Russian services see a Russian resolver and answer with Russian addresses;
 //   - everything else goes to the tunnel's own DNS server, through the tunnel.
@@ -39,7 +44,62 @@ type dnsRules struct {
 var (
 	rules        atomic.Pointer[dnsRules]
 	blockedCount atomic.Int64
+	localServers atomic.Pointer[[]*net.UDPAddr]
+	localGen     atomic.Int64 // bumped with the local servers, so cached local answers expire
 )
+
+// localSuffixes are names that only the local network can answer: home-network TLDs, names routers
+// answer for their own admin pages, and the reverse zones of private and link-local addresses.
+var localSuffixes = func() map[string]bool {
+	m := map[string]bool{}
+	for _, s := range strings.Fields(`
+		local lan home home.arpa internal localdomain intranet private corp router gateway
+		fritz.box speedport.ip my.keenetic.net tplinkwifi.net tplinklogin.net tplinkmodem.net
+		routerlogin.net routerlogin.com mywifiext.net router.asus.com asusrouter.com miwifi.com
+		10.in-addr.arpa 168.192.in-addr.arpa 254.169.in-addr.arpa
+		d.f.ip6.arpa c.f.ip6.arpa 8.e.f.ip6.arpa 9.e.f.ip6.arpa a.e.f.ip6.arpa b.e.f.ip6.arpa`) {
+		m[s] = true
+	}
+	for i := 16; i < 32; i++ {
+		m[strconv.Itoa(i)+".172.in-addr.arpa"] = true
+	}
+	return m
+}()
+
+// isLocalName: a single label ("nas") or a name under one of localSuffixes.
+func isLocalName(name string) bool {
+	if name == "" {
+		return false
+	}
+	if !strings.Contains(name, ".") {
+		return true
+	}
+	for {
+		if localSuffixes[name] {
+			return true
+		}
+		i := strings.IndexByte(name, '.')
+		if i < 0 {
+			return false
+		}
+		name = name[i+1:]
+	}
+}
+
+// SetLocalServers sets the resolvers of the local network (the router), IPv4 only, for all
+// tunnels; empty when the device is not on a home network. Effective for the next query.
+func SetLocalServers(servers []string) {
+	list := parseServers(servers, true)
+	localServers.Store(&list)
+	localGen.Add(1)
+}
+
+func currentLocalServers() []*net.UDPAddr {
+	if p := localServers.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
 
 func addRules(r *dnsRules, text string, flag uint8) {
 	for _, line := range strings.Split(text, "\n") {
@@ -98,15 +158,31 @@ type forwarder struct {
 
 func newForwarder(conn *net.UDPConn, servers []string) *forwarder {
 	f := &forwarder{conn: conn, waiting: map[uint16]*pending{}, nextID: uint16(time.Now().UnixNano())}
-	for _, s := range servers {
-		if ap, err := netip.ParseAddrPort(s); err == nil {
-			f.servers = append(f.servers, net.UDPAddrFromAddrPort(ap))
-		} else if a, err := netip.ParseAddr(s); err == nil {
-			f.servers = append(f.servers, net.UDPAddrFromAddrPort(netip.AddrPortFrom(a, 53)))
-		}
-	}
+	f.servers = parseServers(servers, false)
 	go f.readLoop()
 	return f
+}
+
+// parseServers reads "ip" or "ip:port" entries; onlyV4 drops IPv6 ones (the sockets are udp4).
+func parseServers(servers []string, onlyV4 bool) []*net.UDPAddr {
+	var out []*net.UDPAddr
+	for _, s := range servers {
+		s = strings.TrimSpace(s)
+		var ap netip.AddrPort
+		if p, err := netip.ParseAddrPort(s); err == nil {
+			ap = p
+		} else if a, err := netip.ParseAddr(s); err == nil {
+			ap = netip.AddrPortFrom(a, 53)
+		} else {
+			continue
+		}
+		ap = netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port())
+		if onlyV4 && !ap.Addr().Is4() {
+			continue
+		}
+		out = append(out, net.UDPAddrFromAddrPort(ap))
+	}
+	return out
 }
 
 func (f *forwarder) readLoop() {
@@ -133,8 +209,11 @@ func (f *forwarder) readLoop() {
 }
 
 // query sends q to the first server, then to the next ones if it stays silent.
-func (f *forwarder) query(q []byte) []byte {
-	if len(f.servers) == 0 {
+func (f *forwarder) query(q []byte) []byte { return f.queryTo(q, f.servers) }
+
+// queryTo is query with another server list over the same socket.
+func (f *forwarder) queryTo(q []byte, servers []*net.UDPAddr) []byte {
+	if len(servers) == 0 {
 		return nil
 	}
 	p := &pending{origID: binary.BigEndian.Uint16(q), ch: make(chan []byte, 1)}
@@ -149,8 +228,8 @@ func (f *forwarder) query(q []byte) []byte {
 	binary.BigEndian.PutUint16(out, id)
 	deadline := time.After(4 * time.Second)
 	for i := 0; ; i++ {
-		if i < len(f.servers) {
-			f.conn.WriteToUDP(out, f.servers[i])
+		if i < len(servers) {
+			f.conn.WriteToUDP(out, servers[i])
 		}
 		select {
 		case r := <-p.ch:
@@ -331,7 +410,13 @@ func (t *dnsTun) handle(pkt []byte) {
 		return
 	}
 	fw, route := t.tunnel, "t"
-	if flags&ruleDirect != 0 && t.direct != nil {
+	var servers []*net.UDPAddr
+	if t.direct != nil && isLocalName(name) {
+		if servers = currentLocalServers(); len(servers) > 0 {
+			fw, route = t.direct, "l"+strconv.FormatInt(localGen.Load(), 36)
+		}
+	}
+	if fw == t.tunnel && flags&ruleDirect != 0 && t.direct != nil {
 		fw, route = t.direct, "d"
 	}
 	key := route + name + "/" + string(rune(qtype))
@@ -347,7 +432,12 @@ func (t *dnsTun) handle(pkt []byte) {
 	}
 	go func() {
 		defer func() { <-t.slots }()
-		r := fw.query(q)
+		var r []byte
+		if servers != nil && fw == t.direct && route[0] == 'l' {
+			r = fw.queryTo(q, servers)
+		} else {
+			r = fw.query(q)
+		}
 		if r == nil && fw == t.direct {
 			r = t.tunnel.query(q) // Russian resolver unreachable: still answer
 		}
