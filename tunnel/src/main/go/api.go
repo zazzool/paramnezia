@@ -204,6 +204,12 @@ func udpFromFd(fd int) (*net.UDPConn, error) {
 //export pnSetDnsRules
 func pnSetDnsRules(block, direct, allow string) { dnsfilter.SetRules(block, direct, allow) }
 
+// pnSetLocalDns sets the resolvers of the local network (comma-separated), which answer local
+// names such as nas.lan; empty when the phone is not on Wi-Fi or Ethernet.
+//
+//export pnSetLocalDns
+func pnSetLocalDns(servers string) { dnsfilter.SetLocalServers(strings.Split(servers, ",")) }
+
 // pnDnsBlocked returns how many queries were blocked since the library was loaded.
 //
 //export pnDnsBlocked

@@ -40,17 +40,23 @@ class SpecBuilder(private val context: Context) {
         settings: Settings,
     ): TunnelSpec {
         val dnsServers = config.iface.dns.filter { it.first().isDigit() || ':' in it }.ifEmpty { listOf("1.1.1.1", "1.0.0.1") }
-        val useDns = settings.blockTrackers || settings.bypassRussia
+        // The DNS filter is always on: besides blocking and Russian names it sends local names
+        // (nas.lan, printer.local) to the router, which no resolver behind the tunnel knows.
+        val useDns = true
         // The tunnel subnet (the in-tunnel manifest URL) and its DNS always stay inside.
         val keep = config.iface.addresses.map { a -> if (!a.isV6 && a.length > 24) IpPrefix.parse("${a.address.hostAddress}/24") else a } +
             dnsServers.mapNotNull { IpPrefix.parseOrNull(if (':' in it) "$it/128" else "$it/32") }
 
         val excludeSupported = Build.VERSION.SDK_INT >= 33
-        val key = listOf(keep, settings.bypassRussia, settings.bypassLan, excludeSupported)
+        // The local network is always direct (Vladimir: «локальная сеть должна быть доступна вне
+        // тоннеля всегда»), whatever the settings or the family policy say; lan adds the current
+        // Wi-Fi's own networks when they are not private.
+        val lan = TunnelRuntime.localNetwork(context).prefixes
+        val key = listOf(keep, settings.bypassRussia, lan, excludeSupported)
         val plan = cachedPlan.takeIf { cachedKey == key } ?: RoutePlanner.plan(
             if (settings.bypassRussia) v4 else emptyList(),
             if (settings.bypassRussia) v6 else emptyList(),
-            keep, excludeSupported, settings.bypassLan,
+            keep, excludeSupported, lan,
         ).also { cachedKey = key; cachedPlan = it }
 
         val installed = installedPackages()
@@ -70,6 +76,7 @@ class SpecBuilder(private val context: Context) {
             keepaliveScreenOn = settings.battery.screenOn,
             keepaliveScreenOff = settings.battery.screenOff,
             dns = if (useDns) DnsPolicy(tunnel = dnsServers, direct = settings.directDns.ifEmpty { DnsPolicy(emptyList()).direct }) else null,
+            lan = lan,
         )
     }
 

@@ -205,6 +205,29 @@ func TestSplitDNS(t *testing.T) {
 	if a := last4(answer("example.com", 4)); a != [4]byte{1, 1, 1, 1} || tunnelCount() != before {
 		t.Errorf("cache miss: %v", a)
 	}
+	// Local names: through the tunnel while the local resolver is unknown, then to the router.
+	SetLocalServers(nil)
+	if a := last4(answer("nas.lan", 5)); a != [4]byte{1, 1, 1, 1} {
+		t.Errorf("local name without a local resolver: %v", a)
+	}
+	localAddr, localCount := fakeResolver(t, [4]byte{192, 168, 1, 10})
+	SetLocalServers([]string{localAddr, "fe80::1"})
+	for i, name := range []string{"nas.lan", "printer.local", "nas", "my.keenetic.net", "10.1.168.192.in-addr.arpa", "20.17.172.in-addr.arpa"} {
+		if a := last4(answer(name, uint16(10+i))); a != [4]byte{192, 168, 1, 10} {
+			t.Errorf("%s not resolved by the local network: %v", name, a)
+		}
+	}
+	if a := last4(answer("example.lan.ru", 20)); a == [4]byte{192, 168, 1, 10} {
+		t.Errorf("non-local name sent to the router")
+	}
+	if a := last4(answer("1.32.172.in-addr.arpa", 21)); a == [4]byte{192, 168, 1, 10} {
+		t.Errorf("public reverse zone sent to the router")
+	}
+	seen := localCount()
+	SetLocalServers(nil)
+	if a := last4(answer("nas.lan", 22)); a != [4]byte{1, 1, 1, 1} || localCount() != seen {
+		t.Errorf("stale local answer after leaving the network: %v", a)
+	}
 	if blockedCount.Load() < 1 {
 		t.Error("blocked counter")
 	}

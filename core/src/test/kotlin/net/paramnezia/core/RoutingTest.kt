@@ -43,6 +43,28 @@ class RoutingTest {
     }
 
     @Test
+    fun localNetworkAlwaysDirect() {
+        val keep = listOf(p("10.8.1.0/24"), p("fd00:1::/64"))
+        val lan = RoutePlanner.extraLan(listOf(
+            p("5.6.7.89/24"), p("192.168.1.20/24"), p("2a00:1450:1:2::abcd/64"), p("fe80::1/64"),
+            p("1.0.0.0/8"), p("2a00::/16"),
+        ))
+        assertEquals(listOf(p("5.6.7.0/24"), p("2a00:1450:1:2::/64")), lan)
+        // No Russian bypass at all: the local network still stays out of the tunnel.
+        for (exclude in listOf(true, false)) {
+            val plan = RoutePlanner.plan(emptyList(), emptyList(), keep, exclude, lan)
+            fun tunnel(v6: Boolean) = if (exclude) {
+                PrefixSet.of(v6, plan.include.filter { it.isV6 == v6 }).minus(PrefixSet.of(v6, plan.exclude.filter { it.isV6 == v6 }))
+            } else PrefixSet.of(v6, plan.include.filter { it.isV6 == v6 })
+            for (a in listOf("192.168.0.1", "10.0.0.2", "172.16.5.5", "169.254.1.1", "224.0.0.251", "239.255.255.250",
+                "255.255.255.255", "5.6.7.1")) assertFalse(a, tunnel(false).contains(p("$a/32")))
+            for (a in listOf("fe80::1", "fd12:3456::1", "ff02::fb", "2a00:1450:1:2::5")) assertFalse(a, tunnel(true).contains(p("$a/128")))
+            for (a in listOf("10.8.1.1", "8.8.8.8", "5.6.8.1")) assertTrue(a, tunnel(false).contains(p("$a/32")))
+            for (a in listOf("fd00:1::1", "2a00:1450:1:3::1")) assertTrue(a, tunnel(true).contains(p("$a/128")))
+        }
+    }
+
+    @Test
     fun plannerKeepsTunnelSubnetAndDnsInside() {
         val keep = listOf(p("10.8.1.0/24"), p("172.29.172.254/32"))
         for (exclude in listOf(true, false)) {

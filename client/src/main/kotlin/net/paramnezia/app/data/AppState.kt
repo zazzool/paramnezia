@@ -88,6 +88,7 @@ data class StoredFleet(
 data class Settings(
     /** Russian IPs, domains and apps bypass the tunnel. */
     val bypassRussia: Boolean = true,
+    /** Kept for old saved settings and family policies; the local network is now always direct. */
     val bypassLan: Boolean = true,
     /** Ad and tracker blocking in the tunnel's DNS. */
     val blockTrackers: Boolean = true,
