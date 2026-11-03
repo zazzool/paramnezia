@@ -111,9 +111,9 @@ object Screenshots {
         val app = App(StateFile(home), ServiceClient("""\\.\pipe\paramnezia-none"""), File(home, "cache").apply { mkdirs() }, "DESKTOP-PC", {})
         app.repo.update { adminState() }
         val apk = LanFile("paramnezia-2.12.0.apk", LanFile.APK_MIME, 6_700_000, "2.12.0") { ByteArray(0).inputStream() }
-        val exe = LanFile("Paramnezia-Setup-2.12.0.exe", LanFile.EXE_MIME, 63_900_000, "2.12.0") { ByteArray(0).inputStream() }
         app.lan.preview(LanHub.Sharing(
-            addresses = listOf("192.168.1.5"), port = 80, name = "DESKTOP-PC", apk = apk, exe = exe, settings = true,
+            addresses = listOf("192.168.1.5"), port = 80, name = "DESKTOP-PC", apk = apk, exe = null, settings = true,
+            downloads = listOf(LanHub.Download("exe", "2.12.0")),
             asks = listOf(LanServer.Ask("demo", "Sony BRAVIA 4K", "tv", "192.168.1.40", System.currentTimeMillis())),
             served = mapOf("apk" to 1),
         ))

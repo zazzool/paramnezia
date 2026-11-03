@@ -96,7 +96,7 @@ fun LanSharePanel(app: App, onDismiss: () -> Unit, toast: (String) -> Unit) {
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (s == null) {
-                    Text(preparing?.let { "Готовлю: $it" } ?: "Открываю раздачу…", style = MaterialTheme.typography.bodyMedium)
+                    Text("Открываю раздачу…", style = MaterialTheme.typography.bodyMedium)
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                 } else if (s.error != null) {
                     Hint(s.error.orEmpty(), Icons.Filled.Warning, Brand.Coral)
@@ -117,7 +117,9 @@ fun LanSharePanel(app: App, onDismiss: () -> Unit, toast: (String) -> Unit) {
                             }
                         },
                         onDeny = { app.lan.deny(ask) })
-                    Files(s.apk, s.exe, s.served)
+                    Files(s.apk, s.exe, s.served, s.downloads, preparing) { what ->
+                        scope.launch { runCatching { app.lan.fetch(what) }.onFailure { toast(it.message ?: "Не удалось скачать") } }
+                    }
                     if (s.given.isNotEmpty()) Hint("Получили настройки: ${s.given.joinToString()}", Icons.Filled.CheckCircle, Brand.Mint)
                     ExpandTile(Icons.Filled.Info, "Как поставить на телевизор", "Без браузера и длинных адресов", help, onToggle = { help = !help }) {
                         HowTo(s.addresses.first(), s.settings, LocalUiPlatform.current.deviceWhere)
@@ -172,19 +174,42 @@ private fun AskRow(ask: LanServer.Ask, busy: Boolean, onAllow: () -> Unit, onDen
     }
 }
 
+/**
+ * What is shared, and «Скачать» for a file this device has no copy of (or an older one): fetched
+ * only on the tap, for a TV or PC that cannot reach GitHub itself.
+ */
 @Composable
-private fun Files(apk: LanFile?, exe: LanFile?, served: Map<String, Int>) {
-    Group {
+private fun Files(
+    apk: LanFile?, exe: LanFile?, served: Map<String, Int>,
+    downloads: List<net.paramnezia.app.lan.LanHub.Download>, progress: String?, onFetch: (String) -> Unit,
+) {
+    @Composable
+    fun row(title: String, what: String, file: LanFile?, label: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
+        val offer = downloads.firstOrNull { it.what == what }
         GroupRow(
-            "Android и Android TV", subtitle = apk?.let { "Paramnezia ${it.version}" + (served["apk"]?.let { n -> " · скачали $n" } ?: "") }
-                ?: "Нет копии: откройте раздачу, когда будет интернет",
-            icon = Glyph.Phone, accent = if (apk != null) Brand.Mint else Brand.Amber,
+            title,
+            subtitle = file?.let { "$label ${it.version}" + (served[what]?.let { n -> " · скачали $n" } ?: "") }
+                ?: "Нет копии на этом ${LocalUiPlatform.current.deviceWhere}",
+            icon = icon, accent = if (file != null) Brand.Mint else Brand.Amber,
+            trailing = {
+                if (offer != null) androidx.compose.material3.FilledTonalButton(enabled = progress == null, onClick = { onFetch(what) }) {
+                    Text(if (file == null) "Скачать" else "Обновить" + (offer.version?.let { " до $it" } ?: ""), maxLines = 1)
+                }
+            },
         )
-        GroupRow(
-            "Windows", subtitle = exe?.let { "Установщик ${it.version}" + (served["exe"]?.let { n -> " · скачали $n" } ?: "") }
-                ?: "Нет копии: откройте раздачу, когда будет интернет",
-            icon = Glyph.Cpu, accent = if (exe != null) Brand.Mint else Brand.Amber,
-        )
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(Space.S)) {
+        Group {
+            row("Android и Android TV", "apk", apk, "Paramnezia", Glyph.Phone)
+            row("Windows", "exe", exe, "Установщик", Glyph.Cpu)
+        }
+        if (progress != null) {
+            Text(progress, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        } else if (downloads.isNotEmpty()) {
+            Text("Если на телевизоре или компьютере нет доступа к GitHub, скачайте файл сюда, и он раздастся по Wi-Fi.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 

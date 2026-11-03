@@ -49,12 +49,17 @@ class LanHub(
         /** Devices that got settings during this share. */
         val given: List<String> = emptyList(),
         val error: String? = null,
+        /** Files the person can download now to share (missing, or a newer release is known). */
+        val downloads: List<Download> = emptyList(),
     )
+
+    /** A file to fetch on the person's tap: "apk" or "exe", and its version when known. */
+    data class Download(val what: String, val version: String?)
 
     private val _sharing = MutableStateFlow<Sharing?>(null)
     val sharing: StateFlow<Sharing?> = _sharing
     private val _preparing = MutableStateFlow<String?>(null)
-    /** What is being downloaded before the share opens ("Установщик для Windows…"), or null. */
+    /** What is being downloaded on the person's tap ("Установщик для Windows 2.12.0: 40 %"), or null. */
     val preparing: StateFlow<String?> = _preparing
 
     private var server: LanServer? = null
@@ -74,20 +79,19 @@ class LanHub(
         return s.profiles.any { it.ssh != null }
     }
 
-    /** Opens the share: gets the files ready (a download only if there is no copy yet), starts the server. */
+    /**
+     * Opens the share with what this device already has: its own APK (Android) and copies downloaded
+     * earlier. Nothing is downloaded here; newer or missing files are offered in [Sharing.downloads]
+     * and fetched only on the person's tap ([fetch]).
+     */
     suspend fun start() = withContext(Dispatchers.IO) {
         if (server != null) return@withContext
-        apk = platform.ownApk() ?: cached(releases().shareable()?.first, "apk")
-        exe = cached(releases().windows(), "exe")
-        // First share on this device, or a newer release: fetch while the screen opens (needs the internet once).
-        if (apk == null) apk = runCatching { download(releases().shareable()?.first, "apk", "Приложение для Android…") }.getOrNull()
-        if (exe == null) exe = runCatching { download(releases().windows(), "exe", "Установщик для Windows…") }.getOrNull()
-        _preparing.value = null
+        apk = cached(releases().shareable()?.first, "apk") ?: platform.ownApk() ?: newestCached("apk")
+        exe = cached(releases().windows(), "exe") ?: newestCached("exe")
         val give = canGiveSettings()
         val name = shareName
-        val version = apk?.version ?: exe?.version ?: ""
         val s = LanServer(
-            info = { LanInfo(name = name, version = version, settings = give, apk = apk != null, exe = exe != null) },
+            info = { LanInfo(name = name, version = (apk?.version ?: exe?.version).orEmpty(), settings = give, apk = apk != null, exe = exe != null) },
             apk = { apk }, exe = { exe },
         )
         try { s.start() } catch (e: Exception) {
@@ -96,7 +100,7 @@ class LanHub(
         }
         server = s
         advert = runCatching { platform.advertise(name, s.port) }.onFailure { Log.w(TAG, "advertise", it) }.getOrNull()
-        _sharing.value = Sharing(addresses(s.port), s.port, name, apk, exe, give)
+        _sharing.value = Sharing(addresses(s.port), s.port, name, apk, exe, give, downloads = downloads())
         shareJobs = listOf(
             scope.launch { s.asks.collect { a -> _sharing.update { it?.copy(asks = a) } } },
             scope.launch { s.served.collect { m -> _sharing.update { it?.copy(served = m) } } },
@@ -139,6 +143,47 @@ class LanHub(
 
     fun deny(ask: LanServer.Ask) { server?.deny(ask.id) }
 
+    /** What can be downloaded to share: a missing file, or a newer release than the one shared. */
+    private fun downloads(): List<Download> {
+        val ra = releases().shareable()?.first
+        val rw = releases().windows()
+        return listOfNotNull(
+            when {
+                apk == null -> Download("apk", ra?.versionName)
+                ra != null && ra.versionName != apk?.version -> Download("apk", ra.versionName)
+                else -> null
+            },
+            when {
+                exe == null -> Download("exe", rw?.versionName)
+                rw != null && rw.versionName != exe?.version -> Download("exe", rw.versionName)
+                else -> null
+            },
+        )
+    }
+
+    /**
+     * The person's tap on «Скачать»: reads the newest signed release, downloads its file ("apk" or
+     * "exe") from GitHub Releases, checks it and shares it from now on (and keeps it for next time).
+     * For the case when the TV or PC cannot reach GitHub but this device can.
+     */
+    suspend fun fetch(what: String) = withContext(Dispatchers.IO) {
+        try {
+            _preparing.value = "Проверяю последнюю версию…"
+            runCatching { releases().check() }
+            val r = (if (what == "apk") releases().shareable()?.first else releases().windows())
+                ?: error("Не удалось узнать последнюю версию: нужен интернет на этом устройстве")
+            val current = if (what == "apk") apk else exe
+            if (current?.version != r.versionName) {
+                val label = (if (what == "apk") "Paramnezia для Android " else "Установщик для Windows ") + r.versionName
+                val file = cached(r, what) ?: download(r, what, label) ?: error("Не удалось скачать: проверьте интернет и попробуйте ещё раз")
+                if (what == "apk") apk = file else exe = file
+            }
+            _sharing.update { it?.copy(apk = apk, exe = exe, downloads = downloads()) }
+        } finally {
+            _preparing.value = null
+        }
+    }
+
     private suspend fun newKey(device: String): String {
         val l = links()
         val s = repo.current
@@ -160,6 +205,15 @@ class LanHub(
     private fun asLanFile(r: Release, what: String, f: File) =
         LanFile.of(f, fileName(r, what), if (what == "apk") LanFile.APK_MIME else LanFile.EXE_MIME, r.versionName)
 
+    /** The copy downloaded last, whatever its release (it was checked when it was downloaded). */
+    private fun newestCached(what: String): LanFile? {
+        val dir = File(platform.cacheDir, "lan-share")
+        val version = File(dir, "$what.version").takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val f = dir.listFiles()?.firstOrNull { it.isFile && it.name.endsWith(".$what") } ?: return null
+        val name = if (what == "apk") "paramnezia-$version.apk" else "Paramnezia-Setup-$version.exe"
+        return LanFile.of(f, name, if (what == "apk") LanFile.APK_MIME else LanFile.EXE_MIME, version)
+    }
+
     /** A copy downloaded earlier, if it is still the newest release. */
     private fun cached(r: Release?, what: String): LanFile? {
         r ?: return null
@@ -179,17 +233,25 @@ class LanHub(
         val dir = File(platform.cacheDir, "lan-share").apply { mkdirs() }
         val target = cacheFile(r, what)
         val part = File(dir, "${r.sha256}.$what.part")
+        var lastShown = -1
+        val progress: (Long) -> Unit = { done ->
+            val pct = (done * 100 / r.size.coerceAtLeast(1)).toInt()
+            if (pct != lastShown) { lastShown = pct; _preparing.value = "$label: $pct %" }
+        }
         for (u in urls) {
+            var done = 0L
             val ok = runCatching {
                 val c = URL(u).openConnection() as HttpURLConnection
                 c.connectTimeout = 15_000; c.readTimeout = 30_000; c.instanceFollowRedirects = true
                 c.setRequestProperty("User-Agent", "paramnezia")
                 try {
-                    part.outputStream().use { out -> c.inputStream.use { input -> verifyingCopy(input, { b, n -> out.write(b, 0, n) }, r) } }
+                    part.outputStream().use { out -> c.inputStream.use { input -> verifyingCopy(input, { b, n -> out.write(b, 0, n); done += n; progress(done) }, r) } }
                 } finally { c.disconnect() }
             }.onFailure { Log.w(TAG, "download $u", it) }.getOrDefault(false)
             if (ok && part.renameTo(target)) {
                 dir.listFiles()?.filter { it.name.endsWith(".$what") && it != target }?.forEach { it.delete() }
+                // The version, for sharing it later while no release info is at hand (offline, after a restart).
+                File(dir, "$what.version").writeText(r.versionName)
                 return asLanFile(r, what, target)
             }
             part.delete()

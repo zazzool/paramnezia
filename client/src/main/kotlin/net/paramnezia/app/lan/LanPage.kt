@@ -44,7 +44,7 @@ object LanPage {
                 <li>Откройте Paramnezia: она сама найдёт ${esc(info.name)} в этой сети${if (info.settings) " и попросит настройки" else ""}.</li>
               </ol>
             </section>""" else """
-            <section><h2>Android</h2><p class="muted">Приложение для Android здесь сейчас не раздаётся.</p></section>"""
+            <section><h2>Android</h2><p class="muted">Приложение для Android здесь пока не раздаётся: на ${esc(info.name)} нажмите «Скачать» у Android на экране раздачи.</p></section>"""
         val windowsBlock = if (exe != null) """
             <section>
               <h2>Windows 10 и 11</h2>
@@ -54,7 +54,7 @@ object LanPage {
                 <li>После установки Paramnezia сама найдёт ${esc(info.name)} в этой сети${if (info.settings) " и попросит настройки" else ""}.</li>
               </ol>
             </section>""" else """
-            <section><h2>Windows</h2><p class="muted">Установщик для Windows здесь пока не раздаётся: на ${esc(info.name)} он появится, когда там будет интернет хотя бы раз.</p></section>"""
+            <section><h2>Windows</h2><p class="muted">Установщик для Windows здесь пока не раздаётся: на ${esc(info.name)} нажмите «Скачать» у Windows на экране раздачи.</p></section>"""
         val iphoneBlock = """
             <section>
               <h2>iPhone и iPad</h2>
