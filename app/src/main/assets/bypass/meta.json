@@ -1,5 +1,5 @@
 {
-  "version": "20261031",
+  "version": "20261109",
   "sources": {
     "ip": "ipverse/rir-ip, ipverse/as-ip-blocks (CC0)",
     "domains": "v2fly/domain-list-community category-ru (MIT) + extra-direct.txt",
@@ -7,14 +7,14 @@
   },
   "stats": {
     "ipv4": {
-      "blocks": 8669,
-      "priority": 165
+      "blocks": 8671,
+      "priority": 203
     },
     "ipv6": {
-      "blocks": 2166,
-      "priority": 11
+      "blocks": 2167,
+      "priority": 12
     },
-    "domains": 860,
-    "blocked": 911
+    "domains": 863,
+    "blocked": 915
   }
 }

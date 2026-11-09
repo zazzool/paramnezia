@@ -53,6 +53,7 @@ beget.app
 beget.cloud
 beget.com
 beget.de
+beget.email
 beget.hosting
 beget.pro
 beget.tech
@@ -421,6 +422,7 @@ okolo.app
 opennet.dev
 oskelly.co
 ostin.com
+otzovik.com
 ozon.app
 ozon.by
 ozon.com
@@ -853,6 +855,7 @@ ydb.tech
 yndx.net
 youla.io
 yourgood.app
+zapishu.me
 zvuk-b2b.com
 zvuk.com
 full:kp-config-smart-tv.akamaized.net
