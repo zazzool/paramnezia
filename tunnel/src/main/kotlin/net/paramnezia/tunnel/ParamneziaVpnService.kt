@@ -26,21 +26,23 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.net.DatagramPacket
 import java.net.DatagramSocket
-import java.net.InetAddress
-import java.net.InetSocketAddress
 import net.paramnezia.core.config.TunnelConfig
+import net.paramnezia.core.net.LinkProbe
+import net.paramnezia.core.net.LinkWatch
 
 /**
- * The VPN service. Designed to cost nothing while idle:
+ * The VPN service. Designed to cost nothing while idle and to tell the truth about the connection:
+ *  - "connected" is shown only after a probe came back through the freshly built tunnel (a WireGuard
+ *    device that is up says nothing about the server answering); until then it is "connecting";
  *  - a watchdog, not a polling loop: it reads the tunnel's own counters (no network traffic) every
  *    minute with the screen on and every 15 minutes with it off, on the main looper, so it simply
- *    waits while the phone sleeps. Only when the counters look wrong (we send, nothing comes back,
- *    or the session went stale) does it send one small probe through the tunnel; if that fails too,
- *    the tunnel is rebuilt from scratch (fresh sockets fix stuck NAT bindings), and after repeated
- *    failures the host is asked for another server;
- *  - keepalive is lowered while the screen is off;
+ *    waits while the phone sleeps. Traffic that came back proves the path by itself; otherwise one
+ *    tiny probe goes out. Failures in a row climb a ladder ([LinkWatch]): a second look, fresh
+ *    sockets in the same tunnel, a full rebuild, another server;
+ *  - a rebuild establishes the new interface before the old one is dropped, so apps never see a
+ *    moment without the VPN (that moment is when traffic used to leave with the real address);
+ *  - keepalive is lowered while the screen is off.
  */
 class ParamneziaVpnService : VpnService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -49,11 +51,10 @@ class ParamneziaVpnService : VpnService() {
 
     private var handle = -1
     private var spec: TunnelSpec? = null
-    private var connectedAt = 0L
-    private var lastCheck: TunnelStats? = null
+    /** Start of the session shown to the user; automatic repairs of the same server keep it. */
+    private var sessionSince = 0L
     private var screenOn = true
-    /** Failed probes in a row; reset by any sign of life. */
-    private var failures = 0
+    private val watch = LinkWatch()
 
     private val host get() = application as? TunnelHost
 
@@ -64,7 +65,15 @@ class ParamneziaVpnService : VpnService() {
             addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_SCREEN_OFF)
         })
         val cm = getSystemService(ConnectivityManager::class.java)
-        cm.registerDefaultNetworkCallback(networkCallback)
+        // The physical network under the tunnel (our own app's default network is the VPN itself).
+        val physical = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .build()
+        runCatching {
+            if (Build.VERSION.SDK_INT >= 31) cm.registerBestMatchingNetworkCallback(physical, networkCallback, main)
+            else cm.registerNetworkCallback(physical, networkCallback)
+        }
         runCatching {
             cm.registerNetworkCallback(NetworkRequest.Builder()
                 .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
@@ -103,7 +112,7 @@ class ParamneziaVpnService : VpnService() {
     }
 
     internal fun reload() {
-        scope.launch { lock.withLock { connect(host?.currentSpec()) } }
+        scope.launch { lock.withLock { connect(host?.currentSpec(), reconnecting = handle >= 0, quiet = true) } }
     }
 
     internal fun stopFromApp() {
@@ -114,14 +123,23 @@ class ParamneziaVpnService : VpnService() {
     private var startFailures = 0
     private val retryStart = Runnable { scope.launch { lock.withLock { if (handle < 0) connect(host?.currentSpec()) } } }
 
-    private fun connect(next: TunnelSpec?) {
+    /**
+     * Builds (or rebuilds) the tunnel and starts verifying it. [reconnecting]: a repair or reload of a
+     * running session. [quiet]: a deliberate rebuild of a working tunnel to the same server (new
+     * settings, new local network) keeps showing "connected" while it is verified, instead of
+     * flashing "connecting" for a second; if the verification fails the watchdog says so.
+     */
+    private fun connect(next: TunnelSpec?, reconnecting: Boolean = false, quiet: Boolean = false) {
         if (next == null) {
             TunnelRuntime.set(TunnelState.Failed("no_profile"))
             down()
             stopSelf()
             return
         }
-        TunnelRuntime.set(TunnelState.Connecting(next.serverName))
+        val sameServer = spec?.serverId == next.serverId
+        val repair = reconnecting && handle >= 0
+        val keepUp = quiet && sameServer && (TunnelRuntime.state.value as? TunnelState.Up)?.serverId == next.serverId
+        if (!keepUp) TunnelRuntime.set(TunnelState.Connecting(next.serverName, reconnecting = repair))
         try {
             // Resolve before touching the old tunnel, so a DNS failure keeps the current connection.
             val uapi = Uapi.write(next.config.withKeepalive(if (screenOn) next.keepaliveScreenOn else next.keepaliveScreenOff))
@@ -149,18 +167,24 @@ class ParamneziaVpnService : VpnService() {
             if (Build.VERSION.SDK_INT >= 29) builder.setMetered(false)
             builder.setBlocking(true)
 
-            down(keepState = true)
+            main.removeCallbacks(healthCheck); main.removeCallbacks(rebuildLater)
+            // The new interface first: Android moves the VPN onto it in place. Dropping the old tunnel
+            // first would leave a gap without any VPN, and apps' traffic would leave directly.
             val tun = builder.establish() ?: throw IllegalStateException(PERMISSION_MISSING)
+            val old = handle
+            handle = -1
+            if (old >= 0) AwgNative.turnOff(old)
             val h = AwgNative.turnOn("pn0", tun.detachFd(), uapi, dns?.encode().orEmpty(), if (dns != null) directDnsSocket() else -1)
             if (h < 0) throw IllegalStateException("tunnel_start_failed:$h")
             protect(AwgNative.socketV4(h)); protect(AwgNative.socketV6(h))
             handle = h
             spec = next
-            connectedAt = System.currentTimeMillis()
-            lastCheck = null
-            TunnelRuntime.set(TunnelState.Up(next.serverName, next.serverId, connectedAt))
-            scheduleCheck(FIRST_CHECK_MS)
-            TunnelRuntime.bumpGeneration()
+            val now = System.currentTimeMillis()
+            if (!(reconnecting && sameServer) || sessionSince == 0L) sessionSince = now
+            watch.started(now, sameServer = reconnecting && sameServer)
+            TunnelRuntime.setLink(unstable = repair, offline = false)
+            // Verified (and shown as connected) by the first probe that comes back.
+            scheduleCheck(VERIFY_FIRST_MS)
             startFailures = 0
         } catch (e: Exception) {
             Log.e(TAG, "connect failed", e)
@@ -183,13 +207,16 @@ class ParamneziaVpnService : VpnService() {
         ParcelFileDescriptor.fromDatagramSocket(socket).detachFd().also { socket.close() }
     }.getOrDefault(-1)
 
-    private fun down(keepState: Boolean = false) {
-        main.removeCallbacks(healthCheck)
-        if (!keepState) { main.removeCallbacks(retryStart); startFailures = 0 }
+    private fun down() {
+        main.removeCallbacks(healthCheck); main.removeCallbacks(rebuildLater); main.removeCallbacks(retryStart)
+        startFailures = 0
         val h = handle
         handle = -1
         if (h >= 0) AwgNative.turnOff(h)
-        if (!keepState) { spec = null; TunnelRuntime.set(TunnelState.Down) }
+        spec = null
+        sessionSince = 0
+        TunnelRuntime.setLink(unstable = false, offline = false)
+        TunnelRuntime.set(TunnelState.Down)
     }
 
     internal fun stats(): TunnelStats? {
@@ -201,97 +228,119 @@ class ParamneziaVpnService : VpnService() {
     // --- health and failover ---------------------------------------------------------------
 
     private val healthCheck = Runnable { scope.launch { lock.withLock { checkHealth() } } }
+    private val rebuildLater = Runnable { scope.launch { lock.withLock { spec?.let { rebuild(it) } } } }
 
     private fun scheduleCheck(delayMs: Long) {
         main.removeCallbacks(healthCheck)
         main.postDelayed(healthCheck, delayMs)
     }
 
-    private fun nextInterval() = if (screenOn) WATCH_SCREEN_ON_MS else WATCH_SCREEN_OFF_MS
+    internal fun recheck() {
+        scope.launch { lock.withLock { if (handle >= 0) { watch.suspect(); scheduleCheck(0) } } }
+    }
 
     private suspend fun checkHealth() {
         val current = spec ?: return
-        // A wedged native side would block here: that is a hang, too.
-        val now = withTimeoutOrNull(5_000) { runInterruptible { stats() } }
-        if (now == null) {
-            // Wedged, or a previous rebuild failed: try again, with backoff, once there is a network.
-            if (!networkValidated()) { scheduleCheck(nextInterval()); return }
-            failures++
-            forceReconnect(host?.currentSpec() ?: current, if (handle >= 0) "stats_timeout" else "not_running")
+        if (handle < 0) {
+            // A previous rebuild failed: try again once there is a network.
+            if (!networkValidated()) { offline(); return }
+            rebuild(current)
             return
         }
-        val prev = lastCheck
-        lastCheck = now
-        val handshakeAge = if (now.lastHandshakeEpochSec == 0L) Long.MAX_VALUE
-        else System.currentTimeMillis() / 1000 - now.lastHandshakeEpochSec
-        val sentWithoutReply = prev != null && now.txBytes > prev.txBytes && now.rxBytes == prev.rxBytes
-        val stale = handshakeAge > DEAD_AFTER_SEC
-        if (!stale && !sentWithoutReply) {
-            alive(current)
-            return
+        // A wedged native side would block here: that is a failure, too.
+        val counters = withTimeoutOrNull(5_000) { runInterruptible { stats() } }
+        val now = System.currentTimeMillis()
+        if (counters == null && !networkValidated()) { offline(); return }
+        var action = watch.onCounters(now, counters?.let { LinkWatch.Counters(it.rxBytes, it.txBytes, it.lastHandshakeEpochSec) }, screenOn)
+        if (action == LinkWatch.Action.Probe) {
+            // Nothing to fix (and nothing to count) while the phone itself is offline.
+            if (!networkValidated()) { offline(); return }
+            val rtt = runInterruptible { LinkProbe.run(probeTargets(current)) }
+            action = watch.onProbe(System.currentTimeMillis(), rtt, screenOn)
+            watch.rttMs?.takeIf { rtt != null }?.let(TunnelRuntime::setRtt)
+            if (rtt == null) Log.w(TAG, "${current.serverName}: no reply (${watch.phase}, failure ${watch.failures}, builds ${watch.failedBuilds})")
         }
-        // Nothing to fix while the phone itself is offline.
-        if (!networkValidated()) { scheduleCheck(nextInterval()); return }
-        val rtt = probe(current)
-        if (rtt != null) {
-            TunnelRuntime.setRtt(rtt)
-            alive(current)
-            return
-        }
-        failures++
-        Log.w(TAG, "${current.serverName}: no reply (handshake ${handshakeAge}s ago, failure $failures)")
-        if (failures >= FAILOVER_AFTER) {
-            val replacement = host?.onServerUnreachable(current)
-            if (replacement != null && replacement.serverId != current.serverId) { failures = 0; connect(replacement); return }
-        }
-        forceReconnect(host?.currentSpec() ?: current, "dead")
+        act(current, action)
     }
 
-    private fun alive(current: TunnelSpec) {
-        failures = 0
-        host?.onServerHealthy(current)
-        scheduleCheck(nextInterval())
+    private fun offline() {
+        TunnelRuntime.setLink(unstable = TunnelRuntime.health.value.unstable, offline = true)
+        scheduleCheck(watch.offline(screenOn).ms)
     }
 
-    /** Tears the tunnel down and builds it again, then looks sooner than usual (with backoff). */
-    private fun forceReconnect(next: TunnelSpec, reason: String) {
-        Log.i(TAG, "force reconnect to ${next.serverName}: $reason")
-        TunnelRuntime.noteReconnect()
-        connect(next)
-        // connect() schedules its own first look; a failed rebuild needs another try later.
-        if (handle < 0) { spec = spec ?: next; scheduleCheck(minOf(RETRY_BASE_MS shl minOf(failures, 4), WATCH_SCREEN_OFF_MS)) }
-    }
-
-    /**
-     * One DNS query to a foreign resolver, which is routed through the tunnel: a reply proves the
-     * whole path (us → server → internet → back). Returns the round trip in ms, or null.
-     */
-    private fun probe(s: TunnelSpec): Long? {
-        val targets = (s.dns?.tunnel.orEmpty() + PROBE_RESOLVERS).distinct().filter { ':' !in it }.take(3)
-        for (attempt in 0 until 2) for (t in targets) {
-            val rtt = runCatching {
-                DatagramSocket().use { socket ->
-                    socket.soTimeout = PROBE_TIMEOUT_MS
-                    val q = PROBE_QUERY.copyOf().also { val id = (System.nanoTime() and 0xffff).toInt(); it[0] = (id shr 8).toByte(); it[1] = id.toByte() }
-                    val started = System.nanoTime()
-                    socket.send(DatagramPacket(q, q.size, InetAddress.getByName(t), 53))
-                    val buf = ByteArray(512)
-                    val reply = DatagramPacket(buf, buf.size)
-                    socket.receive(reply)
-                    if (reply.length >= 12 && buf[0] == q[0] && buf[1] == q[1]) (System.nanoTime() - started) / 1_000_000 else null
+    private suspend fun act(current: TunnelSpec, action: LinkWatch.Action) {
+        TunnelRuntime.setLink(unstable = watch.phase == LinkWatch.Phase.UNSTABLE, offline = false)
+        when (action) {
+            is LinkWatch.Action.Wait -> {
+                // Fleet devices pick up the admin's changes within the hour while the tunnel works.
+                if (watch.phase == LinkWatch.Phase.GOOD) host?.onServerHealthy(current)
+                scheduleCheck(action.ms)
+            }
+            LinkWatch.Action.Probe -> scheduleCheck(0)
+            is LinkWatch.Action.Verified -> {
+                TunnelRuntime.set(TunnelState.Up(current.serverName, current.serverId, sessionSince))
+                TunnelRuntime.bumpGeneration()
+                host?.onServerHealthy(current)
+                scheduleCheck(action.ms)
+            }
+            is LinkWatch.Action.Rebind -> {
+                // Fresh sockets in the same tunnel: routes stay, nothing leaves past the VPN.
+                val h = handle
+                Log.i(TAG, "${current.serverName}: fresh sockets")
+                if (h >= 0 && AwgNative.rebind(h) == 0) {
+                    protect(AwgNative.socketV4(h)); protect(AwgNative.socketV6(h))
+                    TunnelRuntime.noteReconnect()
                 }
-            }.getOrNull()
-            if (rtt != null) return rtt
+                watch.rebound()
+                scheduleCheck(action.ms)
+            }
+            is LinkWatch.Action.Rebuild -> rebuildAfter(current, action.delayMs)
+            is LinkWatch.Action.Failover -> {
+                val replacement = host?.onServerUnreachable(current)
+                if (replacement != null && replacement.serverId != current.serverId) {
+                    Log.i(TAG, "switching to ${replacement.serverName}")
+                    TunnelRuntime.noteReconnect()
+                    connect(replacement, reconnecting = true)
+                } else rebuildAfter(current, action.delayMs)
+            }
         }
-        return null
     }
+
+    private suspend fun rebuildAfter(current: TunnelSpec, delayMs: Long) {
+        if (delayMs <= 0) { rebuild(current); return }
+        // The old tunnel stays in place meanwhile: apps wait instead of leaking past it.
+        TunnelRuntime.set(TunnelState.Connecting(current.serverName, reconnecting = true))
+        main.removeCallbacks(rebuildLater)
+        main.postDelayed(rebuildLater, delayMs)
+    }
+
+    /** Builds the tunnel again with a fresh spec (fresh sockets, new handshake) and verifies it. */
+    private suspend fun rebuild(current: TunnelSpec) {
+        val next = host?.currentSpec() ?: current
+        Log.i(TAG, "rebuild ${next.serverName}")
+        TunnelRuntime.noteReconnect()
+        connect(next, reconnecting = true)
+        // connect() schedules its own first look; a failed build needs another try later.
+        if (handle < 0) { spec = spec ?: next; scheduleCheck(minOf(RETRY_BASE_MS shl minOf(watch.failedBuilds, 4), WATCH_SCREEN_OFF_MS)) }
+    }
+
+    /** The tunnel's own resolvers first (they answer only through it), then public ones. */
+    private fun probeTargets(s: TunnelSpec): List<String> = (s.dns?.tunnel.orEmpty() + LinkProbe.DNS_TARGETS).distinct()
 
     private fun networkValidated(): Boolean = TunnelRuntime.directNetwork(this) != null
 
+    /** The physical network last seen under the tunnel. */
+    @Volatile private var underlying: Network? = null
+
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
-            // A new network (Wi-Fi ↔ mobile): give the tunnel a moment to re-handshake, then look.
-            if (handle >= 0) { lastCheck = null; scheduleCheck(NETWORK_CHANGE_CHECK_MS) }
+            val changed = underlying != null && underlying != network
+            underlying = network
+            // Wi-Fi ↔ mobile under a working tunnel: give it a moment to re-handshake, then probe. A
+            // fresh tunnel is being verified anyway; its quick verification is not pushed back.
+            if (changed) scope.launch {
+                lock.withLock { if (handle >= 0 && TunnelRuntime.state.value is TunnelState.Up) { watch.suspect(); scheduleCheck(NETWORK_CHANGE_CHECK_MS) } }
+            }
         }
     }
 
@@ -312,7 +361,7 @@ class ParamneziaVpnService : VpnService() {
                 TunnelRuntime.setLocalDns(local.dns)
                 if (local.prefixes != current.lan) {
                     Log.i(TAG, "local network changed: ${local.prefixes}, rebuilding routes")
-                    connect(host?.currentSpec() ?: return@withLock)
+                    connect(host?.currentSpec() ?: return@withLock, reconnecting = true, quiet = true)
                 }
             }
         }
@@ -334,7 +383,9 @@ class ParamneziaVpnService : VpnService() {
             val h = handle
             if (h < 0) return
             // The user is about to use the phone: make sure the tunnel survived the sleep.
-            if (screenOn) { lastCheck = null; scheduleCheck(SCREEN_ON_CHECK_MS) } else scheduleCheck(WATCH_SCREEN_OFF_MS)
+            // A repair in progress keeps its quick pace either way.
+            if (TunnelRuntime.state.value is TunnelState.Up && watch.phase == LinkWatch.Phase.GOOD)
+                scheduleCheck(if (screenOn) SCREEN_ON_CHECK_MS else watch.interval(false))
             val ka = if (screenOn) s.keepaliveScreenOn else s.keepaliveScreenOff
             scope.launch {
                 val peer = s.config.peers.firstOrNull() ?: return@launch
@@ -348,24 +399,16 @@ class ParamneziaVpnService : VpnService() {
         private const val TAG = "ParamneziaVpn"
         const val ACTION_START = "net.paramnezia.tunnel.START"
         const val ACTION_STOP = "net.paramnezia.tunnel.STOP"
-        private const val FIRST_CHECK_MS = 20_000L
-        private const val NETWORK_CHANGE_CHECK_MS = 15_000L
+        /** First verification probe of a fresh tunnel: right after its first handshake could finish. */
+        private const val VERIFY_FIRST_MS = 150L
+        private const val NETWORK_CHANGE_CHECK_MS = 3_000L
         private const val SCREEN_ON_CHECK_MS = 3_000L
         /** Link properties arrive in bursts while Wi-Fi connects; look once they settle. */
         private const val LAN_SETTLE_MS = 2_000L
-        private const val WATCH_SCREEN_ON_MS = 60_000L
         private const val WATCH_SCREEN_OFF_MS = 15 * 60_000L
         private const val RETRY_BASE_MS = 10_000L
         private const val MAX_START_RETRIES = 8
         private const val PERMISSION_MISSING = "VPN permission missing"
-        /** WireGuard renews a session every 2 minutes while traffic flows; 3 minutes means stale. */
-        private const val DEAD_AFTER_SEC = 180L
-        /** Rebuilds of the same server before asking for another one. */
-        private const val FAILOVER_AFTER = 2
-        private const val PROBE_TIMEOUT_MS = 3_000
-        private val PROBE_RESOLVERS = listOf("1.1.1.1", "8.8.8.8", "9.9.9.9")
-        /** DNS query: "." IN NS, recursion desired. Tiny, cacheable, answered by every resolver. */
-        private val PROBE_QUERY = byteArrayOf(0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1)
 
         /** False if Android refused (a start from the background on Android 8+). */
         fun start(context: Context): Boolean = runCatching {

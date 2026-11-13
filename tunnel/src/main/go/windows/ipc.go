@@ -23,7 +23,7 @@ import (
 const pipeSDDL = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)"
 
 type request struct {
-	Op string `json:"op"` // up, down, status, set, rules, direct, version
+	Op string `json:"op"` // up, down, rebind, status, set, rules, direct, version
 	// up
 	Up *upSpec `json:"up,omitempty"`
 	// set: a partial UAPI set on the running tunnel (keepalive)
@@ -129,6 +129,12 @@ func (s *server) handle(r *request) response {
 	case "down":
 		s.tunnel.down()
 		log.Printf("down")
+		return response{OK: true}
+	case "rebind":
+		if err := s.tunnel.rebind(); err != nil {
+			return fail(err)
+		}
+		log.Printf("rebind")
 		return response{OK: true}
 	case "status":
 		st := s.tunnel.status()

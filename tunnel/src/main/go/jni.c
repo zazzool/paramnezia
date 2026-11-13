@@ -18,6 +18,7 @@ extern void pnTurnOff(int handle);
 extern int pnGetSocketV4(int handle);
 extern int pnGetSocketV6(int handle);
 extern char *pnGetConfig(int handle);
+extern int pnRebind(int handle);
 extern int pnSetConfig(int handle, struct go_string settings);
 extern char *pnVersion(void);
 extern void pnSetVerbose(bool on);
@@ -74,6 +75,7 @@ JNIEXPORT void JNICALL FN(setLocalDns)(JNIEnv *env, jclass c, jstring servers)
 JNIEXPORT jlong JNICALL FN(dnsBlocked)(JNIEnv *env, jclass c) { return pnDnsBlocked(); }
 
 JNIEXPORT void JNICALL FN(turnOff)(JNIEnv *env, jclass c, jint handle) { pnTurnOff(handle); }
+JNIEXPORT jint JNICALL FN(rebind)(JNIEnv *env, jclass c, jint handle) { return pnRebind(handle); }
 JNIEXPORT jint JNICALL FN(socketV4)(JNIEnv *env, jclass c, jint handle) { return pnGetSocketV4(handle); }
 JNIEXPORT jint JNICALL FN(socketV6)(JNIEnv *env, jclass c, jint handle) { return pnGetSocketV6(handle); }
 JNIEXPORT jstring JNICALL FN(getConfig)(JNIEnv *env, jclass c, jint handle) { return take_string(env, pnGetConfig(handle)); }

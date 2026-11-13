@@ -94,8 +94,9 @@ compose.desktop {
             description = "Paramnezia VPN"
             vendor = "Paramnezia"
             copyright = "Paramnezia"
-            // jdk.localedata: country names in Russian; jdk.crypto.ec: SSH key exchange; java.naming: JSch.
-            modules("java.naming", "jdk.crypto.ec", "jdk.unsupported", "jdk.localedata", "jdk.charsets", "java.management")
+            // jdk.localedata: country names in Russian; jdk.crypto.ec: SSH key exchange; java.naming: JSch;
+            // java.net.http: address checks on fresh connections (DesktopHttp.freshGet).
+            modules("java.naming", "jdk.crypto.ec", "jdk.unsupported", "jdk.localedata", "jdk.charsets", "java.management", "java.net.http")
             windows {
                 iconFile.set(project.file("icons/paramnezia.ico"))
                 menuGroup = "Paramnezia"

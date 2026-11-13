@@ -166,6 +166,17 @@ func (t *tunnel) status() response {
 	return response{Up: true, Name: t.name, Since: t.since.UnixMilli(), Stats: withoutSecrets(stats)}
 }
 
+// rebind replaces the UDP sockets with fresh ones without touching the adapter, its routes or the
+// firewall: the soft reconnect, so traffic never leaves past the tunnel while it happens.
+func (t *tunnel) rebind() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.dev == nil {
+		return errNotUp
+	}
+	return t.dev.BindUpdate()
+}
+
 func (t *tunnel) set(uapi string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()

@@ -17,6 +17,9 @@ import javax.net.SocketFactory
 class Net(private val context: Context) : Http {
     fun direct(): Network? = TunnelRuntime.directNetwork(context)
 
+    private fun defaultNetwork(): Network? =
+        runCatching { context.getSystemService(android.net.ConnectivityManager::class.java).activeNetwork }.getOrNull()
+
     fun directSockets(): SocketFactory = direct()?.socketFactory ?: SocketFactory.getDefault()
 
     /**
@@ -28,9 +31,12 @@ class Net(private val context: Context) : Http {
     override fun get(url: String, maxBytes: Int, fallbackDirect: Boolean, fresh: Boolean, timeoutMs: Int): String? {
         for (network in if (fallbackDirect) listOf(null, direct()) else listOf(null)) {
             runCatching {
-                val c = open(url, network, timeoutMs)
                 // A pooled keep-alive socket remembers the route it was opened on: a connection made
-                // before the tunnel came up would still go direct. Checks of "how sites see me" must not reuse one.
+                // before the tunnel came up would still go direct, and "Connection: close" does not stop
+                // the pool from handing one out. A fresh Network object has a pool of its own (empty), and
+                // the default network is the VPN while it is up: checks of "how sites see me" go the way
+                // all foreign traffic goes, on new connections only.
+                val c = open(url, network ?: if (fresh) defaultNetwork() else null, timeoutMs)
                 if (fresh) { c.setRequestProperty("Connection", "close"); c.useCaches = false }
                 try {
                     if (c.responseCode == 200) {

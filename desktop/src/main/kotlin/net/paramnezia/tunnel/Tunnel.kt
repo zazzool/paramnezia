@@ -38,9 +38,10 @@ data class DnsPolicy(
     fun encode() = "virtual=$virtual\ntunnel=${tunnel.joinToString(",")}\ndirect=${direct.joinToString(",")}"
 }
 
+/** Same meaning as on Android: [Up] only once a probe came back through the tunnel. */
 sealed interface TunnelState {
     data object Down : TunnelState
-    data class Connecting(val serverName: String) : TunnelState
+    data class Connecting(val serverName: String, val reconnecting: Boolean = false) : TunnelState
     data class Up(val serverName: String, val serverId: String, val since: Long) : TunnelState
     data class Failed(val reason: String) : TunnelState
 }
@@ -52,6 +53,8 @@ data class TunnelHealth(
     val checkedAt: Long = 0,
     val reconnects: Int = 0,
     val lastReconnectAt: Long = 0,
+    val unstable: Boolean = false,
+    val offline: Boolean = false,
 )
 
 object TunnelRuntime {
@@ -63,6 +66,14 @@ object TunnelRuntime {
     val health: StateFlow<TunnelHealth> = _health.asStateFlow()
     fun setRtt(ms: Long) { _health.value = _health.value.copy(rttMs = ms, checkedAt = System.currentTimeMillis()) }
     fun noteReconnect() { _health.value = _health.value.copy(reconnects = _health.value.reconnects + 1, lastReconnectAt = System.currentTimeMillis()) }
+    fun setLink(unstable: Boolean, offline: Boolean) {
+        val h = _health.value
+        if (h.unstable != unstable || h.offline != offline) _health.value = h.copy(unstable = unstable, offline = offline)
+    }
+
+    /** Set by the engine: probe now and repair if needed (see the Android TunnelRuntime.recheck). */
+    @Volatile var onRecheck: (() -> Unit)? = null
+    fun recheck() { onRecheck?.invoke() }
 
     private val _generation = MutableStateFlow(0)
     val generation: StateFlow<Int> = _generation.asStateFlow()

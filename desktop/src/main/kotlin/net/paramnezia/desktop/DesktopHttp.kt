@@ -59,6 +59,7 @@ class DesktopHttp(private val client: ServiceClient) : Http {
     override fun hasDirect(): Boolean = directProxy() != null
 
     override fun get(url: String, maxBytes: Int, fallbackDirect: Boolean, fresh: Boolean, timeoutMs: Int): String? {
+        if (fresh && !fallbackDirect) return freshGet(url, maxBytes, timeoutMs)
         for (direct in if (fallbackDirect) listOf(false, true) else listOf(false)) {
             val p = if (direct) directProxy() ?: break else null
             runCatching {
@@ -90,6 +91,29 @@ class DesktopHttp(private val client: ServiceClient) : Http {
         } catch (e: java.net.ConnectException) { Http.Fetched(null, "соединение отклонено")
         } catch (e: Exception) { Http.Fetched(null, e.javaClass.simpleName) }
     }
+
+    /**
+     * GET on a connection opened just now. Java keeps idle keep-alive connections in a process-wide
+     * cache and hands them out regardless of "Connection: close", and on Windows a TCP connection
+     * opened before the tunnel keeps leaving through the physical adapter. A client of its own (with
+     * an empty pool, closed after the call) makes "how sites see me" follow the current routes.
+     */
+    private fun freshGet(url: String, maxBytes: Int, timeoutMs: Int): String? = runCatching {
+        val client = java.net.http.HttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofMillis(minOf(timeoutMs, 6_000).toLong()))
+            .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
+            .build()
+        try {
+            val req = java.net.http.HttpRequest.newBuilder(java.net.URI(url))
+                .timeout(java.time.Duration.ofMillis(timeoutMs.toLong()))
+                .header("User-Agent", "paramnezia")
+                .GET().build()
+            val resp = client.send(req, java.net.http.HttpResponse.BodyHandlers.ofInputStream())
+            resp.body().use { body -> if (resp.statusCode() == 200) body.readUpTo(maxBytes).decodeToString() else null }
+        } finally {
+            (client as? AutoCloseable)?.close()
+        }
+    }.getOrNull()
 
     /** Through a Tor client the user runs: the Tor service (9050) or Tor Browser (9150). No Tor code here. */
     override fun getViaTor(url: String, maxBytes: Int): String? {
