@@ -41,7 +41,7 @@ import java.time.LocalDateTime
  *   Paramnezia.exe --screenshots <dir>   render the screens with sample data (CI, no service needed)
  */
 fun main(args: Array<String>) {
-    if (args.firstOrNull() == "--screenshots") { Screenshots.render(File(args.getOrElse(1) { "screenshots" })); kotlin.system.exitProcess(0) }
+    if (args.firstOrNull() == "--screenshots") screenshotsAndExit(File(args.getOrElse(1) { "screenshots" }))
     val opened = args.firstOrNull { it.endsWith(".vpn", true) || it.endsWith(".conf", true) }
         ?.let { f -> runCatching { File(f).readText().take(256 * 1024) }.getOrNull() }
         ?: args.firstOrNull { it.startsWith("vpn://") }
@@ -158,3 +158,25 @@ private fun setupLog() {
         }
     }
 }
+
+/**
+ * CI renders the screens with the packaged release app (ProGuard check). Whatever goes wrong must
+ * end the process and say why: an exception, or a dump of every thread if it hangs, in error.txt.
+ */
+private fun screenshotsAndExit(out: File) {
+    out.mkdirs()
+    Thread({
+        Thread.sleep(150_000)
+        val dump = Thread.getAllStackTraces().entries.joinToString("\n\n") { (t, st) -> "${t.name}:\n" + st.joinToString("\n") { "  at $it" } }
+        runCatching { File(out, "error.txt").writeText("timeout\n\n$dump") }
+        Runtime.getRuntime().halt(3)
+    }, "pn-screenshots-watchdog").apply { isDaemon = true }.start()
+    try {
+        Screenshots.render(out)
+    } catch (t: Throwable) {
+        runCatching { File(out, "error.txt").writeText(t.stackTraceToString()) }
+        Runtime.getRuntime().halt(2)
+    }
+    Runtime.getRuntime().halt(0)
+}
+

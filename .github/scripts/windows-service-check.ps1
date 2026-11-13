@@ -36,9 +36,12 @@ if ($svc.Status -ne 'Running') { throw "service is $($svc.Status)" }
 Write-Host "== the packaged release app runs (ProGuard kept what it needs)"
 $shots = "$env:RUNNER_TEMP\pn-shots"
 $p = Start-Process "$app\Paramnezia.exe" -ArgumentList '--screenshots', $shots -PassThru
-if (-not $p.WaitForExit(180000)) { $p.Kill(); throw "the app did not finish its screenshots in 3 minutes" }
+if (-not $p.WaitForExit(200000)) { $p.Kill(); throw "the app did not finish its screenshots" }
 $pngs = @(Get-ChildItem "$shots\*.png" -ErrorAction SilentlyContinue)
-if ($pngs.Count -lt 3) { throw "the packaged app rendered $($pngs.Count) screens (exit code $($p.ExitCode))" }
+if ($p.ExitCode -ne 0 -or $pngs.Count -lt 3) {
+    Get-Content "$shots\error.txt" -ErrorAction SilentlyContinue | Select-Object -First 120
+    throw "the packaged app rendered $($pngs.Count) screens (exit code $($p.ExitCode))"
+}
 Write-Host "rendered $($pngs.Count) screens"
 # A real start: state file (DPAPI through JNA), tray, service pipe. It must still run after 20 s.
 $p = Start-Process "$app\Paramnezia.exe" -ArgumentList '--minimized' -PassThru

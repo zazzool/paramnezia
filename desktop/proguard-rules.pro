@@ -17,6 +17,14 @@
 }
 -keep,includedescriptorclasses class **$$serializer { *; }
 
+# Loaded through java.util.ServiceLoader (META-INF/services), so nothing references them in code:
+# without the Swing main dispatcher, Compose cannot start at all.
+-keep class kotlinx.coroutines.swing.** { *; }
+-keep class * implements kotlinx.coroutines.internal.MainDispatcherFactory { *; }
+-keep class * implements kotlinx.coroutines.CoroutineExceptionHandler { *; }
+-keepnames class kotlinx.coroutines.internal.MainDispatcherFactory
+-keepnames class kotlinx.coroutines.CoroutineExceptionHandler
+
 # Optional dependencies of JSch, JmDNS and JNA that are not shipped.
 -dontwarn com.jcraft.jsch.**
 -dontwarn org.ietf.jgss.**
