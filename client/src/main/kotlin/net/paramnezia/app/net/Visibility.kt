@@ -95,9 +95,17 @@ class VisibilityCheck(
             val direct: Deferred<String?>? = if (vpnUp) {
                 if (!net.hasDirect()) { errors += "$directLabel: не найдена"; null }
                 else probes.async {
-                    firstOf((GeoIp.RUSSIAN_SELF + GeoIp.CARRIER_SELF + GeoIp.CLOUDFLARE_TRACE).map { url ->
-                        suspend { ask(url, true, directLabel, 8_000, errors) }
-                    })
+                    // Right after the tunnel comes up Android needs a moment before names resolve on the
+                    // physical network for us ("имя не найдено" from every service at once): try again.
+                    var ip: String? = null
+                    for (pause in DIRECT_RETRY_MS) {
+                        if (pause > 0) delay(pause)
+                        ip = firstOf((GeoIp.RUSSIAN_SELF + GeoIp.CARRIER_SELF + GeoIp.CLOUDFLARE_TRACE).map { url ->
+                            suspend { ask(url, true, directLabel, 8_000, errors) }
+                        })
+                        if (ip != null) break
+                    }
+                    ip
                 }
             } else null
             val foreign = async { foreign() }
@@ -108,7 +116,7 @@ class VisibilityCheck(
             val ips = serverIps.await()
             var leak = false
             if (vpnUp && foreignIp != null && (ips.isNullOrEmpty() || foreignIp !in ips)) {
-                val directIp = withTimeoutOrNull(4_000) { direct?.await() }
+                val directIp = withTimeoutOrNull(12_000) { direct?.await() }
                 if (directIp != null && directIp.equals(foreignIp, ignoreCase = true)) {
                     // Possibly a request that raced a rebuilt tunnel: look once more before saying so.
                     Log.w(TAG, "foreign sites saw the direct address $foreignIp; checking again")
@@ -209,6 +217,8 @@ class VisibilityCheck(
 
     companion object {
         private const val TAG = "ParamneziaSeen"
+        /** Pauses before each try of the physical network (the first goes at once). */
+        private val DIRECT_RETRY_MS = listOf(0L, 1_500L, 3_000L)
 
         /** Distinct reasons, shortest first, e.g. "Яндекс: нет ответа; сеть телефона: HTTP 403". */
         internal fun summarize(errors: List<String>): String {
