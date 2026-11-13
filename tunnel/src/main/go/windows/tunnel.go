@@ -42,6 +42,8 @@ type tunnel struct {
 	since   time.Time
 	luid    atomic.Uint64
 	watches []winipcfg.ChangeCallback
+	// rebindIface binds fresh sockets (after rebind) to the physical interface again.
+	rebindIface func()
 }
 
 func (t *tunnel) up(s *upSpec) (err error) {
@@ -145,6 +147,7 @@ func (t *tunnel) downLocked() {
 		_ = w.Unregister()
 	}
 	t.watches = nil
+	t.rebindIface = nil
 	firewall.DisableFirewall()
 	if t.dev != nil {
 		t.dev.Close() // closes the tun device (and the Wintun adapter with it) and the bind
@@ -170,11 +173,19 @@ func (t *tunnel) status() response {
 // firewall: the soft reconnect, so traffic never leaves past the tunnel while it happens.
 func (t *tunnel) rebind() error {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.dev == nil {
+	dev, again := t.dev, t.rebindIface
+	t.mu.Unlock()
+	if dev == nil {
 		return errNotUp
 	}
-	return t.dev.BindUpdate()
+	if err := dev.BindUpdate(); err != nil {
+		return err
+	}
+	// The new sockets know nothing of the interface the old ones were bound to.
+	if again != nil {
+		again()
+	}
+	return nil
 }
 
 func (t *tunnel) set(uapi string) error {
@@ -268,6 +279,12 @@ func (t *tunnel) watchDefaultInterface(ours winipcfg.LUID) {
 		}
 	}
 	update()
+	t.rebindIface = func() {
+		mu.Lock()
+		last4, last6 = ^uint32(0), ^uint32(0)
+		mu.Unlock()
+		update()
+	}
 	if cb, err := winipcfg.RegisterRouteChangeCallback(func(n winipcfg.MibNotificationType, r *winipcfg.MibIPforwardRow2) {
 		if r != nil && r.DestinationPrefix.PrefixLength == 0 {
 			go update()

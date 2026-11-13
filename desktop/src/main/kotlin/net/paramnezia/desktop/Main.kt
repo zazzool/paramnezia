@@ -41,7 +41,7 @@ import java.time.LocalDateTime
  *   Paramnezia.exe --screenshots <dir>   render the screens with sample data (CI, no service needed)
  */
 fun main(args: Array<String>) {
-    if (args.firstOrNull() == "--screenshots") { Screenshots.render(File(args.getOrElse(1) { "screenshots" })); return }
+    if (args.firstOrNull() == "--screenshots") { Screenshots.render(File(args.getOrElse(1) { "screenshots" })); kotlin.system.exitProcess(0) }
     val opened = args.firstOrNull { it.endsWith(".vpn", true) || it.endsWith(".conf", true) }
         ?.let { f -> runCatching { File(f).readText().take(256 * 1024) }.getOrNull() }
         ?: args.firstOrNull { it.startsWith("vpn://") }
@@ -66,8 +66,12 @@ fun main(args: Array<String>) {
         val tunnel by TunnelRuntime.state.collectAsState()
         val icon = painterResource("paramnezia.png")
         val state = rememberWindowState(size = DpSize(440.dp, 860.dp), position = WindowPosition(Alignment.Center))
-        val quit = {
-            // The watchdog lives in this process: leaving without it would leave a tunnel nobody watches.
+        // The watchdog lives in the service, so the app may leave with the VPN on: the tunnel stays
+        // watched and repaired, and the app takes it over when it starts again. Leaving frees the
+        // app's whole Java runtime (a few hundred MB) for people who only want the VPN.
+        val quit = { exitApplication() }
+        val stopAndQuit = {
+            app.disconnect()
             runBlocking { withTimeoutOrNull(5_000) { app.tunnel.stopNow() } }
             exitApplication()
         }
@@ -85,7 +89,11 @@ fun main(args: Array<String>) {
                 if (tunnel is TunnelState.Down || tunnel is TunnelState.Failed) Item("Включить VPN", onClick = { app.connect() })
                 else Item("Выключить VPN", onClick = { app.disconnect() })
                 Separator()
-                Item("Выйти", onClick = quit)
+                if (tunnel is TunnelState.Down || tunnel is TunnelState.Failed) Item("Выйти", onClick = quit)
+                else {
+                    Item("Выйти (VPN продолжит работать)", onClick = quit)
+                    Item("Выключить VPN и выйти", onClick = stopAndQuit)
+                }
             },
         )
         Window(

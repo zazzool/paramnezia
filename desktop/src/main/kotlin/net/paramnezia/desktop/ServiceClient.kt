@@ -30,6 +30,8 @@ class ServiceClient(private val pipe: String = PIPE) {
     data class Request(
         val op: String,
         val up: UpSpec? = null,
+        /** Servers to fall back on, preferred first; the service switches by itself when one stays dead. */
+        val alternates: List<UpSpec>? = null,
         val uapi: String? = null,
         val block: String? = null,
         val direct: String? = null,
@@ -49,6 +51,21 @@ class ServiceClient(private val pipe: String = PIPE) {
         val socksUser: String? = null,
         val socksPass: String? = null,
         val version: String? = null,
+        val watch: Watch? = null,
+    )
+
+    /** What the service's watchdog knows (tunnel/src/main/go/windows/watch.go). */
+    @Serializable
+    data class Watch(
+        val verified: Boolean = false,
+        val repairing: Boolean = false,
+        val phase: String? = null,
+        val offline: Boolean = false,
+        val rttMs: Long = 0,
+        val reconnects: Int = 0,
+        val active: Int = 0,
+        val server: String? = null,
+        val session: Long = 0,
     )
 
     class ServiceException(message: String) : IOException(message)

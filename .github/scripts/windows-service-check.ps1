@@ -33,6 +33,23 @@ $svc = Get-Service ParamneziaTunnel
 for ($i = 0; $i -lt 30 -and $svc.Status -ne 'Running'; $i++) { Start-Sleep 1; $svc.Refresh() }
 if ($svc.Status -ne 'Running') { throw "service is $($svc.Status)" }
 
+Write-Host "== the packaged release app runs (ProGuard kept what it needs)"
+$shots = "$env:RUNNER_TEMP\pn-shots"
+$p = Start-Process "$app\Paramnezia.exe" -ArgumentList '--screenshots', $shots -PassThru
+if (-not $p.WaitForExit(180000)) { $p.Kill(); throw "the app did not finish its screenshots in 3 minutes" }
+$pngs = @(Get-ChildItem "$shots\*.png" -ErrorAction SilentlyContinue)
+if ($pngs.Count -lt 3) { throw "the packaged app rendered $($pngs.Count) screens (exit code $($p.ExitCode))" }
+Write-Host "rendered $($pngs.Count) screens"
+# A real start: state file (DPAPI through JNA), tray, service pipe. It must still run after 20 s.
+$p = Start-Process "$app\Paramnezia.exe" -ArgumentList '--minimized' -PassThru
+Start-Sleep 20
+$log = "$env:LOCALAPPDATA\Paramnezia\paramnezia.log"
+if ($p.HasExited) { Get-Content $log -Tail 40 -ErrorAction SilentlyContinue; throw "the app exited on start (code $($p.ExitCode))" }
+if (Select-String -Path $log -Pattern 'ClassNotFound|NoSuchMethod|NoClassDefFound|NoSuchField' -Quiet -ErrorAction SilentlyContinue) {
+    Get-Content $log -Tail 40; throw "classes missing in the release app"
+}
+Stop-Process -Id $p.Id -Force
+
 $v = Ask @{ op = 'version' }
 if (-not $v.ok -or -not $v.version) { throw "version failed" }
 
@@ -53,6 +70,31 @@ if (-not $route) { throw "route not set" }
 ping -n 2 -w 500 10.123.0.1 | Out-Null
 $st = Ask @{ op = 'status' }
 if ($st.stats -notmatch 'tx_bytes=[1-9]') { throw "no traffic went into the tunnel: $($st.stats)" }
+
+Write-Host "== watchdog in the service: a dead server is never 'connected', the service switches by itself"
+# The peer (192.0.2.1) never answers. The probe is pinned to the tunnel adapter, so even though only
+# 10.123.0.0/16 is routed into it, the runner's own internet must not make the tunnel look alive.
+$w = (Ask @{ op = 'status' }).watch
+if (-not $w) { throw "status has no watchdog part" }
+if ($w.verified) { throw "a tunnel to a dead server was reported as verified" }
+if ((Ask @{ op = 'rebind' }).ok -ne $true) { throw "rebind failed" }
+if ((Ask @{ op = 'recheck' }).ok -ne $true) { throw "recheck failed" }
+$b = @{ name = 'ci-b'; uapi = $uapi; addresses = @('10.123.0.3/32'); routes = @('10.123.0.0/16'); dnsServers = @() }
+$up = Ask @{ op = 'up'; up = @{ name = 'ci'; uapi = $uapi; addresses = @('10.123.0.2/32'); routes = @('10.123.0.0/16'); dnsServers = @() }; alternates = @($b) }
+if (-not $up.ok) { throw "up with a fallback server failed: $($up.error)" }
+# Two failed builds of 'ci' (20 s of probes each), then the next server: about 50 s.
+$switched = $false
+for ($i = 0; $i -lt 50; $i++) {
+    Start-Sleep 2
+    $st = Ask @{ op = 'status' }
+    if ($st.watch.active -eq 1 -and $st.watch.server -eq 'ci-b') { $switched = $true; break }
+}
+if (-not $switched) {
+    Get-Content "$env:ProgramData\Paramnezia\service.log" -Tail 30 -ErrorAction SilentlyContinue
+    throw "the service did not switch to the fallback server"
+}
+if (-not $st.up -or $st.watch.verified) { throw "after the switch: up=$($st.up) verified=$($st.watch.verified)" }
+if (-not (Select-String -Path "$env:ProgramData\Paramnezia\service.log" -Pattern 'rebuild "ci-b"' -Quiet)) { throw "service.log does not show the switch" }
 
 Write-Host "== direct proxy (the app's way around the tunnel)"
 $d = Ask @{ op = 'direct' }

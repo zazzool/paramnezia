@@ -92,6 +92,14 @@ compose.desktop {
             "-Xmx256m", "-XX:+UseSerialGC", "-XX:MinHeapFreeRatio=10", "-XX:MaxHeapFreeRatio=30",
             "-XX:TieredStopAtLevel=1", "-XX:ReservedCodeCacheSize=48m", "-Xss512k", "-Dfile.encoding=UTF-8",
         )
+        // Release build (createReleaseDistributable, used by the installer): unused Compose/Material
+        // and library classes removed, nothing renamed (desktop/proguard-rules.pro).
+        buildTypes.release.proguard {
+            isEnabled.set(true)
+            obfuscate.set(false)
+            optimize.set(false)
+            configurationFiles.from(project.file("proguard-rules.pro"))
+        }
         nativeDistributions {
             // The installer is built by Inno Setup (desktop/installer/paramnezia.iss); here only the app image.
             targetFormats(TargetFormat.Msi)

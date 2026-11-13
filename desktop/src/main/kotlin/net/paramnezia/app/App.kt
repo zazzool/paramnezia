@@ -185,6 +185,19 @@ class App(
         return profileSpec(profile)
     }
 
+    /**
+     * The other fleet servers to fall back on, healthy ones first, in manifest order; the service
+     * switches to them by itself when the current one stays dead (also while the app is closed).
+     */
+    override suspend fun alternateSpecs(primary: TunnelSpec): List<TunnelSpec> {
+        val member = fleet.member() ?: return emptyList()
+        val now = System.currentTimeMillis()
+        val others = member.tunnels().filter { it.first.id != primary.serverId }
+        val ordered = others.sortedBy { if (failover.isBlocked(it.first.id, now)) 1 else 0 }
+        val settings = repo.current.settings
+        return ordered.mapNotNull { (server, config) -> runCatching { specs.build(server.id, server.name, config, settings) }.getOrNull() }
+    }
+
     private fun profileSpec(p: StoredProfile): TunnelSpec? = runCatching {
         specs.build(p.id, p.name, WgQuick.parse(p.conf), repo.current.settings)
     }.getOrNull()

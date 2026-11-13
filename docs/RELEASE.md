@@ -96,15 +96,26 @@ git push origin main:release/v2.1.0
 
 Перезапуск упавшего выпуска безопасен: релиз и файлы перезаписываются (`--clobber`).
 
+## Списки обхода
+
+Отдельно от версий приложения: при изменении `app/src/main/assets/bypass/**` в `main` workflow `lists.yml`
+подписывает списки ключом релизов (`releasetool sign-lists`) и кладёт `lists-<версия>.txt` и `lists.json` в
+pre-release `bypass-lists` (он никогда не становится «latest»). Приложения забирают их сами раз в сутки.
+Запустить вручную: Actions → «Publish bypass lists» → Run workflow.
+
 ## `releasetool`
 
 ```
 releasetool keygen                                   # новый PN_RELEASE_SEED и публичный ключ
 releasetool pubkey                                   # публичный ключ из PN_RELEASE_SEED (проверка при выпуске)
+releasetool sign-lists --dir app/src/main/assets/bypass --url-base URL --out-dir D   # lists.json + lists-<версия>.txt
 releasetool sign --apk F --version-code N --version-name S --url URL… [--signer-sha256 HEX] [--package P] [--min-sdk N] [--notes S] --out release.json
 ```
 
 ## Сборки без релиза
+
+Публикуемый APK только для ARM (arm64-v8a, armeabi-v7a). Эмуляторный тест CI собирает тот же APK с x86_64
+(`-Pparamnezia.x86=true`); так же можно собрать для своего эмулятора.
 
 Каждый пуш в PR и в `main` собирает APK и кладёт свежие файлы в ветку `apk-builds`
 (`paramnezia-ci-release-debugkey.apk`, `paramnezia-ci-debug.apk`); там же они видны в артефактах запуска

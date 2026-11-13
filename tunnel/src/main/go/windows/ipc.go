@@ -23,9 +23,11 @@ import (
 const pipeSDDL = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)"
 
 type request struct {
-	Op string `json:"op"` // up, down, rebind, status, set, rules, direct, version
-	// up
-	Up *upSpec `json:"up,omitempty"`
+	Op string `json:"op"` // up, down, rebind, recheck, status, set, rules, direct, version
+	// up: the server to connect to, and the others to fall back on, preferred first. The service
+	// watches the tunnel itself and switches to the next one when a server stays dead.
+	Up         *upSpec   `json:"up,omitempty"`
+	Alternates []*upSpec `json:"alternates,omitempty"`
 	// set: a partial UAPI set on the running tunnel (keepalive)
 	UAPI string `json:"uapi,omitempty"`
 	// rules: DNS filter lists, one rule per line
@@ -64,11 +66,14 @@ type response struct {
 	SocksUser string `json:"socksUser,omitempty"`
 	SocksPass string `json:"socksPass,omitempty"`
 	Version   string `json:"version,omitempty"`
+	// status: what the service's watchdog knows (verified, repairing, which server is active).
+	Watch *watchStatus `json:"watch,omitempty"`
 }
 
 type server struct {
 	ln     net.Listener
 	tunnel *tunnel
+	watch  *supervisor
 	mu     sync.Mutex
 	direct *directProxy
 	wg     sync.WaitGroup
@@ -83,7 +88,8 @@ func startServer() (*server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &server{ln: ln, tunnel: &tunnel{}}
+	t := &tunnel{}
+	s := &server{ln: ln, tunnel: t, watch: newSupervisor(t)}
 	s.wg.Add(1)
 	go s.accept()
 	return s, nil
@@ -120,13 +126,26 @@ func (s *server) handle(r *request) response {
 		if r.Up == nil {
 			return response{Error: "no spec"}
 		}
+		s.watch.op.Lock()
+		defer s.watch.op.Unlock()
+		s.watch.stop()
 		if err := s.tunnel.up(r.Up); err != nil {
 			log.Printf("up %q: %v", r.Up.Name, err)
 			return fail(err)
 		}
-		log.Printf("up %q: %d routes", r.Up.Name, len(r.Up.Routes))
+		specs := []*upSpec{r.Up}
+		for _, a := range r.Alternates {
+			if a != nil && a.Name != r.Up.Name {
+				specs = append(specs, a)
+			}
+		}
+		s.watch.start(specs)
+		log.Printf("up %q: %d routes, %d fallback servers", r.Up.Name, len(r.Up.Routes), len(specs)-1)
 		return response{OK: true}
 	case "down":
+		s.watch.op.Lock()
+		defer s.watch.op.Unlock()
+		s.watch.stop()
 		s.tunnel.down()
 		log.Printf("down")
 		return response{OK: true}
@@ -136,8 +155,12 @@ func (s *server) handle(r *request) response {
 		}
 		log.Printf("rebind")
 		return response{OK: true}
+	case "recheck":
+		s.watch.recheck()
+		return response{OK: true}
 	case "status":
 		st := s.tunnel.status()
+		st.Watch = s.watch.status()
 		st.OK = true
 		st.Blocked = dnsfilter.Blocked()
 		return st
@@ -175,6 +198,7 @@ func (s *server) directProxy() (*directProxy, error) {
 
 func (s *server) close() {
 	s.ln.Close()
+	s.watch.stop()
 	s.tunnel.down()
 	s.mu.Lock()
 	if s.direct != nil {
