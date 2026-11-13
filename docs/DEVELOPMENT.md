@@ -43,7 +43,7 @@ tools/bypass-lists/  генератор списков «российское н
 | `fleet` | `Fleet`, `FleetManifest`, `FleetCrypto`, `Resilience` | админ/участник семейной группы, манифест, шифрование и подпись, выбор сервера, повышение резервного сервера |
 | `ota` | `Release` | релиз, подписанный ключом релизов, проверка, потоковая проверка SHA-256 |
 | `routing` | `BypassLists`, `RoutePlanner` | загрузка списков, план маршрутов в бюджете Android (3000) |
-| `net` | `IpPrefix`, `PrefixSet` | IPv4/IPv6 префиксы, вычитание множеств |
+| `net` | `IpPrefix`, `PrefixSet`, `LinkWatch`, `LinkProbe` | IPv4/IPv6 префиксы, вычитание множеств; решения сторожа соединения (проверка, лестница восстановления) и проба через туннель, общие для Android и Windows |
 | `profile` | `Profile` | `SshCredentials`, `Protocol` |
 
 ### deploy (`net.paramnezia.deploy`)
@@ -62,9 +62,9 @@ tools/bypass-lists/  генератор списков «российское н
 
 | Файл | Что делает |
 |---|---|
-| `ParamneziaVpnService.kt` | поднимает tun, передаёт fd в Go, сторож живости, keepalive по экрану |
+| `ParamneziaVpnService.kt` | поднимает tun (новый до остановки старого), передаёт fd в Go, проверка перед «Подключено» и сторож живости по `LinkWatch`, keepalive по экрану |
 | `TunnelSpec.kt` | `TunnelSpec`, `DnsPolicy`, `TunnelHost` (интерфейс к приложению), `TunnelRuntime` (состояние, статистика, здоровье) |
-| `AwgNative.kt` | JNI: `turnOn/turnOff/getConfig/setConfig/setDnsRules/dnsBlocked/ed25519*` |
+| `AwgNative.kt` | JNI: `turnOn/turnOff/rebind/getConfig/setConfig/setDnsRules/dnsBlocked/ed25519*` |
 | `go/api.go` | экспорт в C: запуск amneziawg-go на fd |
 | `go/dns.go` | DNS-фильтр внутри tun: блок, «российское напрямую», кэш |
 | `go/jni.c` | JNI-обвязка |

@@ -73,9 +73,9 @@ fun main(args: Array<String>) {
         }
         Tray(
             icon = icon,
-            tooltip = "Paramnezia: " + when (tunnel) {
+            tooltip = "Paramnezia: " + when (val t = tunnel) {
                 is TunnelState.Up -> "защищено"
-                is TunnelState.Connecting -> "подключение…"
+                is TunnelState.Connecting -> if (t.reconnecting) "восстановление связи…" else "подключение…"
                 is TunnelState.Failed -> "ошибка"
                 TunnelState.Down -> "выключено"
             },

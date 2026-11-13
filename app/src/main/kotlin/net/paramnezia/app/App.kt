@@ -80,7 +80,10 @@ class App : Application(), TunnelHost {
         val host = up?.let { serverHost(it.serverId) }
         val v = visibilityCheck.run(key, host, vpnUp = up != null, ruDirect = repo.current.settings.bypassRussia)
         // The tunnel may have changed while the check ran; a result for an old state is dropped.
-        if (key == visibilityKey()) _visibility.value = v
+        if (key != visibilityKey()) return
+        _visibility.value = v
+        // Foreign traffic went around the tunnel: let the watchdog probe and repair right away.
+        if (v.foreignLeak) TunnelRuntime.recheck()
     }
 
     /** Host (name or address) of a fleet server or a standalone profile. */

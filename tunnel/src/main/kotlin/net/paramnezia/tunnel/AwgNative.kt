@@ -25,6 +25,9 @@ object AwgNative {
     @JvmStatic external fun dnsBlocked(): Long
 
     @JvmStatic external fun turnOff(handle: Int)
+
+    /** Fresh UDP sockets for a running tunnel (0 = done); protect [socketV4]/[socketV6] again after. */
+    @JvmStatic external fun rebind(handle: Int): Int
     @JvmStatic external fun socketV4(handle: Int): Int
     @JvmStatic external fun socketV6(handle: Int): Int
     @JvmStatic external fun getConfig(handle: Int): String?

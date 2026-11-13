@@ -16,6 +16,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
@@ -54,6 +55,12 @@ data class Visibility(
     /** Why the Russian side is unknown, in a few words for the screen (null when it is known). */
     val russianError: String? = null,
     val foreignError: String? = null,
+    /**
+     * The VPN is on, yet foreign sites saw exactly the address the physical network has past the
+     * VPN: foreign traffic went around the tunnel. Shown as a warning, never as "foreign sites see
+     * Russia", and the tunnel is asked to check itself.
+     */
+    val foreignLeak: Boolean = false,
 ) {
     /** Split tunneling at work: the two kinds of sites see different addresses. */
     val split: Boolean get() = foreign != null && russian != null && foreign.ip != russian.ip
@@ -82,72 +89,97 @@ class VisibilityCheck(
 
     suspend fun run(key: String, serverHost: String?, vpnUp: Boolean = true, ruDirect: Boolean = true): Visibility = withContext(Dispatchers.IO) {
         coroutineScope {
-            val cf = async { get(GeoIp.CLOUDFLARE_TRACE)?.let(GeoIp::parseCloudflareTrace) }
-            val plain = GeoIp.SELF_PLAIN.map { url -> async { GeoIp.parsePlainIp(get(url)) } }
-            val ru = async { russian(vpnUp, ruDirect) }
+            val errors = java.util.concurrent.ConcurrentLinkedQueue<String>()
+            // The address the physical network has, asked past the VPN: what Russian sites see with
+            // split tunneling on, and the proof of a leak if foreign sites see the same one.
+            val direct: Deferred<String?>? = if (vpnUp) {
+                if (!net.hasDirect()) { errors += "$directLabel: не найдена"; null }
+                else probes.async {
+                    firstOf((GeoIp.RUSSIAN_SELF + GeoIp.CARRIER_SELF + GeoIp.CLOUDFLARE_TRACE).map { url ->
+                        suspend { ask(url, true, directLabel, 8_000, errors) }
+                    })
+                }
+            } else null
+            val foreign = async { foreign() }
+            val ru = async { russian(vpnUp, ruDirect, direct, errors) }
             val serverIps = async { serverHost?.let(::resolve) }
 
-            val cfAnswer = cf.await()
-            val foreignIp = GeoIp.pickIp(listOfNotNull(cfAnswer?.ip) + plain.awaitAll().filterNotNull())
+            var (cfAnswer, foreignIp) = foreign.await()
+            val ips = serverIps.await()
+            var leak = false
+            if (vpnUp && foreignIp != null && (ips.isNullOrEmpty() || foreignIp !in ips)) {
+                val directIp = withTimeoutOrNull(4_000) { direct?.await() }
+                if (directIp != null && directIp.equals(foreignIp, ignoreCase = true)) {
+                    // Possibly a request that raced a rebuilt tunnel: look once more before saying so.
+                    Log.w(TAG, "foreign sites saw the direct address $foreignIp; checking again")
+                    delay(2_500)
+                    val again = foreign()
+                    if (again.second != null) { cfAnswer = again.first; foreignIp = again.second }
+                    leak = directIp.equals(foreignIp, ignoreCase = true)
+                }
+            }
             val probe = ru.await()
             var russianIp = probe.ip
             var source = probe.source
-            if (russianIp == null && (!vpnUp || !ruDirect) && foreignIp != null) { russianIp = foreignIp; source = RuSource.SAME }
+            if (russianIp == null && (!vpnUp || !ruDirect) && foreignIp != null && !leak) { russianIp = foreignIp; source = RuSource.SAME }
             if (russianIp != null && russianIp == foreignIp && source == RuSource.YANDEX && (!vpnUp || !ruDirect)) source = RuSource.SAME
-            Log.i(TAG, "foreign=${foreignIp ?: "-"} russian=${russianIp ?: "-"} via=$source vpn=$vpnUp ruDirect=$ruDirect" +
+            Log.i(TAG, "foreign=${foreignIp ?: "-"} russian=${russianIp ?: "-"} via=$source vpn=$vpnUp ruDirect=$ruDirect leak=$leak" +
                 (if (russianIp == null) " errors=${probe.errors}" else ""))
 
-            val foreignGeo = async { foreignIp?.let { geo(it, cfAnswer?.takeIf { a -> a.ip.equals(it, true) }) } }
-            val russianGeo = async { russianIp?.let { if (it == foreignIp) null else geo(it, null) } }
-            val f = foreignIp?.let { SeenAddress(it, foreignGeo.await()) }
-            val r = russianIp?.let { ip -> if (ip == foreignIp) f else SeenAddress(ip, russianGeo.await()) }
-            val ips = serverIps.await()
+            val fIp = foreignIp
+            val foreignGeo = async { fIp?.let { geo(it, cfAnswer?.takeIf { a -> a.ip.equals(it, true) }) } }
+            val russianGeo = async { russianIp?.let { if (it == fIp) null else geo(it, null) } }
+            val f = fIp?.let { SeenAddress(it, foreignGeo.await()) }
+            val r = russianIp?.let { ip -> if (ip == fIp) f else SeenAddress(ip, russianGeo.await()) }
             Visibility(
                 f, r, System.currentTimeMillis(), key,
                 foreignIsServer = if (ips.isNullOrEmpty() || f == null) null else f.ip in ips,
                 russianSource = if (r != null) source else null,
                 russianError = if (r == null) probe.errors else null,
                 foreignError = if (f == null) "нет ответа от сервисов проверки" else null,
+                foreignLeak = leak,
             )
         }
     }
 
+    /** Cloudflare's view plus plain "what is my IP" services, the way any app's traffic goes. */
+    private suspend fun foreign(): Pair<GeoAnswer?, String?> = coroutineScope {
+        val cf = async { get(GeoIp.CLOUDFLARE_TRACE)?.let(GeoIp::parseCloudflareTrace) }
+        val plain = GeoIp.SELF_PLAIN.map { url -> async { GeoIp.parsePlainIp(get(url)) } }
+        val cfAnswer = cf.await()
+        cfAnswer to GeoIp.pickIp(listOfNotNull(cfAnswer?.ip) + plain.awaitAll().filterNotNull())
+    }
+
     private class RuProbe(val ip: String?, val source: RuSource?, val errors: String?)
 
-    private suspend fun russian(vpnUp: Boolean, ruDirect: Boolean): RuProbe {
-        val errors = java.util.concurrent.ConcurrentLinkedQueue<String>()
-        fun ask(url: String, direct: Boolean, label: String, timeoutMs: Int): String? {
-            val res = net.fetch(url, direct, timeoutMs = timeoutMs)
-            val ip = if (url == GeoIp.CLOUDFLARE_TRACE) res.body?.let(GeoIp::parseCloudflareTrace)?.ip?.takeIf(GeoIp::isPublicIp)
-                else GeoIp.parsePlainIp(res.body)
-            if (ip == null) {
-                // Yandex answers "127.0.0.1" to requests it does not want to tell the address to
-                // (that is what made the Russian side always fail): a real answer, just not an address.
-                val why = res.error ?: if (res.body?.trim()?.trim('"')?.startsWith("127.") == true) "скрыл адрес" else "непонятный ответ"
-                errors += "$label: $why"
-                Log.i(TAG, "$label $url: $why${res.body?.let { " «" + it.take(80).replace('\n', ' ') + "»" } ?: ""}")
-            }
-            return ip
+    private fun ask(url: String, direct: Boolean, label: String, timeoutMs: Int, errors: MutableCollection<String>): String? {
+        val res = net.fetch(url, direct, timeoutMs = timeoutMs)
+        val ip = if (url == GeoIp.CLOUDFLARE_TRACE) res.body?.let(GeoIp::parseCloudflareTrace)?.ip?.takeIf(GeoIp::isPublicIp)
+            else GeoIp.parsePlainIp(res.body)
+        if (ip == null) {
+            // Yandex answers "127.0.0.1" to requests it does not want to tell the address to
+            // (that is what made the Russian side always fail): a real answer, just not an address.
+            val why = res.error ?: if (res.body?.trim()?.trim('"')?.startsWith("127.") == true) "скрыл адрес" else "непонятный ответ"
+            errors += "$label: $why"
+            Log.i(TAG, "$label $url: $why${res.body?.let { " «" + it.take(80).replace('\n', ' ') + "»" } ?: ""}")
         }
-        val yandex = GeoIp.RUSSIAN_SELF.map { url -> suspend { ask(url, false, "Яндекс", 8_000) } }
-        // Past the VPN: only meaningful while the tunnel is up and Russian sites are split off.
-        val carrier: Deferred<String?>? = if (vpnUp && ruDirect) {
-            if (!net.hasDirect()) { errors += "$directLabel: не найдена"; null }
-            else probes.async {
-                firstOf((GeoIp.RUSSIAN_SELF + GeoIp.CARRIER_SELF + GeoIp.CLOUDFLARE_TRACE).map { url ->
-                    suspend { ask(url, true, directLabel, 8_000) }
-                })
-            }
-        } else if (!vpnUp) probes.async {
+        return ip
+    }
+
+    private suspend fun russian(vpnUp: Boolean, ruDirect: Boolean, direct: Deferred<String?>?, errors: MutableCollection<String>): RuProbe {
+        val yandex = GeoIp.RUSSIAN_SELF.map { url -> suspend { ask(url, false, "Яндекс", 8_000, errors) } }
+        // Past the VPN: what Russian sites see only while the tunnel is up and they are split off.
+        val carrier: Deferred<String?>? = if (vpnUp && ruDirect) direct
+        else if (!vpnUp) probes.async {
             // No tunnel: every site sees the same address, any service will do.
-            firstOf((GeoIp.CARRIER_SELF + GeoIp.CLOUDFLARE_TRACE).map { url -> suspend { ask(url, false, "сервисы проверки", 8_000) } })
+            firstOf((GeoIp.CARRIER_SELF + GeoIp.CLOUDFLARE_TRACE).map { url -> suspend { ask(url, false, "сервисы проверки", 8_000, errors) } })
         } else null
 
         firstOf(yandex)?.let { return RuProbe(it, RuSource.YANDEX, null) }
         carrier?.await()?.let { return RuProbe(it, if (vpnUp) RuSource.CARRIER else RuSource.SAME, null) }
         // A second try at Yandex: the first one may have raced the tunnel's own start.
         delay(1_000)
-        firstOf(GeoIp.RUSSIAN_SELF.map { url -> suspend { ask(url, false, "Яндекс (повтор)", 12_000) } })?.let { return RuProbe(it, RuSource.YANDEX, null) }
+        firstOf(GeoIp.RUSSIAN_SELF.map { url -> suspend { ask(url, false, "Яндекс (повтор)", 12_000, errors) } })?.let { return RuProbe(it, RuSource.YANDEX, null) }
         return RuProbe(null, null, summarize(errors.toList()))
     }
 

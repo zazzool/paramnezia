@@ -183,6 +183,22 @@ func pnSetConfig(handle int32, settings string) int32 {
 	return 0
 }
 
+// pnRebind replaces the tunnel's UDP sockets with fresh ones, keeping the interface, keys and
+// sessions: the cheap first cure for a stuck NAT binding or a socket left on a network that is gone.
+// The new sockets must be protected from the VPN again (pnGetSocketV4/V6).
+//
+//export pnRebind
+func pnRebind(handle int32) int32 {
+	dev := get(handle)
+	if dev == nil {
+		return -1
+	}
+	if err := dev.BindUpdate(); err != nil {
+		return -2
+	}
+	return 0
+}
+
 func udpFromFd(fd int) (*net.UDPConn, error) {
 	f := os.NewFile(uintptr(fd), "pn-dns-direct")
 	defer f.Close() // FileConn dups the descriptor

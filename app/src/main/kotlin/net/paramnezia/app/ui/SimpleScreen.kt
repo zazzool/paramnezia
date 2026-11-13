@@ -47,7 +47,8 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
     var details by remember { mutableStateOf(false) }
     val update by app.updater.status.collectAsState()
     val servers = rememberServerCount(app)
-    val p = protection(tunnel, servers)
+    val health by TunnelRuntime.health.collectAsState()
+    val p = protection(tunnel, servers, health)
     val platform = LocalUiPlatform.current
     val paste = rememberPasteKey(app) { platform.toast(it) }
 

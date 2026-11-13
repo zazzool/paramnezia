@@ -269,7 +269,9 @@ fun InfoPanel(app: App, tunnel: TunnelState, onMore: () -> Unit) {
         modifier = Modifier.fillMaxWidth().edge(MaterialTheme.shapes.large).clip(MaterialTheme.shapes.large).tactile(onClick = onMore),
     ) {
         Column(Modifier.padding(horizontal = Space.M, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(Space.S)) {
-            PlaceLine("Зарубежные сайты", v?.foreign, loading, if (up) Brand.Mint else null, v?.foreignError)
+            val leak = up && v?.foreignLeak == true
+            PlaceLine("Зарубежные сайты", v?.foreign, loading, if (leak) Brand.Coral else if (up) Brand.Mint else null,
+                if (leak) "видят настоящий адрес — проверяю соединение" else v?.foreignError, showError = leak)
             PlaceLine("Российские сайты", v?.russian, loading, null, v?.russianError)
             if (up) {
                 Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)))
@@ -290,7 +292,7 @@ fun InfoPanel(app: App, tunnel: TunnelState, onMore: () -> Unit) {
 
 /** Flag, "who · address" in small type, and the country in body type: the country is what people read. */
 @Composable
-private fun PlaceLine(who: String, a: net.paramnezia.app.net.SeenAddress?, loading: Boolean, accent: Color?, error: String?) {
+private fun PlaceLine(who: String, a: net.paramnezia.app.net.SeenAddress?, loading: Boolean, accent: Color?, error: String?, showError: Boolean = false) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(a?.let { VisibilityCheck.flag(it.countryCode) } ?: "🌐", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.width(12.dp))
@@ -308,8 +310,8 @@ private fun PlaceLine(who: String, a: net.paramnezia.app.net.SeenAddress?, loadi
                 MaterialTheme.typography.bodyLarge, min = 12.sp,
             )
             // The real reason, not a bare "failed": which services were asked and what each said.
-            if (a == null && !loading && error != null) {
-                Text(error, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+            if ((a == null || showError) && !loading && error != null) {
+                Text(error, style = MaterialTheme.typography.labelSmall, color = if (showError) Brand.Coral else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
             }
         }
     }
@@ -327,23 +329,34 @@ private fun Metric(icon: String, value: String, accent: Color, modifier: Modifie
 /** Big status title and its subtitle, under the button. */
 @Composable
 fun StatusBlock(tunnel: TunnelState, p: Protection) {
+    val health by TunnelRuntime.health.collectAsState()
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(tunnel) { while (tunnel is TunnelState.Up) { now = System.currentTimeMillis(); delay(1_000) } }
+    val repairing = (tunnel as? TunnelState.Connecting)?.reconnecting == true
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         FitText(
             when (p) {
                 Protection.ON -> "Защищено"
-                Protection.CONNECTING -> "Подключаюсь…"
+                Protection.UNSTABLE -> if (health.offline) "Нет интернета" else "Связь нестабильна"
+                Protection.CONNECTING -> if (repairing) "Переподключаюсь…" else "Подключаюсь…"
                 Protection.FAILED -> "Нет соединения"
                 Protection.OFF -> "VPN выключен"
                 Protection.NO_SERVER -> "Нет ни одного сервера"
             },
             MaterialTheme.typography.headlineMedium, align = TextAlign.Center, min = 18.sp,
-            color = when (p) { Protection.ON, Protection.CONNECTING, Protection.FAILED -> protectionColor(p); else -> MaterialTheme.colorScheme.onSurface },
+            color = when (p) { Protection.ON, Protection.UNSTABLE, Protection.CONNECTING, Protection.FAILED -> protectionColor(p); else -> MaterialTheme.colorScheme.onSurface },
         )
         Spacer(Modifier.height(4.dp))
         FitText(
-            if (tunnel is TunnelState.Up) "${formatDuration(now - tunnel.since)} · ${tunnel.serverName}" else tapHint(p),
+            when {
+                tunnel is TunnelState.Up && p == Protection.UNSTABLE ->
+                    if (health.offline) "Жду сеть · ${tunnel.serverName}" else "Проверяю и восстанавливаю · ${tunnel.serverName}"
+                tunnel is TunnelState.Up -> "${formatDuration(now - tunnel.since)} · ${tunnel.serverName}"
+                tunnel is TunnelState.Connecting && health.offline -> "Жду сеть · ${tunnel.serverName}"
+                tunnel is TunnelState.Connecting && repairing -> "Связь прервалась, восстанавливаю · ${tunnel.serverName}"
+                tunnel is TunnelState.Connecting -> "Проверяю связь с сервером · ${tunnel.serverName}"
+                else -> tapHint(p)
+            },
             MaterialTheme.typography.bodyMedium.merge(TabularNumbers), align = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant, min = 10.sp,
         )

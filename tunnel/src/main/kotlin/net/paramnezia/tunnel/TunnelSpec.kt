@@ -67,9 +67,15 @@ interface TunnelHost {
     fun onServerHealthy(spec: TunnelSpec) {}
 }
 
+/**
+ * What the user should be told. [Up] means proven: a probe came back through the tunnel after it was
+ * built, never merely "the interface exists". While a fresh or rebuilt tunnel is being verified the
+ * state is [Connecting]; [Connecting.reconnecting] says it is a repair of a session that worked.
+ */
 sealed interface TunnelState {
     data object Down : TunnelState
-    data class Connecting(val serverName: String) : TunnelState
+    data class Connecting(val serverName: String, val reconnecting: Boolean = false) : TunnelState
+    /** [since]: start of the session; automatic repairs of the same server keep it. */
     data class Up(val serverName: String, val serverId: String, val since: Long) : TunnelState
     data class Failed(val reason: String) : TunnelState
 }
@@ -82,6 +88,10 @@ data class TunnelHealth(
     val checkedAt: Long = 0,
     val reconnects: Int = 0,
     val lastReconnectAt: Long = 0,
+    /** The last probe got no answer; the watchdog is repairing (traffic stays in the tunnel meanwhile). */
+    val unstable: Boolean = false,
+    /** The device itself has no working network: nothing to repair until it comes back. */
+    val offline: Boolean = false,
 )
 
 object TunnelRuntime {
@@ -97,6 +107,10 @@ object TunnelRuntime {
     val health: StateFlow<TunnelHealth> = _health.asStateFlow()
     internal fun setRtt(ms: Long) { _health.value = _health.value.copy(rttMs = ms, checkedAt = System.currentTimeMillis()) }
     internal fun noteReconnect() { _health.value = _health.value.copy(reconnects = _health.value.reconnects + 1, lastReconnectAt = System.currentTimeMillis()) }
+    internal fun setLink(unstable: Boolean, offline: Boolean) {
+        val h = _health.value
+        if (h.unstable != unstable || h.offline != offline) _health.value = h.copy(unstable = unstable, offline = offline)
+    }
 
     private val _generation = MutableStateFlow(0)
     /** Changes on every successful (re)connect: a signal to refresh what depends on the route. */
@@ -117,6 +131,12 @@ object TunnelRuntime {
 
     /** Rebuilds the tunnel with a fresh spec from the host (after a manifest or settings change). */
     fun reload() { service?.reload() }
+
+    /**
+     * Something outside the watchdog saw a problem (e.g. a site saw the real address): probe now and
+     * repair if needed. Costs one tiny probe when all is well.
+     */
+    fun recheck() { service?.recheck() }
 
     /**
      * The validated physical network, bypassing our VPN. Bind sockets to it (OkHttp

@@ -64,7 +64,8 @@ fun TunnelState.power(): PowerState = when (this) {
 fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer: () -> Unit, onOpen: (Tab) -> Unit = {}) {
     val tunnel by TunnelRuntime.state.collectAsState()
     val servers = rememberServerCount(app)
-    val p = protection(tunnel, servers)
+    val health by TunnelRuntime.health.collectAsState()
+    val p = protection(tunnel, servers, health)
     val platform = LocalUiPlatform.current
     val paste = rememberPasteKey(app) { platform.toast(it) }
     var details by remember { mutableStateOf(false) }
@@ -109,6 +110,7 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer:
 private fun TopBar(app: App, tunnel: TunnelState, servers: Int, onDetails: () -> Unit) {
     val state by app.repo.state.collectAsState()
     val update by app.updater.status.collectAsState()
+    val health by TunnelRuntime.health.collectAsState()
     var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
         Wordmark(Modifier.weight(1f))
@@ -121,7 +123,7 @@ private fun TopBar(app: App, tunnel: TunnelState, servers: Int, onDetails: () ->
         val server = when (tunnel) { is TunnelState.Up -> tunnel.serverName; is TunnelState.Connecting -> tunnel.serverName; else -> null }
         val pickable = state.fleet == null && state.profiles.size > 1
         val (label, dot) = when {
-            server != null -> server to (if (tunnel is TunnelState.Up) Brand.Mint else Brand.Amber)
+            server != null -> server to (if (tunnel is TunnelState.Up && !health.unstable && !health.offline) Brand.Mint else Brand.Amber)
             servers == 0 -> "нет сервера" to Brand.Coral
             pickable -> (state.profiles.firstOrNull { it.id == state.activeProfile } ?: state.profiles.first()).name to MaterialTheme.colorScheme.outline
             else -> "серверов: $servers" to MaterialTheme.colorScheme.outline

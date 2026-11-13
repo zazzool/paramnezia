@@ -12,11 +12,11 @@ import net.paramnezia.app.platform.Log
 import net.paramnezia.tunnel.TunnelRuntime
 import net.paramnezia.tunnel.TunnelSpec
 import net.paramnezia.tunnel.TunnelState
-import net.paramnezia.tunnel.TunnelStats
-import java.net.DatagramPacket
-import java.net.DatagramSocket
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import net.paramnezia.core.net.LinkProbe
+import net.paramnezia.core.net.LinkWatch
 import java.net.Inet4Address
-import java.net.InetAddress
 import java.net.NetworkInterface
 
 /** The app side of the tunnel: which server to use, and what to do when one stops answering. */
@@ -27,10 +27,11 @@ interface TunnelHost {
 }
 
 /**
- * Drives the tunnel in the Paramnezia service, with the same watchdog as the Android VPN service:
- * it reads the tunnel's counters once a minute (no network traffic), and only when they look wrong
- * (stale handshake, sent without reply) sends one DNS probe through the tunnel. No answer: the
- * tunnel is rebuilt with fresh sockets; after two failures in a row the host picks another server.
+ * Drives the tunnel in the Paramnezia service with the same watchdog as the Android VPN service
+ * ([LinkWatch]): "connected" only after a probe came back through the new tunnel; then the counters
+ * are read once a minute (no network traffic), traffic that came back proves the path, an idle
+ * tunnel gets one tiny probe. Failures in a row: a second look, fresh sockets in the same tunnel
+ * (the adapter, its routes and firewall stay, so nothing leaks), a full rebuild, another server.
  */
 class TunnelEngine(
     private val client: ServiceClient,
@@ -41,14 +42,18 @@ class TunnelEngine(
     private val lock = Mutex()
     private var spec: TunnelSpec? = null
     private var running = false
-    private var lastCheck: TunnelStats? = null
-    private var failures = 0
+    private var sessionSince = 0L
+    private val watch = LinkWatch()
     private var startFailures = 0
     private var check: Job? = null
     private var retry: Job? = null
 
+    init {
+        TunnelRuntime.onRecheck = { scope.launch { lock.withLock { if (running) { watch.suspect(); scheduleCheck(0) } } } }
+    }
+
     fun start() { scope.launch { lock.withLock { connect(host.currentSpec()) } } }
-    fun reload() { scope.launch { lock.withLock { if (running || spec != null) connect(host.currentSpec()) } } }
+    fun reload() { scope.launch { lock.withLock { if (running || spec != null) connect(host.currentSpec(), reconnecting = running, quiet = true) } } }
     fun stop() { scope.launch { lock.withLock { down() } } }
 
     /** Synchronous stop for app exit. */
@@ -69,24 +74,29 @@ class TunnelEngine(
         }
     }
 
-    private suspend fun connect(next: TunnelSpec?) {
+    /** See the Android service: [quiet] keeps "connected" on screen while a deliberate rebuild is verified. */
+    private suspend fun connect(next: TunnelSpec?, reconnecting: Boolean = false, quiet: Boolean = false) {
         if (next == null) {
             down()
             TunnelRuntime.set(TunnelState.Failed("no_profile"))
             return
         }
-        TunnelRuntime.set(TunnelState.Connecting(next.serverName))
+        val sameServer = spec?.serverId == next.serverId
+        val keepUp = quiet && sameServer && (TunnelRuntime.state.value as? TunnelState.Up)?.serverId == next.serverId
+        if (!keepUp) TunnelRuntime.set(TunnelState.Connecting(next.serverName, reconnecting = reconnecting && running))
+        check?.cancel()
         try {
             val req = specs.request(next, next.keepaliveActive)
             client.call(ServiceClient.Request("up", up = req))
             running = true
             spec = next
-            lastCheck = null
             startFailures = 0
             retry?.cancel()
-            TunnelRuntime.set(TunnelState.Up(next.serverName, next.serverId, System.currentTimeMillis()))
-            TunnelRuntime.bumpGeneration()
-            scheduleCheck(FIRST_CHECK_MS)
+            val now = System.currentTimeMillis()
+            if (!(reconnecting && sameServer) || sessionSince == 0L) sessionSince = now
+            watch.started(now, sameServer = reconnecting && sameServer)
+            TunnelRuntime.setLink(unstable = reconnecting && !keepUp, offline = false)
+            scheduleCheck(VERIFY_FIRST_MS)
         } catch (e: Exception) {
             Log.e(TAG, "connect failed", e)
             running = false
@@ -108,7 +118,9 @@ class TunnelEngine(
         if (running) runCatching { client.call(ServiceClient.Request("down")) }.onFailure { Log.w(TAG, "down: ${it.message}") }
         running = false
         spec = null
+        sessionSince = 0
         TunnelRuntime.lastStats = null
+        TunnelRuntime.setLink(unstable = false, offline = false)
         TunnelRuntime.set(TunnelState.Down)
     }
 
@@ -119,84 +131,95 @@ class TunnelEngine(
 
     private suspend fun checkHealth() {
         val current = spec ?: return
-        val now = withTimeoutOrNull(5_000) {
+        if (!running) {
+            if (!networkUp()) { offline(); return }
+            rebuild(current)
+            return
+        }
+        val counters = withTimeoutOrNull(5_000) {
             runCatching { client.call(ServiceClient.Request("status")) }.getOrNull()?.takeIf { it.up }?.let { r ->
                 TunnelRuntime.lastBlocked = r.blocked
                 r.stats?.let(TunnelRuntime::parseStats)?.also { TunnelRuntime.lastStats = it }
             }
         }
-        if (now == null) {
-            // The service lost the tunnel (restarted, crashed): build it again once there is a network.
-            if (!networkUp()) { scheduleCheck(WATCH_MS); return }
-            failures++
-            forceReconnect(host.currentSpec() ?: current, "not_running")
-            return
+        if (counters == null && !networkUp()) { offline(); return }
+        // The computer counts as "in use" while the app runs: Windows has no screen-off state for us.
+        var action = watch.onCounters(System.currentTimeMillis(), counters?.let { LinkWatch.Counters(it.rxBytes, it.txBytes, it.lastHandshakeEpochSec) }, ACTIVE)
+        if (action == LinkWatch.Action.Probe) {
+            if (!networkUp()) { offline(); return }
+            val rtt = withContext(Dispatchers.IO) { LinkProbe.run(probeTargets(current)) }
+            action = watch.onProbe(System.currentTimeMillis(), rtt, ACTIVE)
+            watch.rttMs?.takeIf { rtt != null }?.let(TunnelRuntime::setRtt)
+            if (rtt == null) Log.w(TAG, "${current.serverName}: no reply (${watch.phase}, failure ${watch.failures}, builds ${watch.failedBuilds})")
         }
-        val prev = lastCheck
-        lastCheck = now
-        val handshakeAge = if (now.lastHandshakeEpochSec == 0L) Long.MAX_VALUE else System.currentTimeMillis() / 1000 - now.lastHandshakeEpochSec
-        val sentWithoutReply = prev != null && now.txBytes > prev.txBytes && now.rxBytes == prev.rxBytes
-        if (handshakeAge <= DEAD_AFTER_SEC && !sentWithoutReply) { alive(current); return }
-        if (!networkUp()) { scheduleCheck(WATCH_MS); return }
-        val rtt = probe(current)
-        if (rtt != null) { TunnelRuntime.setRtt(rtt); alive(current); return }
-        failures++
-        Log.w(TAG, "${current.serverName}: no reply (handshake ${handshakeAge}s ago, failure $failures)")
-        if (failures >= FAILOVER_AFTER) {
-            val replacement = host.onServerUnreachable(current)
-            if (replacement != null && replacement.serverId != current.serverId) { failures = 0; connect(replacement); return }
-        }
-        forceReconnect(host.currentSpec() ?: current, "dead")
+        act(current, action)
     }
 
-    private suspend fun alive(current: TunnelSpec) {
-        failures = 0
-        host.onServerHealthy(current)
-        // A cheap probe now and then keeps the ping on the home screen meaningful.
-        if (System.currentTimeMillis() - TunnelRuntime.health.value.checkedAt > WATCH_MS * 5) probe(current)?.let(TunnelRuntime::setRtt)
-        scheduleCheck(WATCH_MS)
+    private fun offline() {
+        TunnelRuntime.setLink(unstable = TunnelRuntime.health.value.unstable, offline = true)
+        scheduleCheck(watch.offline(ACTIVE).ms)
     }
 
-    private suspend fun forceReconnect(next: TunnelSpec, reason: String) {
-        Log.i(TAG, "force reconnect to ${next.serverName}: $reason")
+    private suspend fun act(current: TunnelSpec, action: LinkWatch.Action) {
+        TunnelRuntime.setLink(unstable = watch.phase == LinkWatch.Phase.UNSTABLE, offline = false)
+        when (action) {
+            is LinkWatch.Action.Wait -> {
+                // Fleet devices pick up the admin's changes within the hour while the tunnel works.
+                if (watch.phase == LinkWatch.Phase.GOOD) host.onServerHealthy(current)
+                scheduleCheck(action.ms)
+            }
+            LinkWatch.Action.Probe -> scheduleCheck(0)
+            is LinkWatch.Action.Verified -> {
+                TunnelRuntime.set(TunnelState.Up(current.serverName, current.serverId, sessionSince))
+                TunnelRuntime.bumpGeneration()
+                host.onServerHealthy(current)
+                scheduleCheck(action.ms)
+            }
+            is LinkWatch.Action.Rebind -> {
+                Log.i(TAG, "${current.serverName}: fresh sockets")
+                runCatching { client.call(ServiceClient.Request("rebind")) }
+                    .onSuccess { TunnelRuntime.noteReconnect() }
+                    .onFailure { Log.w(TAG, "rebind: ${it.message}") }
+                watch.rebound()
+                scheduleCheck(action.ms)
+            }
+            is LinkWatch.Action.Rebuild -> rebuildAfter(current, action.delayMs)
+            is LinkWatch.Action.Failover -> {
+                val replacement = host.onServerUnreachable(current)
+                if (replacement != null && replacement.serverId != current.serverId) {
+                    Log.i(TAG, "switching to ${replacement.serverName}")
+                    TunnelRuntime.noteReconnect()
+                    connect(replacement, reconnecting = true)
+                } else rebuildAfter(current, action.delayMs)
+            }
+        }
+    }
+
+    private suspend fun rebuildAfter(current: TunnelSpec, delayMs: Long) {
+        if (delayMs <= 0) { rebuild(current); return }
+        // The old tunnel stays meanwhile: programs wait instead of going around it.
+        TunnelRuntime.set(TunnelState.Connecting(current.serverName, reconnecting = true))
+        check?.cancel()
+        check = scope.launch { delay(delayMs); if (isActive) lock.withLock { spec?.let { rebuild(it) } } }
+    }
+
+    private suspend fun rebuild(current: TunnelSpec) {
+        val next = host.currentSpec() ?: current
+        Log.i(TAG, "rebuild ${next.serverName}")
         TunnelRuntime.noteReconnect()
-        connect(next)
-        if (!running) scheduleCheck(minOf(RETRY_BASE_MS shl minOf(failures, 4), WATCH_MAX_MS))
+        connect(next, reconnecting = true)
+        if (!running) scheduleCheck(minOf(RETRY_BASE_MS shl minOf(watch.failedBuilds, 4), WATCH_MAX_MS))
     }
 
-    /** One DNS query to a foreign resolver, routed through the tunnel. Round trip in ms, or null. */
-    private fun probe(s: TunnelSpec): Long? {
-        val targets = (s.dns?.tunnel.orEmpty() + PROBE_RESOLVERS).distinct().filter { ':' !in it }.take(3)
-        for (attempt in 0 until 2) for (t in targets) {
-            val rtt = runCatching {
-                DatagramSocket().use { socket ->
-                    socket.soTimeout = PROBE_TIMEOUT_MS
-                    val q = PROBE_QUERY.copyOf().also { val id = (System.nanoTime() and 0xffff).toInt(); it[0] = (id shr 8).toByte(); it[1] = id.toByte() }
-                    val started = System.nanoTime()
-                    socket.send(DatagramPacket(q, q.size, InetAddress.getByName(t), 53))
-                    val buf = ByteArray(512)
-                    val reply = DatagramPacket(buf, buf.size)
-                    socket.receive(reply)
-                    if (reply.length >= 12 && buf[0] == q[0] && buf[1] == q[1]) (System.nanoTime() - started) / 1_000_000 else null
-                }
-            }.getOrNull()
-            if (rtt != null) return rtt
-        }
-        return null
-    }
+    private fun probeTargets(s: TunnelSpec): List<String> = (s.dns?.tunnel.orEmpty() + LinkProbe.DNS_TARGETS).distinct()
 
     companion object {
         private const val TAG = "PnTunnel"
-        private const val FIRST_CHECK_MS = 20_000L
-        private const val WATCH_MS = 60_000L
+        private const val VERIFY_FIRST_MS = 150L
+        private const val ACTIVE = true
         private const val WATCH_MAX_MS = 15 * 60_000L
         private const val RETRY_BASE_MS = 10_000L
         private const val MAX_START_RETRIES = 8
-        private const val DEAD_AFTER_SEC = 180L
-        private const val FAILOVER_AFTER = 2
-        private const val PROBE_TIMEOUT_MS = 3_000
-        private val PROBE_RESOLVERS = listOf("1.1.1.1", "8.8.8.8", "9.9.9.9")
-        private val PROBE_QUERY = byteArrayOf(0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1)
 
         /** Some physical adapter is up with a usable IPv4 address (ours does not count). */
         fun networkUp(): Boolean = runCatching {

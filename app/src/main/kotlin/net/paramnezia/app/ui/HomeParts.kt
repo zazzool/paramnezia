@@ -61,6 +61,7 @@ import net.paramnezia.app.net.Visibility
 import net.paramnezia.app.net.VisibilityCheck
 import net.paramnezia.app.net.RuSource
 import net.paramnezia.app.net.countryName
+import net.paramnezia.tunnel.TunnelHealth
 import net.paramnezia.tunnel.TunnelRuntime
 import net.paramnezia.tunnel.TunnelState
 
@@ -73,10 +74,15 @@ fun rememberServerCount(app: App): Int {
 
 /** Protection state in one word, for the pill above the button. */
 enum class Protection(val label: String) {
-    ON("Защищено"), CONNECTING("Подключение…"), OFF("Не защищено"), FAILED("Нет соединения"), NO_SERVER("Нет сервера")
+    ON("Защищено"), UNSTABLE("Нестабильно"), CONNECTING("Подключение…"), OFF("Не защищено"), FAILED("Нет соединения"), NO_SERVER("Нет сервера")
 }
 
-fun protection(tunnel: TunnelState, servers: Int): Protection = when {
+/**
+ * [TunnelState.Up] is already proven by a probe; [TunnelHealth.unstable] / [TunnelHealth.offline]
+ * say the last look failed and the watchdog is repairing (traffic still stays in the tunnel).
+ */
+fun protection(tunnel: TunnelState, servers: Int, health: TunnelHealth = TunnelHealth()): Protection = when {
+    tunnel is TunnelState.Up && (health.unstable || health.offline) -> Protection.UNSTABLE
     tunnel is TunnelState.Up -> Protection.ON
     tunnel is TunnelState.Connecting -> Protection.CONNECTING
     servers == 0 -> Protection.NO_SERVER
@@ -87,7 +93,7 @@ fun protection(tunnel: TunnelState, servers: Int): Protection = when {
 @Composable
 fun protectionColor(p: Protection): Color = when (p) {
     Protection.ON -> Brand.Mint
-    Protection.CONNECTING -> Brand.Amber
+    Protection.UNSTABLE, Protection.CONNECTING -> Brand.Amber
     Protection.OFF, Protection.FAILED, Protection.NO_SERVER -> Brand.Coral
 }
 
@@ -150,7 +156,7 @@ fun VisibilityCard(app: App, tunnel: TunnelState) {
                     else IconButton(onClick = refresh) { Icon(Icons.Filled.Refresh, "Обновить") }
                 }
             }
-            SeenRow("Зарубежные сайты", if (up) Route.TUNNEL else Route.DIRECT, v?.foreign, loading, v?.foreignError)
+            SeenRow("Зарубежные сайты", if (up && v?.foreignLeak != true) Route.TUNNEL else Route.DIRECT, v?.foreign, loading, v?.foreignError)
             // "Through VPN" only when the check proved it (both sides saw the same address).
             val ruRoute = if (up && v?.russian != null && v.foreign != null && !v.split) Route.TUNNEL else Route.DIRECT
             SeenRow("Российские сайты", ruRoute, v?.russian, loading, v?.russianError)
@@ -237,6 +243,7 @@ private fun notes(v: Visibility?, tunnel: TunnelState, deviceOf: String): List<N
     val out = ArrayList<Note>()
     val up = tunnel is TunnelState.Up
     if (!up) out += Note(false, "VPN выключен: все сайты видят ваш настоящий адрес.")
+    else if (v.foreignLeak) out += Note(false, "Зарубежные сайты увидели ваш настоящий адрес: трафик прошёл мимо туннеля. Проверяю соединение и переподключаюсь, если нужно.")
     else when {
         v.split -> out += Note(true, "Раздельный туннель работает: зарубежные сайты видят сервер, российские сервисы и банки видят ваш обычный адрес.")
         v.foreign != null && v.russian != null -> out += Note(false, "Оба вида сайтов видят один адрес. Проверьте, включено ли «Российское напрямую» в настройках.")
@@ -272,6 +279,7 @@ fun ago(ms: Long): String {
 /** Shared by both screens: the cheap button label that tells what a tap will do. */
 fun tapHint(p: Protection): String = when (p) {
     Protection.ON -> "Нажмите, чтобы отключить"
+    Protection.UNSTABLE -> "Восстанавливаю связь сам, ничего делать не нужно"
     Protection.CONNECTING -> "Устанавливаю защищённое соединение"
     Protection.FAILED -> "Нажмите, чтобы попробовать ещё раз"
     Protection.OFF -> "Нажмите, чтобы включить VPN"
