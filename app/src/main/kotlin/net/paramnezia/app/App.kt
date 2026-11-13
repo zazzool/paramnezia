@@ -62,7 +62,7 @@ class App : Application(), TunnelHost {
     val cloud: Cloud by lazy { Cloud(repo, scope, cacheDir) }
     /** Sharing the app and settings with devices in the same Wi-Fi, and finding such shares. */
     val lan: LanHub by lazy { LanHub(AndroidLan(this), repo, fleet, { links }, { updater }, android.os.Build.MODEL, scope) }
-    private val visibilityCheck by lazy { VisibilityCheck(net) }
+    private val visibilityCheck by lazy { VisibilityCheck(net, loadGeo = { repo.current.geo }, saveGeo = { m -> repo.update { it.copy(geo = m) } }) }
     private val _visibility = kotlinx.coroutines.flow.MutableStateFlow<Visibility?>(null)
     /** What foreign and Russian sites last saw; refreshed by the home screen. */
     val visibility: kotlinx.coroutines.flow.StateFlow<Visibility?> = _visibility

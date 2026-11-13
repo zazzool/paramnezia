@@ -1,5 +1,6 @@
 package net.paramnezia.app.net
 
+import net.paramnezia.app.data.StoredGeo
 import net.paramnezia.app.platform.Http
 import net.paramnezia.core.net.GeoAnswer
 import net.paramnezia.core.net.GeoIp
@@ -81,8 +82,15 @@ class VisibilityCheck(
     private val net: Http,
     /** How the physical network is called in error texts ("сеть телефона", "сеть компьютера"). */
     private val directLabel: String = "сеть телефона",
+    /** Persisted geolocation verdicts (AppState.geo), so a restart does not ask the databases again. */
+    private val loadGeo: () -> Map<String, StoredGeo> = { emptyMap() },
+    private val saveGeo: (Map<String, StoredGeo>) -> Unit = {},
 ) {
-    private val geoCache = ConcurrentHashMap<String, GeoVerdict>()
+    private val geoCache: ConcurrentHashMap<String, GeoVerdict> by lazy {
+        val now = System.currentTimeMillis()
+        ConcurrentHashMap(runCatching { loadGeo() }.getOrDefault(emptyMap())
+            .filterValues { now - it.at < GEO_KEEP_MS }.mapValues { it.value.verdict })
+    }
     /** Probes are plain blocking sockets: losers of a race finish here instead of holding the caller. */
     private val probes = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -99,7 +107,8 @@ class VisibilityCheck(
                     var ip: String? = null
                     for (pause in DIRECT_RETRY_MS) {
                         if (pause > 0) delay(pause)
-                        ip = firstOf((GeoIp.RUSSIAN_SELF + GeoIp.CARRIER_SELF + GeoIp.CLOUDFLARE_TRACE).map { url ->
+                        // Past the VPN every service sees the same address; Yandex often hides it, so last.
+                        ip = firstOf((GeoIp.CARRIER_SELF + GeoIp.CLOUDFLARE_TRACE + GeoIp.RUSSIAN_SELF).map { url ->
                             suspend { ask(url, true, directLabel, 8_000, errors) }
                         })
                         if (ip != null) break
@@ -190,22 +199,56 @@ class VisibilityCheck(
         return RuProbe(null, null, summarize(errors.toList()))
     }
 
-    /** The first non-null answer of [tasks] run in parallel; the others are left to finish on their own. */
+    /**
+     * The first non-null answer of [tasks], started one after another ("happy eyeballs"): the next one
+     * goes when the previous has failed or stayed silent for [STAGGER_MS]. A healthy network answers the
+     * first request, so a check costs one or two requests per side instead of all of them at once; a
+     * broken one still tries everything within a second or two. Losers finish on their own.
+     */
     private suspend fun <T : Any> firstOf(tasks: List<suspend () -> T?>): T? {
         if (tasks.isEmpty()) return null
-        val results = Channel<T?>(tasks.size)
-        tasks.forEach { t -> probes.launch { results.send(runCatching { t() }.getOrNull()) } }
-        repeat(tasks.size) { results.receive()?.let { return it } }
-        return null
+        class Got(val value: T?)
+        val results = Channel<Got>(tasks.size)
+        var started = 0
+        var finished = 0
+        fun startNext() { val t = tasks[started++]; probes.launch { results.send(Got(runCatching { t() }.getOrNull())) } }
+        startNext()
+        while (true) {
+            val got = if (started < tasks.size) withTimeoutOrNull(STAGGER_MS) { results.receive() } else results.receive()
+            if (got == null) { startNext(); continue }
+            finished++
+            got.value?.let { return it }
+            if (started < tasks.size) startNext() else if (finished == started) return null
+        }
     }
 
+    /**
+     * Country of [ip] by vote. Two databases are asked first; when they (and Cloudflare's own view,
+     * [extra]) agree, that settles it, and the other two are asked only on disagreement or silence.
+     * The answer is the same as asking all four whenever the first two agree, at half the requests.
+     */
     private suspend fun geo(ip: String, extra: GeoAnswer?): GeoVerdict? {
         geoCache[ip]?.let { return it }
-        val answers = coroutineScope {
-            GeoIp.lookups.map { p -> async { get(p.url(ip), 16_384)?.let { runCatching { p.parse(it) }.getOrNull() } } }.awaitAll()
-        }.filterNotNull() + listOfNotNull(extra)
+        suspend fun ask(ps: List<GeoIp.Provider>) = coroutineScope {
+            ps.map { p -> async { get(p.url(ip), 16_384)?.let { runCatching { p.parse(it) }.getOrNull() } } }.awaitAll()
+        }.filterNotNull()
+        var answers = ask(GeoIp.lookups.take(2)) + listOfNotNull(extra)
+        val first = GeoIp.consensus(ip, answers)
+        if (first.answered < 2 || first.others.isNotEmpty() || first.city == null && first.region == null) {
+            answers = answers + ask(GeoIp.lookups.drop(2))
+        }
         if (answers.isEmpty()) return null
-        return GeoIp.consensus(ip, answers).also { if (it.answered >= 2) geoCache[ip] = it }
+        return GeoIp.consensus(ip, answers).also { if (it.answered >= 2) remember(ip, it) }
+    }
+
+    private fun remember(ip: String, v: GeoVerdict) {
+        geoCache[ip] = v
+        val now = System.currentTimeMillis()
+        runCatching {
+            val kept = loadGeo().filter { (k, e) -> k != ip && now - e.at < GEO_KEEP_MS }.entries
+                .sortedByDescending { it.value.at }.take(GEO_KEEP - 1).associate { it.key to it.value }
+            saveGeo(kept + (ip to StoredGeo(v, now)))
+        }
     }
 
     private fun get(url: String, max: Int = 1024): String? =
@@ -216,6 +259,10 @@ class VisibilityCheck(
 
     companion object {
         private const val TAG = "ParamneziaSeen"
+        private const val STAGGER_MS = 400L
+        /** Addresses kept across restarts, and for how long (hosters rarely move an address). */
+        private const val GEO_KEEP = 16
+        private const val GEO_KEEP_MS = 7 * 24 * 3600_000L
         /** Pauses before each try of the physical network (the first goes at once). */
         private val DIRECT_RETRY_MS = listOf(0L, 1_500L, 3_000L)
 

@@ -68,7 +68,7 @@ class App(
     /** Sharing the app and settings with devices in the same network, and finding such shares. */
     val lan: LanHub by lazy { LanHub(DesktopLan(cacheDir), repo, fleet, { links }, { updater.android }, deviceModel, scope) }
     val servers: Servers
-    private val visibilityCheck by lazy { VisibilityCheck(net, directLabel = "сеть компьютера") }
+    private val visibilityCheck by lazy { VisibilityCheck(net, directLabel = "сеть компьютера", loadGeo = { repo.current.geo }, saveGeo = { m -> repo.update { it.copy(geo = m) } }) }
     private val _visibility = MutableStateFlow<Visibility?>(null)
     val visibility: StateFlow<Visibility?> = _visibility
     private val failover = FailoverPolicy()

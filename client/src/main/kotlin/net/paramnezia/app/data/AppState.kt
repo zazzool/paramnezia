@@ -26,6 +26,8 @@ data class AppState(
     val pages: Map<String, String> = emptyMap(),
     /** Admin: hosting provider tokens and the servers bought through them (see [net.paramnezia.app.data.Cloud]). */
     val cloud: CloudState = CloudState(),
+    /** Where the last few addresses are (geolocation vote), so a check after a restart asks no databases. */
+    val geo: Map<String, StoredGeo> = emptyMap(),
 ) {
     /** Follower devices of a fleet get the one-button screen; the admin and standalone users get everything. */
     val simpleUi: Boolean get() = when (uiMode) {
@@ -151,3 +153,6 @@ data class CloudServerRef(
     val createdAt: Long,
     val price: String = "",
 )
+
+@Serializable
+data class StoredGeo(val verdict: net.paramnezia.core.net.GeoVerdict, val at: Long)
