@@ -17,7 +17,6 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 /** The address a site sees, and what the geolocation databases agree on about it. */
@@ -234,8 +233,4 @@ class VisibilityCheck(
     }
 }
 
-private val ru = Locale("ru")
-
-fun countryName(code: String?): String? = code?.takeIf { it.length == 2 }?.let {
-    Locale("", it.uppercase()).getDisplayCountry(ru).takeIf { n -> n.isNotBlank() && !n.equals(it, true) }
-}
+fun countryName(code: String?): String? = code?.takeIf { it.length == 2 }?.let(CountryNames::ru)

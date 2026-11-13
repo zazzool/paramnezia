@@ -6,6 +6,7 @@ plugins {
 
 // Release signing and the pinned OTA key come from Gradle properties or the environment (CI secrets).
 fun prop(name: String, env: String): String? = providers.gradleProperty(name).orNull ?: System.getenv(env)
+val goAbis = listOf("arm64-v8a", "armeabi-v7a") + if (prop("paramnezia.x86", "PN_X86") == "true") listOf("x86_64") else emptyList()
 
 android {
     namespace = "net.paramnezia.app"
@@ -20,7 +21,9 @@ android {
         // Public half of the release key: only releases signed by it are installed over the air.
         buildConfigField("String", "RELEASE_KEY", "\"${prop("paramnezia.releaseKey", "PN_RELEASE_KEY").orEmpty()}\"")
         buildConfigField("String", "UPDATE_URL", "\"${prop("paramnezia.updateUrl", "PN_UPDATE_URL").orEmpty()}\"")
-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
+        // Phones, tablets and TV boxes are ARM (32-bit userland is common on TV boxes). x86_64 is only for
+        // emulators: CI's emulator test builds with -Pparamnezia.x86=true; the published APK has no x86.
+        ndk { abiFilters += goAbis }
     }
 
     signingConfigs {
@@ -56,8 +59,10 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-        isCoreLibraryDesugaringEnabled = true
     }
+
+    // The app speaks Russian (and English for system strings); libraries bring ~80 languages otherwise.
+    androidResources { localeFilters += listOf("ru", "en") }
 
     packaging {
         resources.excludes += listOf("META-INF/*.version", "META-INF/LICENSE*", "META-INF/NOTICE*", "kotlin/**", "DebugProbesKt.bin")
@@ -86,7 +91,6 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation(libs.androidx.work.runtime)
     implementation(libs.androidx.profileinstaller)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
@@ -96,5 +100,4 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     implementation(libs.zxing.core)
     implementation(libs.zxing.android.embedded)
-    coreLibraryDesugaring(libs.android.desugar)
 }

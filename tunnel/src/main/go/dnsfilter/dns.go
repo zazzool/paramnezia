@@ -245,27 +245,79 @@ func (f *forwarder) close() { f.conn.Close() }
 
 // --- answer cache -----------------------------------------------------------------------------
 
-type cached struct {
-	resp    []byte
-	expires time.Time
-}
-
 // A small cache saves radio wake-ups: apps resolve the same few names over and over.
-type dnsCache struct {
-	mu sync.Mutex
-	m  map[string]cached
+//
+//   - Bounded without a cliff: when full, one entry goes, chosen by sampling a few (Go's map order
+//     is random) and dropping the least recently used of them: approximate LRU in O(1), the way
+//     Redis does it. The old cache emptied itself completely at 1024 names, and every app then
+//     re-resolved at once.
+//   - Serve-stale (RFC 8767): an answer is kept for staleFor after its TTL. A query that misses goes
+//     upstream as usual, and only if no resolver answers is the stale answer returned (with a short
+//     TTL). Sites keep opening through the seconds the tunnel needs to repair itself (fresh sockets,
+//     a new network), instead of failing with "name not found".
+//   - Prefetch: a hit in the last tenth of an answer's life is answered from the cache and refreshed
+//     in the background, so names in use never expire under the user.
+type cached struct {
+	resp     []byte
+	stored   time.Time
+	expires  time.Time
+	used     time.Time
+	fetching bool
 }
 
-func (c *dnsCache) get(key string, id uint16) []byte {
+const (
+	cacheSize  = 1024
+	staleFor   = 6 * time.Hour
+	staleTTL   = 30 // seconds, on a stale answer
+	evictProbe = 8
+)
+
+type dnsCache struct {
+	mu  sync.Mutex
+	m   map[string]*cached
+	now func() time.Time
+}
+
+func newDNSCache() dnsCache { return dnsCache{m: map[string]*cached{}, now: time.Now} }
+
+// lookup returns a copy of the cached answer with id, whether it is still fresh, and whether the
+// caller should refresh it in the background (a fresh answer close to expiry, not already being
+// refreshed). A nil answer means a miss, or an entry too old even to serve stale.
+func (c *dnsCache) lookup(key string, id uint16) (resp []byte, fresh, prefetch bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.m[key]
-	if !ok || time.Now().After(e.expires) {
-		return nil
+	if !ok {
+		return nil, false, false
 	}
+	now := c.now()
+	if now.After(e.expires.Add(staleFor)) {
+		delete(c.m, key)
+		return nil, false, false
+	}
+	e.used = now
 	r := append([]byte(nil), e.resp...)
 	binary.BigEndian.PutUint16(r, id)
-	return r
+	fresh = !now.After(e.expires)
+	if fresh {
+		left, life := e.expires.Sub(now), e.expires.Sub(e.stored)
+		if !e.fetching && left*10 < life {
+			e.fetching, prefetch = true, true
+		}
+		setTTL(r, int(left/time.Second)) // the remaining life, as a resolver would say
+	} else {
+		setTTL(r, staleTTL)
+	}
+	return r, fresh, prefetch
+}
+
+// done clears the background-refresh mark when a refresh gave nothing.
+func (c *dnsCache) done(key string) {
+	c.mu.Lock()
+	if e := c.m[key]; e != nil {
+		e.fetching = false
+	}
+	c.mu.Unlock()
 }
 
 func (c *dnsCache) put(key string, resp []byte) {
@@ -275,10 +327,58 @@ func (c *dnsCache) put(key string, resp []byte) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.m) >= 1024 {
-		c.m = map[string]cached{}
+	now := c.now()
+	if _, ok := c.m[key]; !ok && len(c.m) >= cacheSize {
+		c.evictLocked(now)
 	}
-	c.m[key] = cached{resp, time.Now().Add(time.Duration(ttl) * time.Second)}
+	c.m[key] = &cached{resp: resp, stored: now, expires: now.Add(time.Duration(ttl) * time.Second), used: now}
+}
+
+func (c *dnsCache) evictLocked(now time.Time) {
+	var victim string
+	var oldest time.Time
+	n := 0
+	for k, e := range c.m {
+		if now.After(e.expires.Add(staleFor)) {
+			victim = k
+			break
+		}
+		if n == 0 || e.used.Before(oldest) {
+			victim, oldest = k, e.used
+		}
+		if n++; n >= evictProbe {
+			break
+		}
+	}
+	delete(c.m, victim)
+}
+
+// setTTL rewrites the TTL of every answer, authority and additional record (OPT excepted).
+func setTTL(m []byte, ttl int) {
+	if ttl < 1 {
+		ttl = 1
+	}
+	if len(m) < 12 {
+		return
+	}
+	qd := int(binary.BigEndian.Uint16(m[4:]))
+	rr := int(binary.BigEndian.Uint16(m[6:])) + int(binary.BigEndian.Uint16(m[8:])) + int(binary.BigEndian.Uint16(m[10:]))
+	i := 12
+	for ; qd > 0; qd-- {
+		if i = skipName(m, i); i < 0 || i+4 > len(m) {
+			return
+		}
+		i += 4
+	}
+	for ; rr > 0; rr-- {
+		if i = skipName(m, i); i < 0 || i+10 > len(m) {
+			return
+		}
+		if binary.BigEndian.Uint16(m[i:]) != 41 { // OPT keeps its flags in the TTL field
+			binary.BigEndian.PutUint32(m[i+4:], uint32(ttl))
+		}
+		i += 10 + int(binary.BigEndian.Uint16(m[i+8:]))
+	}
 }
 
 // --- tun wrapper ------------------------------------------------------------------------------
@@ -336,7 +436,7 @@ func NewTun(dev tun.Device, cfg Config, direct *net.UDPConn) (tun.Device, error)
 		Device:  dev,
 		virtual: cfg.virtual.As4(),
 		tunnel:  newForwarder(tunnelConn, cfg.tunnel),
-		cache:   dnsCache{m: map[string]cached{}},
+		cache:   newDNSCache(),
 		slots:   make(chan struct{}, 64),
 	}
 	if direct != nil {
@@ -421,13 +521,22 @@ func (t *dnsTun) handle(pkt []byte) {
 	}
 	key := route + name + "/" + string(rune(qtype))
 	id := binary.BigEndian.Uint16(q)
-	if r := t.cache.get(key, id); r != nil {
-		t.reply(client, clientPort, r)
-		return
+	cachedResp, fresh, prefetch := t.cache.lookup(key, id)
+	if fresh {
+		t.reply(client, clientPort, cachedResp)
+		if !prefetch {
+			return
+		}
 	}
 	select {
 	case t.slots <- struct{}{}:
 	default:
+		if cachedResp != nil && !fresh {
+			t.reply(client, clientPort, cachedResp) // overloaded: an old answer beats none
+		}
+		if prefetch {
+			t.cache.done(key)
+		}
 		return // overloaded: drop, the app retries
 	}
 	go func() {
@@ -441,9 +550,16 @@ func (t *dnsTun) handle(pkt []byte) {
 		if r == nil && fw == t.direct {
 			r = t.tunnel.query(q) // Russian resolver unreachable: still answer
 		}
-		if r != nil {
+		switch {
+		case r != nil:
 			t.cache.put(key, r)
-			t.reply(client, clientPort, r)
+			if !fresh {
+				t.reply(client, clientPort, r)
+			}
+		case prefetch:
+			t.cache.done(key)
+		case cachedResp != nil:
+			t.reply(client, clientPort, cachedResp) // no resolver answered: serve stale (RFC 8767)
 		}
 	}()
 }

@@ -14,7 +14,7 @@ import net.paramnezia.app.ota.Updater
 import net.paramnezia.app.tunnel.Net
 import net.paramnezia.app.tunnel.SpecBuilder
 import net.paramnezia.app.ui.WidgetProvider
-import net.paramnezia.app.work.SyncWorker
+import net.paramnezia.app.work.SyncJob
 import net.paramnezia.core.config.Uapi
 import net.paramnezia.core.config.WgQuick
 import net.paramnezia.core.fleet.FailoverPolicy
@@ -141,10 +141,10 @@ class App : Application(), TunnelHost {
                     runCatching { fleet.sharePolicy(settings) }.onFailure { Log.w(TAG, "share policy", it) }
                 }
         }
-        // Nothing below blocks the first frame: WorkManager, the updater and the native library start
+        // Nothing below blocks the first frame: the sync job, the updater and the native library start
         // in the background.
         scope.launch(Dispatchers.IO) {
-            SyncWorker.schedule(this@App)
+            SyncJob.schedule(this@App)
             updater.checkIfDue()
         }
         // Widget: redraw on every state change; while up, refresh the counters every 30 s with the

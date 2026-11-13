@@ -41,6 +41,9 @@ if [ ! -f "$patched/.boottime" ]; then
 fi
 export GOROOT=$patched PATH=$patched/bin:$PATH GOTOOLCHAIN=local
 
+# A library of an ABI that is no longer asked for must not stay behind and end up in the APK.
+mkdir -p "$OUT" && find "$OUT" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
+
 for abi in "$@"; do
   case $abi in
     arm64-v8a)   goarch=arm64; cc=aarch64-linux-android$MIN_SDK-clang ;;

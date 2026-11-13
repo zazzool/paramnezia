@@ -110,6 +110,19 @@ jobs:
         with:
           name: paramnezia-apk
           path: app/build/outputs/apk/**/*.apk
+      # The published APK is ARM only; the emulators below are x86_64. The same code, plus the x86_64
+      # library, so the release build (R8 and all) is what gets tested.
+      - name: Emulator APKs (adds x86_64)
+        env:
+          PN_VERSION_CODE: ${{ github.run_number }}
+        run: |
+          ./gradlew -Pparamnezia.x86=true :app:assembleDebug :app:assembleRelease
+          mkdir -p apk-emulator && cp app/build/outputs/apk/release/app-release.apk apk-emulator/emu-release.apk
+          cp app/build/outputs/apk/debug/app-debug.apk apk-emulator/emu-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paramnezia-apk-emulator
+          path: apk-emulator/*.apk
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: lint-report, path: app/build/reports/lint-results-*.html, if-no-files-found: ignore }
@@ -126,7 +139,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: paramnezia-apk, path: apk }
+        with: { name: paramnezia-apk-emulator, path: apk }
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
