@@ -1,5 +1,6 @@
 package net.paramnezia.core.net
 
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -21,6 +22,7 @@ data class GeoAnswer(
  * Yandex's DNS in Norway), so the country is a vote, and city / region are shown only when at least
  * two databases name the same one.
  */
+@Serializable
 data class GeoVerdict(
     val ip: String,
     val countryCode: String?,

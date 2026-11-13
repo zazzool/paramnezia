@@ -110,6 +110,21 @@
             android:taskAffinity=""
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
+        <!-- The 12-hour manifest sync (work/SyncJob.kt). -->
+        <service
+            android:name=".work.SyncJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <!-- Compose would otherwise load an emoji font at every start; flags use the system font. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data android:name="androidx.emoji2.text.EmojiCompatInitializer" tools:node="remove" />
+        </provider>
+
         <receiver android:name=".ui.WidgetProvider" android:exported="false" android:label="@string/app_name">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />

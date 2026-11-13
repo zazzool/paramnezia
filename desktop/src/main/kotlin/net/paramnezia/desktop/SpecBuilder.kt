@@ -22,9 +22,20 @@ import java.net.InetAddress
  * the adapter still gets a private IPv6 address and IPv6 routes, so foreign IPv6 traffic cannot
  * leave past the VPN; it simply fails over to IPv4.
  */
-class SpecBuilder(private val asset: (String) -> String) {
-    private val v4 by lazy { BypassLists.parsePrefixes(asset("ipv4.txt")) }
-    private val v6 by lazy { BypassLists.parsePrefixes(asset("ipv6.txt")) }
+class SpecBuilder(
+    private val asset: (String) -> String,
+    /** Version of the lists [asset] serves (see ListUpdates); a newer one is parsed again. */
+    private val version: () -> Long = { 0 },
+) {
+    private class Parsed(val version: Long, val v4: List<IpPrefix>, val v6: List<IpPrefix>)
+    @Volatile private var parsed: Parsed? = null
+    private fun parsed(): Parsed {
+        val v = version()
+        parsed?.takeIf { it.version == v }?.let { return it }
+        return Parsed(v, BypassLists.parsePrefixes(asset("ipv4.txt")), BypassLists.parsePrefixes(asset("ipv6.txt"))).also { parsed = it }
+    }
+    private val v4 get() = parsed().v4
+    private val v6 get() = parsed().v6
 
     private var cachedKey: Any? = null
     private var cachedPlan: RoutePlanner.Plan? = null
@@ -47,7 +58,7 @@ class SpecBuilder(private val asset: (String) -> String) {
         // The local network is always direct, whatever the settings or the family policy say.
         // Windows needs no extra networks of the current Wi-Fi: its own on-link routes are more
         // specific than ours, so a LAN on public addresses still wins over the tunnel.
-        val key = listOf(keep, settings.bypassRussia)
+        val key = listOf(keep, settings.bypassRussia, version())
         val plan = cachedPlan.takeIf { cachedKey == key } ?: RoutePlanner.plan(
             if (settings.bypassRussia) v4 else emptyList(),
             if (settings.bypassRussia) v6 else emptyList(),

@@ -19,6 +19,7 @@ import net.paramnezia.app.data.StoredProfile
 import net.paramnezia.app.fleet.FleetManager
 import net.paramnezia.app.fleet.Links
 import net.paramnezia.app.lan.LanHub
+import net.paramnezia.app.lists.ListUpdates
 import net.paramnezia.app.net.Visibility
 import net.paramnezia.app.net.VisibilityCheck
 import net.paramnezia.app.ota.Updater
@@ -59,7 +60,9 @@ class App(
     val repo = Repo(store)
     val net = DesktopHttp(client)
     private val ed: Ed25519 = Ed25519.Jca
-    val specs = SpecBuilder(asset)
+    /** Bypass lists in use: bundled, or newer signed ones fetched since (once a day, see ListUpdates). */
+    val lists = ListUpdates(File(cacheDir, "bypass"), asset, net, BuildConfig.RELEASE_KEY, ed, ListUpdates.urlFor(BuildConfig.ANDROID_UPDATE_URL))
+    val specs = SpecBuilder(lists::text, lists::version)
     val tunnel = TunnelEngine(client, specs, this, scope)
     val fleet: FleetManager = FleetManager(repo, net, ed, scope) { reconnectIfUp() }
     val updater = Updater(repo, net, ed, scope, openUrl)
@@ -68,7 +71,7 @@ class App(
     /** Sharing the app and settings with devices in the same network, and finding such shares. */
     val lan: LanHub by lazy { LanHub(DesktopLan(cacheDir), repo, fleet, { links }, { updater.android }, deviceModel, scope) }
     val servers: Servers
-    private val visibilityCheck by lazy { VisibilityCheck(net, directLabel = "сеть компьютера") }
+    private val visibilityCheck by lazy { VisibilityCheck(net, directLabel = "сеть компьютера", loadGeo = { repo.current.geo }, saveGeo = { m -> repo.update { it.copy(geo = m) } }) }
     private val _visibility = MutableStateFlow<Visibility?>(null)
     val visibility: StateFlow<Visibility?> = _visibility
     private val failover = FailoverPolicy()
@@ -86,13 +89,16 @@ class App(
 
     /** Starts the background parts; separate from the constructor so screenshots can skip it. */
     fun start() {
-        // DNS rules follow the settings (the service keeps them).
+        // DNS rules follow the settings and the lists (the service keeps them).
         scope.launch(Dispatchers.IO) {
-            repo.state.map { it.settings.blockTrackers to it.settings.bypassRussia }.distinctUntilChanged().collect {
-                val (b, d, a) = specs.dnsRules(repo.current.settings)
-                tunnel.applyDnsRules(b, d, a)
-            }
+            kotlinx.coroutines.flow.combine(repo.state.map { it.settings.blockTrackers to it.settings.bypassRussia }, lists.taken) { a, n -> a to n }
+                .distinctUntilChanged().collect {
+                    val (b, d, a) = specs.dnsRules(repo.current.settings)
+                    tunnel.applyDnsRules(b, d, a)
+                }
         }
+        // Newer lists arrived: routes change, so a running tunnel is rebuilt (quietly).
+        scope.launch { lists.taken.drop(1).collect { reconnectIfUp() } }
         // Admin: settings changes go to every fleet device (see the Android App).
         scope.launch(Dispatchers.IO) {
             repo.state.map { s -> s.settings to (s.fleet?.let { f -> f.adminSeed != null && f.sharePolicy } == true) }.distinctUntilChanged().drop(1)
@@ -104,6 +110,7 @@ class App(
         }
         scope.launch(Dispatchers.IO) {
             updater.checkIfDue()
+            lists.checkIfDue()
             // The tunnel was on when the app last closed (or Windows restarted): bring it back.
             if (repo.current.wantConnected) tunnel.start()
         }
@@ -176,6 +183,19 @@ class App(
         }
         val profile = state.profiles.firstOrNull { it.id == state.activeProfile } ?: state.profiles.firstOrNull() ?: return null
         return profileSpec(profile)
+    }
+
+    /**
+     * The other fleet servers to fall back on, healthy ones first, in manifest order; the service
+     * switches to them by itself when the current one stays dead (also while the app is closed).
+     */
+    override suspend fun alternateSpecs(primary: TunnelSpec): List<TunnelSpec> {
+        val member = fleet.member() ?: return emptyList()
+        val now = System.currentTimeMillis()
+        val others = member.tunnels().filter { it.first.id != primary.serverId }
+        val ordered = others.sortedBy { if (failover.isBlocked(it.first.id, now)) 1 else 0 }
+        val settings = repo.current.settings
+        return ordered.mapNotNull { (server, config) -> runCatching { specs.build(server.id, server.name, config, settings) }.getOrNull() }
     }
 
     private fun profileSpec(p: StoredProfile): TunnelSpec? = runCatching {

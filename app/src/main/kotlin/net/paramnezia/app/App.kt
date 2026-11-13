@@ -14,7 +14,7 @@ import net.paramnezia.app.ota.Updater
 import net.paramnezia.app.tunnel.Net
 import net.paramnezia.app.tunnel.SpecBuilder
 import net.paramnezia.app.ui.WidgetProvider
-import net.paramnezia.app.work.SyncWorker
+import net.paramnezia.app.work.SyncJob
 import net.paramnezia.core.config.Uapi
 import net.paramnezia.core.config.WgQuick
 import net.paramnezia.core.fleet.FailoverPolicy
@@ -39,6 +39,7 @@ import net.paramnezia.app.data.Servers
 import net.paramnezia.app.fleet.Links
 import net.paramnezia.app.lan.AndroidLan
 import net.paramnezia.app.lan.LanHub
+import net.paramnezia.app.lists.ListUpdates
 import net.paramnezia.app.net.Visibility
 import net.paramnezia.app.net.VisibilityCheck
 import net.paramnezia.app.ui.QuickTile
@@ -53,6 +54,11 @@ class App : Application(), TunnelHost {
     lateinit var repo: Repo; private set
     lateinit var net: Net; private set
     lateinit var specs: SpecBuilder; private set
+    /** Bypass lists in use: bundled, or newer signed ones fetched since (once a day, see ListUpdates). */
+    val lists: ListUpdates by lazy {
+        ListUpdates(java.io.File(filesDir, "bypass"), { name -> assets.open("bypass/$name").bufferedReader().use { it.readText() } },
+            net, BuildConfig.RELEASE_KEY, NativeEd25519, ListUpdates.urlFor(BuildConfig.UPDATE_URL))
+    }
     lateinit var fleet: FleetManager; private set
     /** Created on first use, off the launch path (it reads package info and the stored release). */
     val updater: Updater by lazy { Updater(this, repo, net, NativeEd25519, scope) { repo.current.fleet != null } }
@@ -62,7 +68,7 @@ class App : Application(), TunnelHost {
     val cloud: Cloud by lazy { Cloud(repo, scope, cacheDir) }
     /** Sharing the app and settings with devices in the same Wi-Fi, and finding such shares. */
     val lan: LanHub by lazy { LanHub(AndroidLan(this), repo, fleet, { links }, { updater }, android.os.Build.MODEL, scope) }
-    private val visibilityCheck by lazy { VisibilityCheck(net) }
+    private val visibilityCheck by lazy { VisibilityCheck(net, loadGeo = { repo.current.geo }, saveGeo = { m -> repo.update { it.copy(geo = m) } }) }
     private val _visibility = kotlinx.coroutines.flow.MutableStateFlow<Visibility?>(null)
     /** What foreign and Russian sites last saw; refreshed by the home screen. */
     val visibility: kotlinx.coroutines.flow.StateFlow<Visibility?> = _visibility
@@ -116,19 +122,22 @@ class App : Application(), TunnelHost {
             val direct = if (TunnelRuntime.state.value is TunnelState.Down) null else net.direct()
             listOfNotNull(direct?.socketFactory) + listOf(null)
         }
-        specs = SpecBuilder(this)
+        specs = SpecBuilder(this, lists)
         fleet = FleetManager(repo, net, NativeEd25519, scope) { reconnectIfUp() }
         // Every new server gets the page to share with family and friends, in the background.
         val pageOn: (net.paramnezia.core.profile.SshCredentials) -> Unit = { ssh -> scope.launch { runCatching { links.preparePage(ssh) } } }
         fleet.onServerReady = pageOn
         servers = Servers(repo, fleet, android.os.Build.MODEL, pageOn)
 
-        // DNS rules follow the settings; loading them is a one-off ~1 ms parse in Go.
+        // DNS rules follow the settings and the lists; loading them is a one-off ~1 ms parse in Go.
         scope.launch(Dispatchers.IO) {
-            repo.state.map { it.settings.blockTrackers to it.settings.bypassRussia }.distinctUntilChanged().collect {
-                runCatching { specs.applyDnsRules(repo.current.settings) }.onFailure { Log.e(TAG, "dns rules", it) }
-            }
+            kotlinx.coroutines.flow.combine(repo.state.map { it.settings.blockTrackers to it.settings.bypassRussia }, lists.taken) { a, v -> a to v }
+                .distinctUntilChanged().collect {
+                    runCatching { specs.applyDnsRules(repo.current.settings) }.onFailure { Log.e(TAG, "dns rules", it) }
+                }
         }
+        // Newer lists arrived: routes change, so a running tunnel is rebuilt (quietly, see the service).
+        scope.launch { lists.taken.drop(1).collect { reconnectIfUp() } }
         // Admin: settings changes go to every fleet device (no new manifest version when nothing changed).
         // Only real changes (drop the current value): settings change on the admin's screen, so the
         // SSH publishing this causes never starts from the background. The open app catches up in
@@ -141,11 +150,12 @@ class App : Application(), TunnelHost {
                     runCatching { fleet.sharePolicy(settings) }.onFailure { Log.w(TAG, "share policy", it) }
                 }
         }
-        // Nothing below blocks the first frame: WorkManager, the updater and the native library start
+        // Nothing below blocks the first frame: the sync job, the updater and the native library start
         // in the background.
         scope.launch(Dispatchers.IO) {
-            SyncWorker.schedule(this@App)
+            SyncJob.schedule(this@App)
             updater.checkIfDue()
+            lists.checkIfDue()
         }
         // Widget: redraw on every state change; while up, refresh the counters every 30 s with the
         // screen on (the loop simply does not run while the phone sleeps).

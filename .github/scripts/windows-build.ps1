@@ -24,12 +24,12 @@ if ($sha -ne '07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51')
 Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\wintun" -Force
 Copy-Item "$env:RUNNER_TEMP\wintun\wintun\bin\amd64\wintun.dll" "$svc\wintun.dll"
 
-# 2. The app image.
+# 2. The app image (release: ProGuard-shrunk, desktop/proguard-rules.pro).
 Push-Location $root
-& .\gradlew.bat '-Pparamnezia.jvmOnly=true' --no-configuration-cache :desktop:createDistributable
+& .\gradlew.bat '-Pparamnezia.jvmOnly=true' --no-configuration-cache :desktop:createReleaseDistributable
 if ($LASTEXITCODE) { throw "gradle failed" }
 Pop-Location
-$app = "$root\desktop\build\compose\binaries\main\app\Paramnezia"
+$app = "$root\desktop\build\compose\binaries\main-release\app\Paramnezia"
 if (-not (Test-Path "$app\Paramnezia.exe")) { throw "no app image at $app" }
 
 # 3. The installer.

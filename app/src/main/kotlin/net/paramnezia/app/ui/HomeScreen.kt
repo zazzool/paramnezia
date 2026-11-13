@@ -221,9 +221,13 @@ fun formatDuration(ms: Long): String {
     return "%02d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60)
 }
 
-fun formatBytes(bytes: Long): String = when {
-    bytes >= 1L shl 30 -> "%.1f ГБ".format(bytes / (1L shl 30).toDouble())
-    bytes >= 1L shl 20 -> "%.1f МБ".format(bytes / (1L shl 20).toDouble())
-    bytes >= 1L shl 10 -> "%.0f КБ".format(bytes / 1024.0)
-    else -> "$bytes Б"
+/** Russian style ("1,5 МБ") on every system, without the JDK's locale data (absent on Windows). */
+fun formatBytes(bytes: Long): String {
+    fun tenths(v: Double): String { val t = Math.round(v * 10); return "${t / 10},${t % 10}" }
+    return when {
+        bytes >= 1L shl 30 -> tenths(bytes / (1L shl 30).toDouble()) + " ГБ"
+        bytes >= 1L shl 20 -> tenths(bytes / (1L shl 20).toDouble()) + " МБ"
+        bytes >= 1L shl 10 -> "${Math.round(bytes / 1024.0)} КБ"
+        else -> "$bytes Б"
+    }
 }

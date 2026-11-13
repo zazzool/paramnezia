@@ -85,7 +85,21 @@ dependencies {
 compose.desktop {
     application {
         mainClass = "net.paramnezia.desktop.MainKt"
-        jvmArgs += listOf("-Xmx256m", "-XX:+UseSerialGC", "-Dfile.encoding=UTF-8")
+        // Small and quiet: the serial GC returns freed heap to Windows (MaxHeapFreeRatio) instead of
+        // keeping the peak, C1 only (no C2 compiler threads and code cache for a UI this size), a
+        // smaller code cache and thread stacks. The window stays as fast; the resident size shrinks.
+        jvmArgs += listOf(
+            "-Xmx256m", "-XX:+UseSerialGC", "-XX:MinHeapFreeRatio=10", "-XX:MaxHeapFreeRatio=30",
+            "-XX:TieredStopAtLevel=1", "-XX:ReservedCodeCacheSize=48m", "-Xss512k", "-Dfile.encoding=UTF-8",
+        )
+        // Release build (createReleaseDistributable, used by the installer): unused Compose/Material
+        // and library classes removed, nothing renamed (desktop/proguard-rules.pro).
+        buildTypes.release.proguard {
+            isEnabled.set(true)
+            obfuscate.set(false)
+            optimize.set(false)
+            configurationFiles.from(project.file("proguard-rules.pro"))
+        }
         nativeDistributions {
             // The installer is built by Inno Setup (desktop/installer/paramnezia.iss); here only the app image.
             targetFormats(TargetFormat.Msi)
@@ -94,9 +108,10 @@ compose.desktop {
             description = "Paramnezia VPN"
             vendor = "Paramnezia"
             copyright = "Paramnezia"
-            // jdk.localedata: country names in Russian; jdk.crypto.ec: SSH key exchange; java.naming: JSch;
-            // java.net.http: address checks on fresh connections (DesktopHttp.freshGet).
-            modules("java.naming", "jdk.crypto.ec", "jdk.unsupported", "jdk.localedata", "jdk.charsets", "java.management", "java.net.http")
+            // jdk.crypto.ec: SSH key exchange; java.naming: JSch; java.net.http: address checks on fresh
+            // connections (DesktopHttp.freshGet). No jdk.localedata (12 MB): country names come from
+            // CountryNames, and nothing else formats in Russian through the JDK.
+            modules("java.naming", "jdk.crypto.ec", "jdk.unsupported", "jdk.charsets", "java.management", "java.net.http")
             windows {
                 iconFile.set(project.file("icons/paramnezia.ico"))
                 menuGroup = "Paramnezia"

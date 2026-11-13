@@ -3,6 +3,7 @@ package net.paramnezia.app.tunnel
 import android.content.Context
 import android.os.Build
 import net.paramnezia.app.data.Settings
+import net.paramnezia.app.lists.ListUpdates
 import net.paramnezia.core.config.TunnelConfig
 import net.paramnezia.core.net.IpPrefix
 import net.paramnezia.core.routing.AppRules
@@ -13,12 +14,21 @@ import net.paramnezia.tunnel.TunnelRuntime
 import net.paramnezia.tunnel.TunnelSpec
 
 /** Turns a config plus the user's settings into what the VPN service runs. */
-class SpecBuilder(private val context: Context) {
-    private fun asset(name: String) = context.assets.open("bypass/$name").bufferedReader().use { it.readText() }
+class SpecBuilder(private val context: Context, private val lists: ListUpdates) {
+    private fun asset(name: String) = lists.text(name)
 
-    private val v4 by lazy { BypassLists.parsePrefixes(asset("ipv4.txt")) }
-    private val v6 by lazy { BypassLists.parsePrefixes(asset("ipv6.txt")) }
-    private val apps by lazy { AppRules.parse(asset("apps.txt")) }
+    /** Parsed lists of one version; parsed again only when newer lists arrive. */
+    private class Parsed(val version: Long, val v4: List<IpPrefix>, val v6: List<IpPrefix>, val apps: AppRules)
+    @Volatile private var parsed: Parsed? = null
+    private fun parsed(): Parsed {
+        val v = lists.version()
+        parsed?.takeIf { it.version == v }?.let { return it }
+        return Parsed(v, BypassLists.parsePrefixes(asset("ipv4.txt")), BypassLists.parsePrefixes(asset("ipv6.txt")), AppRules.parse(asset("apps.txt")))
+            .also { parsed = it }
+    }
+    private val v4 get() = parsed().v4
+    private val v6 get() = parsed().v6
+    private val apps get() = parsed().apps
 
     /** Route plans are the expensive part; they only change with the config's addresses and settings. */
     private var cachedKey: Any? = null
@@ -52,7 +62,7 @@ class SpecBuilder(private val context: Context) {
         // тоннеля всегда»), whatever the settings or the family policy say; lan adds the current
         // Wi-Fi's own networks when they are not private.
         val lan = TunnelRuntime.localNetwork(context).prefixes
-        val key = listOf(keep, settings.bypassRussia, lan, excludeSupported)
+        val key = listOf(keep, settings.bypassRussia, lan, excludeSupported, lists.version())
         val plan = cachedPlan.takeIf { cachedKey == key } ?: RoutePlanner.plan(
             if (settings.bypassRussia) v4 else emptyList(),
             if (settings.bypassRussia) v6 else emptyList(),

@@ -13,7 +13,7 @@
   #define AppVersion "0.1.0"
 #endif
 #ifndef AppDir
-  #define AppDir "..\build\compose\binaries\main\app\Paramnezia"
+  #define AppDir "..\build\compose\binaries\main-release\app\Paramnezia"
 #endif
 #ifndef ServiceDir
   #define ServiceDir "..\build\service"
