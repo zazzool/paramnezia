@@ -39,6 +39,7 @@ import net.paramnezia.app.data.Servers
 import net.paramnezia.app.fleet.Links
 import net.paramnezia.app.lan.AndroidLan
 import net.paramnezia.app.lan.LanHub
+import net.paramnezia.app.lists.ListUpdates
 import net.paramnezia.app.net.Visibility
 import net.paramnezia.app.net.VisibilityCheck
 import net.paramnezia.app.ui.QuickTile
@@ -53,6 +54,11 @@ class App : Application(), TunnelHost {
     lateinit var repo: Repo; private set
     lateinit var net: Net; private set
     lateinit var specs: SpecBuilder; private set
+    /** Bypass lists in use: bundled, or newer signed ones fetched since (once a day, see ListUpdates). */
+    val lists: ListUpdates by lazy {
+        ListUpdates(java.io.File(filesDir, "bypass"), { name -> assets.open("bypass/$name").bufferedReader().use { it.readText() } },
+            net, BuildConfig.RELEASE_KEY, NativeEd25519, ListUpdates.urlFor(BuildConfig.UPDATE_URL))
+    }
     lateinit var fleet: FleetManager; private set
     /** Created on first use, off the launch path (it reads package info and the stored release). */
     val updater: Updater by lazy { Updater(this, repo, net, NativeEd25519, scope) { repo.current.fleet != null } }
@@ -116,19 +122,22 @@ class App : Application(), TunnelHost {
             val direct = if (TunnelRuntime.state.value is TunnelState.Down) null else net.direct()
             listOfNotNull(direct?.socketFactory) + listOf(null)
         }
-        specs = SpecBuilder(this)
+        specs = SpecBuilder(this, lists)
         fleet = FleetManager(repo, net, NativeEd25519, scope) { reconnectIfUp() }
         // Every new server gets the page to share with family and friends, in the background.
         val pageOn: (net.paramnezia.core.profile.SshCredentials) -> Unit = { ssh -> scope.launch { runCatching { links.preparePage(ssh) } } }
         fleet.onServerReady = pageOn
         servers = Servers(repo, fleet, android.os.Build.MODEL, pageOn)
 
-        // DNS rules follow the settings; loading them is a one-off ~1 ms parse in Go.
+        // DNS rules follow the settings and the lists; loading them is a one-off ~1 ms parse in Go.
         scope.launch(Dispatchers.IO) {
-            repo.state.map { it.settings.blockTrackers to it.settings.bypassRussia }.distinctUntilChanged().collect {
-                runCatching { specs.applyDnsRules(repo.current.settings) }.onFailure { Log.e(TAG, "dns rules", it) }
-            }
+            kotlinx.coroutines.flow.combine(repo.state.map { it.settings.blockTrackers to it.settings.bypassRussia }, lists.taken) { a, v -> a to v }
+                .distinctUntilChanged().collect {
+                    runCatching { specs.applyDnsRules(repo.current.settings) }.onFailure { Log.e(TAG, "dns rules", it) }
+                }
         }
+        // Newer lists arrived: routes change, so a running tunnel is rebuilt (quietly, see the service).
+        scope.launch { lists.taken.drop(1).collect { reconnectIfUp() } }
         // Admin: settings changes go to every fleet device (no new manifest version when nothing changed).
         // Only real changes (drop the current value): settings change on the admin's screen, so the
         // SSH publishing this causes never starts from the background. The open app catches up in
@@ -146,6 +155,7 @@ class App : Application(), TunnelHost {
         scope.launch(Dispatchers.IO) {
             SyncJob.schedule(this@App)
             updater.checkIfDue()
+            lists.checkIfDue()
         }
         // Widget: redraw on every state change; while up, refresh the counters every 30 s with the
         // screen on (the loop simply does not run while the phone sleeps).

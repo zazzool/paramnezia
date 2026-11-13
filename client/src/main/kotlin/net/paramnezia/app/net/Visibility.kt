@@ -244,12 +244,17 @@ class VisibilityCheck(
     private fun remember(ip: String, v: GeoVerdict) {
         geoCache[ip] = v
         val now = System.currentTimeMillis()
-        runCatching {
-            val kept = loadGeo().filter { (k, e) -> k != ip && now - e.at < GEO_KEEP_MS }.entries
+        // Both sides are looked up in parallel: read-modify-write of the store, one at a time.
+        synchronized(saveLock) {
+            runCatching {
+                val kept = loadGeo().filter { (k, e) -> k != ip && now - e.at < GEO_KEEP_MS }.entries
                 .sortedByDescending { it.value.at }.take(GEO_KEEP - 1).associate { it.key to it.value }
-            saveGeo(kept + (ip to StoredGeo(v, now)))
+                saveGeo(kept + (ip to StoredGeo(v, now)))
+            }
         }
     }
+
+    private val saveLock = Any()
 
     private fun get(url: String, max: Int = 1024): String? =
         net.get(url, max, fallbackDirect = false, fresh = true, timeoutMs = 8_000)
