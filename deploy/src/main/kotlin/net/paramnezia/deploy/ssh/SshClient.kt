@@ -256,7 +256,7 @@ internal class SshClient(
     }
 
     private fun kexInit(): ByteArray = SshWriter().byte(MSG_KEXINIT).raw(ByteArray(16).also(random::nextBytes))
-        .nameList(KEX + listOf("ext-info-c", "kex-strict-c-v00@openssh.com"))
+        .nameList(kexAlgorithms + listOf("ext-info-c", "kex-strict-c-v00@openssh.com"))
         .nameList(hostKeyAlgorithms)
         .nameList(CIPHERS).nameList(CIPHERS).nameList(MACS).nameList(MACS)
         .nameList(listOf("none")).nameList(listOf("none")).nameList(emptyList()).nameList(emptyList())
@@ -289,7 +289,7 @@ internal class SshClient(
         val lists = List(10) { r.nameList() }
         val guessFollows = r.bool()
         if (sessionId == null) strict = "kex-strict-s-v00@openssh.com" in lists[0]
-        val kexAlg = pick("key exchange", KEX, lists[0])
+        val kexAlg = pick("key exchange", kexAlgorithms, lists[0])
         val hostAlg = pick("host key type", hostKeyAlgorithms, lists[1])
         val cOut = pick("cipher", CIPHERS, lists[2]); val cIn = pick("cipher", CIPHERS, lists[3])
         val mOut = if (cOut.contains("gcm")) "" else pick("MAC", MACS, lists[4])
@@ -300,7 +300,24 @@ internal class SshClient(
 
         val hashAlg = when { kexAlg.endsWith("sha512") || kexAlg == "ecdh-sha2-nistp521" -> "SHA-512"; kexAlg == "ecdh-sha2-nistp384" -> "SHA-384"; else -> "SHA-256" }
         val prefix = SshWriter().string(CLIENT_VERSION).string(serverVersion).string(ours).string(theirs)
-        val (k, h, keyBlob, sig) = when {
+        val (kEnc, h, keyBlob, sig) = when {
+            kexAlg == "mlkem768x25519-sha256" -> {
+                // Hybrid post-quantum exchange (after JSch's DHXECKEM): ML-KEM-768 and X25519 in one
+                // round trip; K is the string SHA-256(kem secret ‖ x25519 secret).
+                val kem = MlKem768.Session()
+                val priv = ByteArray(32).also(random::nextBytes)
+                val xpub = Curve25519.x25519Base(priv)
+                val qc = kem.publicKey + xpub
+                send(SshWriter().byte(MSG_KEX_ECDH_INIT).string(qc).bytes())
+                val reply = kexReply()
+                val ks = reply.string(); val qs = reply.string(); val sg = reply.string()
+                if (qs.size != MlKem768.CIPHERTEXT + 32) throw SshProtocolException("bad mlkem768x25519 reply")
+                val kemSecret = kem.decapsulate(qs.copyOfRange(0, MlKem768.CIPHERTEXT))
+                val shared = Curve25519.x25519(priv, qs.copyOfRange(MlKem768.CIPHERTEXT, qs.size))
+                if (shared.all { it.toInt() == 0 }) throw SshProtocolException("degenerate curve25519 key")
+                val kk = SshWriter().string(hash("SHA-256", kemSecret + shared)).bytes()
+                Kex(kk, hash(hashAlg, prefix.string(ks).string(qc).string(qs).raw(kk).bytes()), ks, sg)
+            }
             kexAlg.startsWith("curve25519") -> {
                 val priv = ByteArray(32).also(random::nextBytes)
                 val pub = Curve25519.x25519Base(priv)
@@ -310,8 +327,8 @@ internal class SshClient(
                 if (qs.size != 32) throw SshProtocolException("bad curve25519 key")
                 val shared = Curve25519.x25519(priv, qs)
                 if (shared.all { it.toInt() == 0 }) throw SshProtocolException("degenerate curve25519 key")
-                val kk = BigInteger(1, shared)
-                Kex(kk, hash(hashAlg, prefix.string(ks).string(pub).string(qs).mpint(kk).bytes()), ks, sg)
+                val kk = SshWriter().mpint(BigInteger(1, shared)).bytes()
+                Kex(kk, hash(hashAlg, prefix.string(ks).string(pub).string(qs).raw(kk).bytes()), ks, sg)
             }
             kexAlg.startsWith("ecdh-sha2-") -> {
                 val curve = EcCurve.byId(kexAlg.removePrefix("ecdh-sha2-"))!!
@@ -322,8 +339,8 @@ internal class SshClient(
                 val ks = reply.string(); val qs = reply.string(); val sg = reply.string()
                 val peer = KeyFactory.getInstance("EC").generatePublic(ECPublicKeySpec(curve.decode(qs), curve.params))
                 val shared = KeyAgreement.getInstance("ECDH").apply { init(kp.private); doPhase(peer, true) }.generateSecret()
-                val kk = BigInteger(1, shared)
-                Kex(kk, hash(hashAlg, prefix.string(ks).string(pub).string(qs).mpint(kk).bytes()), ks, sg)
+                val kk = SshWriter().mpint(BigInteger(1, shared)).bytes()
+                Kex(kk, hash(hashAlg, prefix.string(ks).string(pub).string(qs).raw(kk).bytes()), ks, sg)
             }
             else -> {
                 val p = if (kexAlg.contains("group16")) MODP4096 else MODP2048
@@ -333,8 +350,8 @@ internal class SshClient(
                 val reply = kexReply()
                 val ks = reply.string(); val f = reply.mpint(); val sg = reply.string()
                 if (f <= BigInteger.ONE || f >= p - BigInteger.ONE) throw SshProtocolException("bad DH value")
-                val kk = f.modPow(x, p)
-                Kex(kk, hash(hashAlg, prefix.string(ks).mpint(e).mpint(f).mpint(kk).bytes()), ks, sg)
+                val kk = SshWriter().mpint(f.modPow(x, p)).bytes()
+                Kex(kk, hash(hashAlg, prefix.string(ks).mpint(e).mpint(f).raw(kk).bytes()), ks, sg)
             }
         }
         if (!SshKeys.verify(hostAlg, keyBlob, sig, h)) throw SshProtocolException("host key signature is invalid")
@@ -344,7 +361,6 @@ internal class SshClient(
         val sid = sessionId ?: h.also { sessionId = it }
 
         fun derive(letter: Char, len: Int): ByteArray {
-            val kEnc = SshWriter().mpint(k).bytes()
             var out = hash(hashAlg, kEnc + h + byteArrayOf(letter.code.toByte()) + sid)
             while (out.size < len) out += hash(hashAlg, kEnc + h + out)
             return out.copyOf(len)
@@ -367,7 +383,7 @@ internal class SshClient(
         inKex = false
     }
 
-    private data class Kex(val k: BigInteger, val h: ByteArray, val keyBlob: ByteArray, val sig: ByteArray)
+    @Suppress("ArrayInDataClass") private data class Kex(val kEnc: ByteArray, val h: ByteArray, val keyBlob: ByteArray, val sig: ByteArray)
 
     private fun kexReply(): SshReader {
         val p = kexMessage()
@@ -524,6 +540,9 @@ internal class SshClient(
         private const val MAX_DATA = 32 * 1024
         private const val WINDOW = 2 * 1024 * 1024
 
+        /** What we offer: the post-quantum hybrid first where the JDK has ML-KEM (Java 24+), then [KEX]. */
+        val kexAlgorithms: List<String> by lazy { if (MlKem768.available) listOf("mlkem768x25519-sha256") + KEX else KEX }
+
         val KEX = listOf(
             "curve25519-sha256", "curve25519-sha256@libssh.org",
             "ecdh-sha2-nistp256", "ecdh-sha2-nistp384", "ecdh-sha2-nistp521",
@@ -579,3 +598,30 @@ internal class SshClient(
 
 /** Keepalives went unanswered: the network or the server is gone. */
 internal class SshConnectionLostException : SshProtocolException("connection lost")
+
+/**
+ * ML-KEM-768 (FIPS 203) through the JDK's own KEM API, present from Java 24 (after JSch's
+ * jce.MLKEM). Kept in its own class: on Android, which has no javax.crypto.KEM, nothing here is
+ * loaded, because [available] is false.
+ */
+internal object MlKem768 {
+    const val PUBLIC_KEY = 1184
+    const val CIPHERTEXT = 1088
+
+    val available: Boolean by lazy { runCatching { Session().publicKey.size == PUBLIC_KEY }.getOrDefault(false) }
+
+    class Session {
+        private val decapsulator: javax.crypto.KEM.Decapsulator
+        /** The raw encapsulation key: the end of its X.509 SubjectPublicKeyInfo. */
+        val publicKey: ByteArray
+
+        init {
+            val kp = KeyPairGenerator.getInstance("ML-KEM").apply { initialize(java.security.spec.NamedParameterSpec("ML-KEM-768")) }.generateKeyPair()
+            decapsulator = javax.crypto.KEM.getInstance("ML-KEM").newDecapsulator(kp.private)
+            val spki = kp.public.encoded
+            publicKey = spki.copyOfRange(spki.size - PUBLIC_KEY, spki.size)
+        }
+
+        fun decapsulate(ciphertext: ByteArray): ByteArray = decapsulator.decapsulate(ciphertext).encoded
+    }
+}

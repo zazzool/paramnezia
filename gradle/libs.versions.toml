@@ -6,6 +6,7 @@ serialization = "1.9.0"
 zxing = "3.5.4"
 junit = "4.13.2"
 sshd = "2.20.1"
+bouncycastle = "1.86"
 slf4j = "2.0.17"
 composeBom = "2025.09.01"
 activity = "1.9.3"
@@ -20,6 +21,8 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 junit = { module = "junit:junit", version.ref = "junit" }
 sshd-core = { module = "org.apache.sshd:sshd-core", version.ref = "sshd" }
+# Test only: Apache MINA sshd needs it for ML-KEM, the other side of our post-quantum key exchange test.
+bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 
 androidx-compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
