@@ -167,7 +167,7 @@ object TunnelRuntime {
         return cm.allNetworks.firstOrNull { n ->
             val c = cm.getNetworkCapabilities(n) ?: return@firstOrNull false
             c.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
-                (android.os.Build.VERSION.SDK_INT < 29 || c.ownerUid == me || c.ownerUid == android.os.Process.INVALID_UID)
+                (android.os.Build.VERSION.SDK_INT < 31 || c.ownerUid == me || c.ownerUid == android.os.Process.INVALID_UID)
         }
     }
 
