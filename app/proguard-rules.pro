@@ -7,13 +7,9 @@
 }
 -keep,includedescriptorclasses class net.paramnezia.**$$serializer { *; }
 
-# JSch loads its algorithms by class name.
--keep class com.jcraft.jsch.** { *; }
--dontwarn com.jcraft.jsch.**
--dontwarn org.ietf.jgss.**
--dontwarn org.slf4j.**
--dontwarn org.apache.logging.**
--dontwarn org.bouncycastle.**
--dontwarn org.newsclub.**
--dontwarn com.sun.jna.**
--dontwarn javax.naming.**
+
+# deploy/ssh: ML-KEM (post-quantum SSH key exchange) uses javax.crypto.KEM, which only desktop Java 24+
+# has. On Android MlKem768.available is false and these classes are never loaded.
+-dontwarn javax.crypto.KEM
+-dontwarn javax.crypto.KEM$*
+-dontwarn java.security.spec.NamedParameterSpec

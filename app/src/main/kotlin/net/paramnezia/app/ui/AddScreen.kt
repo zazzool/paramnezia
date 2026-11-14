@@ -87,8 +87,9 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
         if (payload != null) { qrProgress = null; runImport { app.servers.importQrPayload(payload) } }
         else { qrProgress = "QR ${assembler.received} из ${assembler.expected}"; scanAgain++ }
     }
-    // The next code of a series: opened again once the result of the previous one is handled.
-    LaunchedEffect(scanAgain) { if (scanAgain > 0) scan() }
+    // The next code of a series: opened again once the result of the previous one is handled, unless
+    // the series is complete by now (the scanner hands over a whole series at once).
+    LaunchedEffect(scanAgain) { if (scanAgain > 0 && qrProgress != null) scan() }
     val pickFile = platform.rememberFilePicker { content -> runImport { app.servers.import(content) } }
 
     Column(
@@ -195,6 +196,11 @@ private fun deployError(e: Throwable): String = when ((e as? SshException)?.code
     "auth_failed" -> "Неверный логин, пароль или ключ"
     "unreachable" -> "Сервер не отвечает по SSH"
     "host_key_changed" -> "Ключ сервера изменился с прошлого раза: возможна подмена"
+    "bad_passphrase" -> "Ключ защищён паролем: введите верную фразу-пароль"
+    "bad_key" -> "Ключ не распознан: подходят ключи OpenSSH, PEM и PuTTY (.ppk). ${e.message}"
+    "password_change_required" -> "Сервер требует сменить пароль: войдите по SSH один раз вручную и смените его"
+    "connection_lost" -> "Связь с сервером прервалась. Попробуйте ещё раз"
+    "timeout" -> "Сервер слишком долго выполнял установку"
     "no_package_manager" -> "Эта ОС сервера не поддерживается (нужен Debian, Ubuntu, CentOS или Fedora)"
     "sudo_password_required" -> "Нужен root или sudo без пароля"
     "docker_not_running", "docker_build_failed", "docker_run_failed" -> "Docker на сервере не запустился"

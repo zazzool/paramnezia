@@ -51,6 +51,8 @@ import net.paramnezia.tunnel.TunnelStats
 fun TunnelState.power(): PowerState = when (this) {
     is TunnelState.Up -> PowerState.ON
     is TunnelState.Connecting -> PowerState.CONNECTING
+    // Still trying by itself: a tap stops the attempts (it must not start yet another one).
+    is TunnelState.Failed -> if (retryAt > 0) PowerState.CONNECTING else PowerState.OFF
     else -> PowerState.OFF
 }
 

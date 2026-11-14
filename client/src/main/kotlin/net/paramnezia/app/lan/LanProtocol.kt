@@ -17,7 +17,7 @@ import java.io.InputStream
  */
 
 object LanProtocol {
-    /** DNS-SD service type (Android NSD form; JmDNS adds "local."). */
+    /** DNS-SD service type (Android NSD form; Mdns adds ".local"). */
     const val SERVICE_TYPE = "_paramnezia._tcp"
     const val VERSION = 1
     /** Port 80 makes the address just an IP (works on Windows); Android cannot bind below 1024. */
@@ -83,7 +83,7 @@ data class LanPeer(val name: String, val host: String, val port: Int, val info: 
     val address: String get() = LanNet.shortAddress(host, port)
 }
 
-/** What the platform adds: service discovery (Android NSD, JmDNS on Windows) and its own files. */
+/** What the platform adds: service discovery (Android NSD, our Mdns on Windows) and its own files. */
 interface LanPlatform {
     /** Announces the share; closing withdraws it. */
     fun advertise(name: String, port: Int): AutoCloseable

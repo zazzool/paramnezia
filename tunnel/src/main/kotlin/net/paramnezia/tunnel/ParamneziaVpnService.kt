@@ -19,14 +19,22 @@ import android.util.Log
 import net.paramnezia.core.config.Uapi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.net.DatagramSocket
+import java.net.InetAddress
+import java.util.concurrent.atomic.AtomicInteger
 import net.paramnezia.core.config.TunnelConfig
 import net.paramnezia.core.net.LinkProbe
 import net.paramnezia.core.net.LinkWatch
@@ -42,7 +50,10 @@ import net.paramnezia.core.net.LinkWatch
  *    sockets in the same tunnel, a full rebuild, another server;
  *  - a rebuild establishes the new interface before the old one is dropped, so apps never see a
  *    moment without the VPN (that moment is when traffic used to leave with the real address);
- *  - keepalive is lowered while the screen is off.
+ *  - keepalive is lowered while the screen is off;
+ *  - "off" means off at once, at any stage: a stop does not queue behind a connect, a probe or a
+ *    failover that is still running. It cancels them, shows "off" immediately and tears down
+ *    whatever they had built; the server's address is resolved cancellably for the same reason.
  */
 class ParamneziaVpnService : VpnService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -59,6 +70,20 @@ class ParamneziaVpnService : VpnService() {
     private val watch = LinkWatch()
 
     private val host get() = application as? TunnelHost
+
+    /**
+     * Bumped by every stop: work queued before it (a connect, a scheduled check, a retry) finds a
+     * newer epoch and does nothing, so nothing can bring the tunnel back after the user turned it off.
+     */
+    private val epoch = AtomicInteger()
+    /** Start requests seen; a stop that finishes after a newer start leaves the service running. */
+    private val starts = AtomicInteger()
+
+    /** Runs [block] under the lock unless a stop came in since it was asked for. */
+    private fun work(block: suspend () -> Unit) {
+        val e = epoch.get()
+        scope.launch { lock.withLock { if (e == epoch.get()) block() } }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -86,17 +111,18 @@ class ParamneziaVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            scope.launch { lock.withLock { down() }; stopSelf() }
+            stopNow()
             return START_NOT_STICKY
         }
         // ACTION_START from the app, or a null/"android.net.VpnService" intent from Always-on VPN.
-        scope.launch { lock.withLock { connect(host?.currentSpec()) } }
+        starts.incrementAndGet()
+        work { connect(host?.currentSpec()) }
         return START_STICKY
     }
 
     override fun onRevoke() {
         // Another VPN took over or the user revoked us in settings.
-        scope.launch { lock.withLock { down() }; stopSelf() }
+        stopNow()
     }
 
     override fun onDestroy() {
@@ -114,16 +140,51 @@ class ParamneziaVpnService : VpnService() {
     }
 
     internal fun reload() {
-        scope.launch { lock.withLock { connect(host?.currentSpec(), reconnecting = handle >= 0, quiet = true) } }
+        work { connect(host?.currentSpec(), reconnecting = handle >= 0, quiet = true) }
     }
 
-    internal fun stopFromApp() {
-        scope.launch { lock.withLock { down() }; stopSelf() }
+    internal fun stopFromApp() = stopNow()
+
+    /**
+     * Off, now, whatever is going on. Whatever holds the lock (resolving the server, a probe, a
+     * failover waiting for the manifest) is cancelled, scheduled work is dropped, the screen says
+     * "off" at once, and the teardown follows as soon as the lock is free (milliseconds).
+     */
+    private fun stopNow() {
+        epoch.incrementAndGet()
+        main.removeCallbacks(healthCheck); main.removeCallbacks(rebuildLater); main.removeCallbacks(retryStart); main.removeCallbacks(lanCheck)
+        scope.coroutineContext.cancelChildren()
+        TunnelRuntime.set(TunnelState.Down)
+        val startsAtStop = starts.get()
+        scope.launch {
+            lock.withLock { down() }
+            if (starts.get() == startsAtStop) stopSelf()
+        }
     }
 
     /** Failed starts in a row (no network yet, DNS of the endpoint, a native error); reset on success. */
     private var startFailures = 0
-    private val retryStart = Runnable { scope.launch { lock.withLock { if (handle < 0) connect(host?.currentSpec()) } } }
+    private val retryStart = Runnable { work { if (handle < 0) connect(host?.currentSpec()) } }
+
+    /**
+     * The server's address, resolved on a side thread: a stop does not wait for a slow resolver
+     * (the lookup finishes in the background and is dropped).
+     */
+    private suspend fun resolve(name: String): InetAddress = withTimeout(RESOLVE_TIMEOUT_MS) {
+        suspendCancellableCoroutine<InetAddress> { c ->
+            Thread({ val r = runCatching { InetAddress.getByName(name) }; if (c.isActive) c.resumeWith(r) }, "pn-resolve")
+                .apply { isDaemon = true; start() }
+        }
+    }
+
+    private suspend fun resolveEndpoints(config: TunnelConfig): Map<String, InetAddress> {
+        val out = HashMap<String, InetAddress>()
+        for (p in config.peers) {
+            val host = p.endpoint?.let { runCatching { Uapi.splitEndpoint(it).first }.getOrNull() } ?: continue
+            if (host !in out) out[host] = resolve(host)
+        }
+        return out
+    }
 
     /**
      * Builds (or rebuilds) the tunnel and starts verifying it. [reconnecting]: a repair or reload of a
@@ -131,7 +192,9 @@ class ParamneziaVpnService : VpnService() {
      * settings, new local network) keeps showing "connected" while it is verified, instead of
      * flashing "connecting" for a second; if the verification fails the watchdog says so.
      */
-    private fun connect(next: TunnelSpec?, reconnecting: Boolean = false, quiet: Boolean = false) {
+    private suspend fun connect(next: TunnelSpec?, reconnecting: Boolean = false, quiet: Boolean = false) {
+        currentCoroutineContext().ensureActive()
+        val e = epoch.get()
         if (next == null) {
             TunnelRuntime.set(TunnelState.Failed("no_profile"))
             down()
@@ -144,7 +207,9 @@ class ParamneziaVpnService : VpnService() {
         if (!keepUp) TunnelRuntime.set(TunnelState.Connecting(next.serverName, reconnecting = repair))
         try {
             // Resolve before touching the old tunnel, so a DNS failure keeps the current connection.
-            val uapi = Uapi.write(next.config.withKeepalive(if (screenOn) next.keepaliveScreenOn else next.keepaliveScreenOff))
+            val resolved = resolveEndpoints(next.config)
+            val uapi = Uapi.write(next.config.withKeepalive(if (screenOn) next.keepaliveScreenOn else next.keepaliveScreenOff)) { resolved[it] ?: InetAddress.getByName(it) }
+            currentCoroutineContext().ensureActive()
             val builder = Builder().setSession(next.serverName).setMtu(next.config.iface.mtu ?: 1280)
             for (a in next.config.iface.addresses) builder.addAddress(a.address, a.length)
             val dns = next.dns
@@ -178,6 +243,8 @@ class ParamneziaVpnService : VpnService() {
             if (old >= 0) AwgNative.turnOff(old)
             val h = AwgNative.turnOn("pn0", tun.detachFd(), uapi, dns?.encode().orEmpty(), if (dns != null) directDnsSocket() else -1)
             if (h < 0) throw IllegalStateException("tunnel_start_failed:$h")
+            // Turned off while the native side was starting: undo it rather than leave it running.
+            if (e != epoch.get()) { AwgNative.turnOff(h); return }
             protect(AwgNative.socketV4(h)); protect(AwgNative.socketV6(h))
             handle = h
             spec = next
@@ -189,17 +256,21 @@ class ParamneziaVpnService : VpnService() {
             // Verified (and shown as connected) by the first probe that comes back.
             scheduleCheck(VERIFY_FIRST_MS)
             startFailures = 0
-        } catch (e: Exception) {
-            Log.e(TAG, "connect failed", e)
-            TunnelRuntime.set(TunnelState.Failed(e.message ?: e.javaClass.simpleName))
+        } catch (c: CancellationException) {
+            throw c
+        } catch (x: Exception) {
+            if (e != epoch.get()) return
+            Log.e(TAG, "connect failed", x)
             // Without permission only the user can help; anything else may pass (a network that is
             // not up yet after boot, a DNS hiccup): try again with backoff, then give up.
-            if (e.message != PERMISSION_MISSING && startFailures < MAX_START_RETRIES) {
+            if (x.message != PERMISSION_MISSING && startFailures < MAX_START_RETRIES) {
+                val wait = minOf(RETRY_BASE_MS shl startFailures, WATCH_SCREEN_OFF_MS)
+                TunnelRuntime.set(TunnelState.Failed(x.message ?: x.javaClass.simpleName, retryAt = System.currentTimeMillis() + wait))
                 spec = next
                 main.removeCallbacks(retryStart)
-                main.postDelayed(retryStart, minOf(RETRY_BASE_MS shl startFailures, WATCH_SCREEN_OFF_MS))
+                main.postDelayed(retryStart, wait)
                 startFailures++
-            }
+            } else TunnelRuntime.set(TunnelState.Failed(x.message ?: x.javaClass.simpleName))
         }
     }
 
@@ -230,8 +301,8 @@ class ParamneziaVpnService : VpnService() {
 
     // --- health and failover ---------------------------------------------------------------
 
-    private val healthCheck = Runnable { scope.launch { lock.withLock { checkHealth() } } }
-    private val rebuildLater = Runnable { scope.launch { lock.withLock { spec?.let { rebuild(it) } } } }
+    private val healthCheck = Runnable { work { checkHealth() } }
+    private val rebuildLater = Runnable { work { spec?.let { rebuild(it) } } }
 
     private fun scheduleCheck(delayMs: Long) {
         main.removeCallbacks(healthCheck)
@@ -239,7 +310,7 @@ class ParamneziaVpnService : VpnService() {
     }
 
     internal fun recheck() {
-        scope.launch { lock.withLock { if (handle >= 0) { watch.suspect(); scheduleCheck(0) } } }
+        work { if (handle >= 0) { watch.suspect(); scheduleCheck(0) } }
     }
 
     private suspend fun checkHealth() {
@@ -351,9 +422,7 @@ class ParamneziaVpnService : VpnService() {
             underlying = network
             // Wi-Fi ↔ mobile under a working tunnel: give it a moment to re-handshake, then probe. A
             // fresh tunnel is being verified anyway; its quick verification is not pushed back.
-            if (changed) scope.launch {
-                lock.withLock { if (handle >= 0 && TunnelRuntime.state.value is TunnelState.Up) { watch.suspect(); scheduleCheck(NETWORK_CHANGE_CHECK_MS) } }
-            }
+            if (changed) work { if (handle >= 0 && TunnelRuntime.state.value is TunnelState.Up) { watch.suspect(); scheduleCheck(NETWORK_CHANGE_CHECK_MS) } }
         }
     }
 
@@ -366,16 +435,14 @@ class ParamneziaVpnService : VpnService() {
      * then the tunnel is rebuilt so those addresses stay reachable directly too.
      */
     private val lanCheck = Runnable {
-        scope.launch {
-            lock.withLock {
-                val current = spec ?: return@withLock
-                if (handle < 0) return@withLock
-                val local = TunnelRuntime.localNetwork(this@ParamneziaVpnService)
-                TunnelRuntime.setLocalDns(local.dns)
-                if (local.prefixes != current.lan) {
-                    Log.i(TAG, "local network changed: ${local.prefixes}, rebuilding routes")
-                    connect(host?.currentSpec() ?: return@withLock, reconnecting = true, quiet = true)
-                }
+        work {
+            val current = spec ?: return@work
+            if (handle < 0) return@work
+            val local = TunnelRuntime.localNetwork(this@ParamneziaVpnService)
+            TunnelRuntime.setLocalDns(local.dns)
+            if (local.prefixes != current.lan) {
+                Log.i(TAG, "local network changed: ${local.prefixes}, rebuilding routes")
+                connect(host?.currentSpec() ?: return@work, reconnecting = true, quiet = true)
             }
         }
     }
@@ -425,6 +492,7 @@ class ParamneziaVpnService : VpnService() {
         private const val RETRY_BASE_MS = 10_000L
         private const val MAX_START_RETRIES = 8
         private const val PERMISSION_MISSING = "VPN permission missing"
+        private const val RESOLVE_TIMEOUT_MS = 15_000L
 
         /** False if Android refused (a start from the background on Android 8+). */
         fun start(context: Context): Boolean = runCatching {

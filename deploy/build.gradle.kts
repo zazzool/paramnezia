@@ -16,15 +16,17 @@ kotlin {
 
 dependencies {
     api(project(":core"))
-    implementation(libs.jsch)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
     testImplementation(libs.sshd.core)
+    testImplementation(libs.bcprov)
     testRuntimeOnly(libs.slf4j.simple)
 }
 
 tasks.test {
+    // On JDK 25 where installed, so the ML-KEM key exchange (Java 24+) is tested too; the code stays Java 17.
+    runCatching { javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(25)) }.get() }.getOrNull()?.let { javaLauncher.set(it) }
     // The end-to-end deploy test needs a local Docker daemon; enable with PN_E2E=1.
     environment("PN_E2E", System.getenv("PN_E2E") ?: "0")
     testLogging {

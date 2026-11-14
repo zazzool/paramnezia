@@ -77,7 +77,7 @@ enum class Protection(val label: String) {
 fun protection(tunnel: TunnelState, servers: Int, health: TunnelHealth = TunnelHealth()): Protection = when {
     tunnel is TunnelState.Up && (health.unstable || health.offline) -> Protection.UNSTABLE
     tunnel is TunnelState.Up -> Protection.ON
-    tunnel is TunnelState.Connecting -> Protection.CONNECTING
+    tunnel is TunnelState.Connecting || (tunnel is TunnelState.Failed && tunnel.retryAt > 0) -> Protection.CONNECTING
     servers == 0 -> Protection.NO_SERVER
     tunnel is TunnelState.Failed -> Protection.FAILED
     else -> Protection.OFF

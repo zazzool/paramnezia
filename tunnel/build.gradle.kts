@@ -44,6 +44,5 @@ tasks.named("preBuild") { dependsOn(buildGo) }
 
 dependencies {
     api(project(":core"))
-    implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)
 }

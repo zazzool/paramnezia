@@ -41,12 +41,14 @@ client/src/main/kotlin/net/paramnezia/app/lan/
   LanHub.kt        состояние для экранов: раздача, поиск соседей, кэш файлов
   LanNet.kt        локальные сети устройства (без VPN, мобильной сети и виртуальных адаптеров)
 app/.../lan/AndroidLan.kt      NsdManager, установленный APK
-desktop/.../DesktopLan.kt      JmDNS
+client/.../lan/Mdns.kt         свой mDNS / DNS-SD (RFC 6762/6763): один сокет на все интерфейсы
+desktop/.../DesktopLan.kt      Windows: раздача и поиск через Mdns
 app/.../ui/LanScreens.kt       «Раздать по Wi-Fi», «Получить настройки от…», «По адресу раздачи»
 ```
 
 - **Обнаружение:** mDNS / DNS-SD, тип `_paramnezia._tcp` (так находят принтеры и Chromecast). Android — системный
-  `NsdManager`, Windows — JmDNS на каждом адресе Wi-Fi/Ethernet.
+  `NsdManager`, Windows — свой `Mdns` (один мультикаст-сокет, ответы с адресом того интерфейса, откуда пришёл запрос,
+  прощальные записи с TTL 0 при остановке).
 - **Сервер:** порт 80 (адрес без порта), иначе 8080, 8888, 8000, 8008, 8081. Принимает соединения только из
   подсетей своих интерфейсов Wi-Fi/Ethernet/точки доступа (не через туннель).
 - **HTTP:** `/` страница, `/a` APK, `/w` установщик Windows, `/info` JSON, `POST /join` запрос настроек,

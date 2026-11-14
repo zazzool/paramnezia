@@ -58,7 +58,7 @@ class CloudInitE2ETest {
         CloudProvisioner.waitForCloudInit(creds, store, sleep = { Thread.sleep(1_000) })
         val who = SshConnection.open(creds, store).use { it.run("id -u; ls /etc/ssh/ssh_host_*_key") }
         assertTrue(who.stdout, who.stdout.startsWith("0\n"))
-        assertTrue(who.stdout, "ssh_host_rsa_key" in who.stdout)
+        assertTrue(who.stdout, "ssh_host_ed25519_key" in who.stdout)
 
         // Another pinned key: the connection is refused, as for a server that is not ours.
         val other = MemoryHostKeyStore().apply { put("127.0.0.1", port, SshKeyPair.generate("x").fingerprint) }

@@ -91,6 +91,31 @@ data class StoredFleet(
      * a person takes one instead of a round of SSH sessions (FleetManager.fillPool / addDevice).
      */
     val pool: List<PooledDevice> = emptyList(),
+    /**
+     * This device is a co-admin: [adminSeed] is its own key from the owner's grant, not the fleet's
+     * owner key. Null/false on the owner and on ordinary devices.
+     */
+    val coAdmin: Boolean = false,
+    /** Co-admin: its verify key (base64), named in the manifests it signs. */
+    val signerKey: String? = null,
+    /** Owner: the co-admins it appointed, with the secrets their grants are sealed from. */
+    val coAdmins: List<CoAdminRecord> = emptyList(),
+    /** Owner: co-admins' SSH keys still to be removed from some server (cleared once all confirmed). */
+    val revokedAdminKeys: Set<String> = emptySet(),
+    /** Newest owner-signed manifest version accepted (replay protection, see FleetMember.offer). */
+    val ownerVersion: Long = 0,
+)
+
+/** Owner: one appointed co-admin (its device, signing key and SSH key; kept to re-seal its grant). */
+@Serializable
+data class CoAdminRecord(
+    val device: String,
+    val name: String,
+    val signingSeed: String,
+    val verifyKey: String,
+    val sshPrivate: String,
+    val sshPublic: String,
+    val since: Long,
 )
 
 /** A device slot ready to hand out: its key, its fixed address and the servers that already know it. */

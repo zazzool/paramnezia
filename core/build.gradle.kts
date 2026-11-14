@@ -18,4 +18,6 @@ kotlin {
 dependencies {
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
+    // Only to cross-check our own QR encoder and decoder against an independent implementation.
+    testImplementation(libs.zxing.core)
 }

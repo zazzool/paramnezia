@@ -72,9 +72,14 @@ class HetznerProvider(token: String, transport: CloudHttp.Transport = CloudHttp.
         if (e.code == "not_found") CloudServer(id, CloudServer.State.GONE, null) else throw e
     }
 
+    override fun list(): List<CloudServer> = http.get("/servers?per_page=50").obj()?.get("servers").arr().mapNotNull { it.obj() }.map(::parse)
+
     override fun find(name: String): CloudServer? =
         http.get("/servers?name=${java.net.URLEncoder.encode(name, "UTF-8")}").obj()?.get("servers").arr().mapNotNull { it.obj() }
             .firstOrNull { it.str("name") == name }?.let(::parse)
+
+    // POST /servers/{id}/actions/reset: a hard reset (hcloud-go Server.Reset); /reboot would ask the OS.
+    override fun reboot(id: String) { http.post("/servers/${id.toLong()}/actions/reset", kotlinx.serialization.json.JsonObject(emptyMap())) }
 
     override fun delete(id: String) {
         try { http.delete("/servers/${id.toLong()}") } catch (e: CloudException) { if (e.code != "not_found") throw e }

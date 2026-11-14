@@ -69,7 +69,7 @@ class ToggleActivity : android.app.Activity() {
         super.onCreate(savedInstanceState)
         val app = application as App
         val s = TunnelRuntime.state.value
-        if (s is TunnelState.Down || s is TunnelState.Failed) {
+        if (s is TunnelState.Down || (s is TunnelState.Failed && s.retryAt == 0L)) {
             if (VpnService.prepare(this) == null) app.connect()
             else startActivity(Intent(this, MainActivity::class.java))
         } else {

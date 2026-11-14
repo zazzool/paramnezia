@@ -93,7 +93,12 @@ jobs:
         shell: bash
         run: echo "VERSION=${GITHUB_REF_NAME#release/}" >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: 21 }
+        with:
+          distribution: temurin
+          # 25: the Windows app (java.lang.foreign, desktop/build.gradle.kts); 21 stays the default.
+          java-version: |
+            25
+            21
       - uses: actions/setup-go@v5
         with: { go-version-file: tunnel/src/main/go/go.mod, cache-dependency-path: tunnel/src/main/go/go.sum }
       - uses: gradle/actions/setup-gradle@v4

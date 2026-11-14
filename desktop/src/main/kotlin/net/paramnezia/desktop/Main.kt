@@ -42,6 +42,11 @@ import java.time.LocalDateTime
  */
 fun main(args: Array<String>) {
     if (args.firstOrNull() == "--screenshots") screenshotsAndExit(File(args.getOrElse(1) { "screenshots" }))
+    if (args.firstOrNull() == "--selftest") {
+        val problem = Win32.selfTest()
+        File(args.getOrElse(1) { "selftest.txt" }).writeText(problem ?: "ok")
+        kotlin.system.exitProcess(if (problem == null) 0 else 1)
+    }
     val opened = args.firstOrNull { it.endsWith(".vpn", true) || it.endsWith(".conf", true) }
         ?.let { f -> runCatching { File(f).readText().take(256 * 1024) }.getOrNull() }
         ?: args.firstOrNull { it.startsWith("vpn://") }
@@ -59,6 +64,7 @@ fun main(args: Array<String>) {
     ThemePrefs.mode.value = ThemePrefs.parse(runCatching { themeFile.readText().trim() }.getOrNull())
     ThemePrefs.save = { m -> themeFile.writeText(m.name) }
     app.start()
+    Autostart.repair()
 
     application {
         var visible by remember { mutableStateOf("--minimized" !in args) }
@@ -80,16 +86,16 @@ fun main(args: Array<String>) {
             tooltip = "Paramnezia: " + when (val t = tunnel) {
                 is TunnelState.Up -> "защищено"
                 is TunnelState.Connecting -> if (t.reconnecting) "восстановление связи…" else "подключение…"
-                is TunnelState.Failed -> "ошибка"
+                is TunnelState.Failed -> if (t.retryAt > 0) "нет связи, повторю попытку" else "ошибка"
                 TunnelState.Down -> "выключено"
             },
             onAction = { visible = true },
             menu = {
                 Item("Открыть Paramnezia", onClick = { visible = true })
-                if (tunnel is TunnelState.Down || tunnel is TunnelState.Failed) Item("Включить VPN", onClick = { app.connect() })
+                if (tunnel.isOff()) Item("Включить VPN", onClick = { app.connect() })
                 else Item("Выключить VPN", onClick = { app.disconnect() })
                 Separator()
-                if (tunnel is TunnelState.Down || tunnel is TunnelState.Failed) Item("Выйти", onClick = quit)
+                if (tunnel.isOff()) Item("Выйти", onClick = quit)
                 else {
                     Item("Выйти (VPN продолжит работать)", onClick = quit)
                     Item("Выключить VPN и выйти", onClick = stopAndQuit)
@@ -180,3 +186,5 @@ private fun screenshotsAndExit(out: File) {
     Runtime.getRuntime().halt(0)
 }
 
+/** Nothing running and nothing pending: a Failed state with a retry scheduled still counts as on. */
+private fun TunnelState.isOff() = this is TunnelState.Down || (this is TunnelState.Failed && retryAt == 0L)

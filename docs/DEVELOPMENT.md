@@ -9,6 +9,7 @@
 | Что | Версия | Зачем |
 |---|---|---|
 | JDK | 21 (Temurin) | Gradle, Kotlin, тесты |
+| JDK | 25 | только Windows-приложение (`desktop/`, `java.lang.foreign`); Gradle находит его сам |
 | Android SDK | compileSdk 36, build-tools 36+ | приложение |
 | Android NDK | любой свежий (CI берёт `ANDROID_NDK_LATEST_HOME`) | сборка Go-библиотеки |
 | Go | версия из `tunnel/src/main/go/go.mod` (1.25) | amneziawg-go и DNS-фильтр |
@@ -24,7 +25,7 @@ Android Studio открывает проект как обычно. Если Goo
 
 ```
 core/         чистый Kotlin/JVM, без Android: форматы, криптография, семейная группа (fleet), релизы, маршруты
-deploy/       JVM: SSH (JSch), скрипты установки сервера, публикация манифеста, страница приглашений
+deploy/       JVM: свой SSH-клиент (`deploy/ssh`), скрипты установки сервера, публикация манифеста, страница приглашений
 tunnel/       Android-библиотека: VpnService, JNI, Go (amneziawg-go + DNS-фильтр)
 client/       JVM: общий код Android и Windows (состояние, импорт, семейная группа, ссылки, видимость адресов)
 app/          Android-приложение: Compose UI, семейная группа, OTA, виджет, плитка
@@ -187,7 +188,7 @@ Go-библиотека стартуют лениво. `MainActivity` показ
 
 ## 6. Подводные камни
 
-- **R8.** Всё, что создаётся рефлексией, нужно держать в `app/proguard-rules.pro`: JSch, сериализаторы,
+- **R8.** Всё, что создаётся рефлексией, нужно держать в `app/proguard-rules.pro`: сериализаторы,
   (WorkManager с его Room убран в 2.13: синхронизацию делает `SyncJob` на JobScheduler). После правок правил смотрите задачу эмулятора в CI.
 - **AGP 9.** `sourceSets.jniLibs.srcDir` не работает; Go-библиотека кладётся в стандартный `src/main/jniLibs`.
 - **sudo и окружение.** `sudo` сбрасывает переменные: в скриптах значения передаются в контейнер явно

@@ -76,18 +76,17 @@
 
         <!-- Settings files the admin sends to people through a messenger (user-initiated share). -->
         <provider
-            android:name="androidx.core.content.FileProvider"
+            android:name=".ui.ShareProvider"
             android:authorities="${applicationId}.share"
             android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/share_paths" />
-        </provider>
+            android:grantUriPermissions="true" />
 
-        <!-- zxing's scanner in portrait. -->
+        <!-- The QR scanner (Camera2 + core/qr, ui/QrScanActivity.kt). -->
         <activity
-            android:name="com.journeyapps.barcodescanner.CaptureActivity"
-            android:screenOrientation="fullSensor"
-            tools:replace="screenOrientation" />
+            android:name=".ui.QrScanActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
 
         <service
             android:name=".ui.QuickTile"

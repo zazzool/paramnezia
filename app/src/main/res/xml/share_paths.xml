@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Settings files the admin sends from the app (cache/share only). -->
-<paths>
-    <cache-path name="share" path="share/" />
-</paths>

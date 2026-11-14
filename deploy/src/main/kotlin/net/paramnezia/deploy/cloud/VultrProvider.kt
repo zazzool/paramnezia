@@ -73,9 +73,14 @@ class VultrProvider(token: String, transport: CloudHttp.Transport = CloudHttp.Ur
         if (e.code == "not_found") CloudServer(id, CloudServer.State.GONE, null) else throw e
     }
 
+    override fun list(): List<CloudServer> = http.get("/instances?per_page=500").obj()?.get("instances").arr().mapNotNull { it.obj() }.map(::parse)
+
     override fun find(name: String): CloudServer? =
         http.get("/instances?per_page=500&label=${seg(name)}").obj()?.get("instances").arr().mapNotNull { it.obj() }
             .firstOrNull { it.str("label") == name }?.let(::parse)
+
+    // POST /instances/{id}/reboot: Vultr's reboot is a hard one (govultr Instance.Reboot).
+    override fun reboot(id: String) { http.post("/instances/${seg(id)}/reboot", kotlinx.serialization.json.JsonObject(emptyMap())) }
 
     override fun delete(id: String) {
         try { http.delete("/instances/${seg(id)}") } catch (e: CloudException) { if (e.code != "not_found") throw e }

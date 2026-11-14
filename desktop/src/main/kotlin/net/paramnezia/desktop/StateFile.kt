@@ -1,6 +1,5 @@
 package net.paramnezia.desktop
 
-import com.sun.jna.platform.win32.Crypt32Util
 import net.paramnezia.app.platform.StateStore
 import java.io.File
 import java.io.FileOutputStream
@@ -81,11 +80,11 @@ class StateFile(private val dir: File) : StateStore {
         return SecretKeySpec(raw, "AES").also { cached = it }
     }
 
-    private fun protect(b: ByteArray): ByteArray = if (WINDOWS) Crypt32Util.cryptProtectData(b) else b
-    private fun unprotect(b: ByteArray): ByteArray = if (WINDOWS) Crypt32Util.cryptUnprotectData(b) else b
+    private fun protect(b: ByteArray): ByteArray = if (WINDOWS) Win32.protect(b) else b
+    private fun unprotect(b: ByteArray): ByteArray = if (WINDOWS) Win32.unprotect(b) else b
 
     companion object {
-        val WINDOWS = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+        val WINDOWS = Win32.isWindows
     }
 }
 

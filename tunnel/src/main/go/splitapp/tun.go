@@ -230,7 +230,7 @@ func (t *splitTun) inject(pkt []byte) {
 func (t *splitTun) toSystem() {
 	for {
 		pb := t.ep.ReadContext(t.ctx)
-		if pb.IsNil() {
+		if pb == nil {
 			return
 		}
 		view := pb.ToView()
@@ -315,16 +315,18 @@ func splice(a, b net.Conn) {
 	b.Close()
 }
 
-func (t *splitTun) handleUDP(r *udp.ForwarderRequest) {
+// handleUDP takes a new UDP flow; false (no endpoint) lets the stack answer "port unreachable".
+func (t *splitTun) handleUDP(r *udp.ForwarderRequest) bool {
 	id := r.ID()
 	dst := netip.AddrPortFrom(toAddr(id.LocalAddress), id.LocalPort)
 	var wq waiter.Queue
 	ep, terr := r.CreateEndpoint(&wq)
 	if terr != nil {
-		return
+		return false
 	}
-	in := gonet.NewUDPConn(t.stack, &wq, ep)
+	in := gonet.NewUDPConn(&wq, ep)
 	go t.relayUDP(in, dst)
+	return true
 }
 
 func (t *splitTun) relayUDP(in *gonet.UDPConn, dst netip.AddrPort) {

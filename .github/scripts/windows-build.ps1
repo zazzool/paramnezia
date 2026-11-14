@@ -25,6 +25,22 @@ Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\wintun" -Force
 Copy-Item "$env:RUNNER_TEMP\wintun\wintun\bin\amd64\wintun.dll" "$svc\wintun.dll"
 
 # 2. The app image (release: ProGuard-shrunk, desktop/proguard-rules.pro).
+# The app is built on and ships JDK 25 (java.lang.foreign). Temurin 24+ comes without its jmods
+# (JEP 493), but ProGuard reads the JDK's classes from them and jlink prefers them: fetch the
+# jmods of exactly this Temurin build from Adoptium when they are missing.
+$jdk = $env:JAVA_HOME_25_X64
+if ($jdk -and -not (Test-Path "$jdk\jmods\java.base.jmod")) {
+    $impl = (Select-String -Path "$jdk\release" -Pattern '^IMPLEMENTOR_VERSION="Temurin-(.+)"').Matches.Groups[1].Value
+    if (-not $impl) { throw "not a Temurin JDK at $jdk, and it has no jmods" }
+    $url = "https://api.adoptium.net/v3/binary/version/jdk-$([uri]::EscapeDataString($impl))/windows/x64/jmods/hotspot/normal/eclipse"
+    Write-Host "jmods for Temurin $impl from $url"
+    $jz = "$env:RUNNER_TEMP\jmods.zip"
+    Invoke-WebRequest -Uri $url -OutFile $jz
+    Expand-Archive $jz -DestinationPath "$env:RUNNER_TEMP\jmods" -Force
+    New-Item -ItemType Directory -Force "$jdk\jmods" | Out-Null
+    Get-ChildItem "$env:RUNNER_TEMP\jmods" -Recurse -Filter *.jmod | Copy-Item -Destination "$jdk\jmods"
+    if (-not (Test-Path "$jdk\jmods\java.base.jmod")) { throw "no java.base.jmod in the Adoptium jmods archive" }
+}
 Push-Location $root
 & .\gradlew.bat '-Pparamnezia.jvmOnly=true' --no-configuration-cache :desktop:createReleaseDistributable
 if ($LASTEXITCODE) { throw "gradle failed" }

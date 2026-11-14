@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"strconv"
 	"strings"
@@ -41,6 +42,9 @@ type supervisor struct {
 	since      time.Time
 	gen        int // bumped by start/stop: a stale timer does nothing
 	timer      *time.Timer
+	// ctx ends with the generation: stop cancels a rebuild that is still bringing a tunnel up.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func newSupervisor(t *tunnel) *supervisor { return &supervisor{t: t} }
@@ -50,6 +54,10 @@ func (s *supervisor) start(specs []*upSpec) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.gen++
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.ctx, s.cancel = context.WithCancel(context.Background())
 	sameServer := len(s.specs) > 0 && s.specs[s.active].Name == specs[0].Name && s.everUp
 	s.specs, s.active = specs, 0
 	if s.w == nil || !sameServer {
@@ -66,6 +74,10 @@ func (s *supervisor) stop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.gen++
+	if s.cancel != nil {
+		s.cancel()
+		s.cancel = nil
+	}
 	if s.timer != nil {
 		s.timer.Stop()
 	}
@@ -225,6 +237,7 @@ func (s *supervisor) rebuild(gen, index int) {
 	}
 	spec := s.specs[index]
 	switched := index != s.active
+	ctx := s.ctx
 	s.mu.Unlock()
 	s.op.Lock()
 	defer s.op.Unlock()
@@ -235,7 +248,7 @@ func (s *supervisor) rebuild(gen, index int) {
 		return
 	}
 	log.Printf("watch: rebuild %q (switch=%v)", spec.Name, switched)
-	err := s.t.up(spec)
+	err := s.t.up(ctx, spec)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if gen != s.gen {
