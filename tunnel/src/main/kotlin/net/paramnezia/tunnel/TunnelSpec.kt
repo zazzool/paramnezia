@@ -77,7 +77,8 @@ sealed interface TunnelState {
     data class Connecting(val serverName: String, val reconnecting: Boolean = false) : TunnelState
     /** [since]: start of the session; automatic repairs of the same server keep it. */
     data class Up(val serverName: String, val serverId: String, val since: Long) : TunnelState
-    data class Failed(val reason: String) : TunnelState
+    /** [retryAt]: when the next automatic attempt is due (0: none, only the user can start it again). */
+    data class Failed(val reason: String, val retryAt: Long = 0) : TunnelState
 }
 
 data class TunnelStats(val rxBytes: Long, val txBytes: Long, val lastHandshakeEpochSec: Long)

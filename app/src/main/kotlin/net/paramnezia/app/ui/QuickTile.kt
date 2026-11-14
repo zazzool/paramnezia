@@ -14,7 +14,7 @@ class QuickTile : TileService() {
     override fun onStartListening() = render()
 
     override fun onClick() {
-        val up = TunnelRuntime.state.value !is TunnelState.Down
+        val up = TunnelRuntime.state.value.let { it !is TunnelState.Down && !(it is TunnelState.Failed && it.retryAt == 0L) }
         when {
             up -> app.disconnect()
             app.vpnPermissionIntent() == null -> app.connect()

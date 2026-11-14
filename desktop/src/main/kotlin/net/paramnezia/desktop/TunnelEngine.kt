@@ -6,6 +6,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -30,6 +31,10 @@ interface TunnelHost {
  * next server of the list the app gave it, also while the app is closed or has crashed. This class
  * only asks for a tunnel, hands over the server list and mirrors the service's status every
  * [POLL_MS] for the screen (one small pipe call).
+ *
+ * "Off" is immediate at any stage: [stop] does not wait for a connect still in flight. It shows
+ * "off" at once and sends "down" to the service on its own pipe connection, which cancels an "up"
+ * the service is still working on; a connect that returns after that undoes its own result.
  */
 class TunnelEngine(
     private val client: ServiceClient,
@@ -53,16 +58,40 @@ class TunnelEngine(
     /** A quiet reload of a working tunnel keeps "connected" on screen until the service has verified it. */
     private var quietUntil = 0L
 
+    /** Bumped by every stop: work asked for before it does nothing, and a late "up" is undone. */
+    private val epoch = AtomicInteger()
+
+    private fun work(block: suspend () -> Unit) {
+        val e = epoch.get()
+        scope.launch { lock.withLock { if (e == epoch.get()) block() } }
+    }
+
     init {
         TunnelRuntime.onRecheck = { scope.launch(Dispatchers.IO) { runCatching { client.call(ServiceClient.Request("recheck")) } } }
     }
 
-    fun start() { scope.launch { lock.withLock { adoptOrConnect() } } }
-    fun reload() { scope.launch { lock.withLock { if (running || servers.isNotEmpty()) connect(host.currentSpec(), quiet = true) } } }
-    fun stop() { scope.launch { lock.withLock { down() } } }
+    fun start() = work { adoptOrConnect() }
+    fun reload() = work { if (running || servers.isNotEmpty()) connect(host.currentSpec(), quiet = true) }
+
+    fun stop() {
+        cancelPending()
+        // Straight to the service: an "up" it is still working on is cancelled there.
+        scope.launch(Dispatchers.IO) { runCatching { client.call(ServiceClient.Request("down")) }.onFailure { Log.w(TAG, "down: ${it.message}") } }
+        scope.launch { lock.withLock { down(tellService = false) } }
+    }
 
     /** Synchronous stop for "turn the VPN off and quit". */
-    suspend fun stopNow() = lock.withLock { down() }
+    suspend fun stopNow() {
+        cancelPending()
+        withContext(Dispatchers.IO) { runCatching { client.call(ServiceClient.Request("down")) } }
+        lock.withLock { down(tellService = false) }
+    }
+
+    private fun cancelPending() {
+        epoch.incrementAndGet()
+        poll?.cancel(); retry?.cancel()
+        TunnelRuntime.set(TunnelState.Down)
+    }
 
     /** DNS filter lists; the service keeps them across reconnects. */
     fun applyDnsRules(block: String, direct: String, allow: String) {
@@ -101,6 +130,7 @@ class TunnelEngine(
     }
 
     private suspend fun connect(next: TunnelSpec?, quiet: Boolean = false) {
+        val e = epoch.get()
         if (next == null) {
             down()
             TunnelRuntime.set(TunnelState.Failed("no_profile"))
@@ -113,32 +143,36 @@ class TunnelEngine(
         try {
             val req = ServiceClient.Request("up", up = specs.request(next, next.keepaliveActive),
                 alternates = alternates.map { specs.request(it, it.keepaliveActive) }.ifEmpty { null })
+            if (e != epoch.get()) return
             withContext(Dispatchers.IO) { client.call(req) }
+            // Turned off while the service was bringing it up: the "down" may have come first, so say it again.
+            if (e != epoch.get()) { withContext(Dispatchers.IO) { runCatching { client.call(ServiceClient.Request("down")) } }; return }
             servers = listOf(next) + alternates
             running = true
             startFailures = 0
             lastActive = 0; lastVerified = false; lastReconnects = 0
             retry?.cancel()
             startPolling()
-        } catch (e: Exception) {
-            Log.e(TAG, "connect failed", e)
+        } catch (x: Exception) {
+            if (e != epoch.get()) return
+            Log.e(TAG, "connect failed", x)
             running = false
-            TunnelRuntime.set(TunnelState.Failed(e.message ?: e.javaClass.simpleName))
             // No service yet after boot, a DNS hiccup building the spec: try again with backoff.
             if (startFailures < MAX_START_RETRIES) {
                 servers = listOf(next)
                 val wait = minOf(RETRY_BASE_MS shl startFailures, RETRY_MAX_MS)
+                TunnelRuntime.set(TunnelState.Failed(x.message ?: x.javaClass.simpleName, retryAt = System.currentTimeMillis() + wait))
                 startFailures++
                 retry?.cancel()
-                retry = scope.launch { delay(wait); lock.withLock { if (!running && servers.isNotEmpty()) connect(host.currentSpec()) } }
-            }
+                retry = scope.launch { delay(wait); lock.withLock { if (e == epoch.get() && !running && servers.isNotEmpty()) connect(host.currentSpec()) } }
+            } else TunnelRuntime.set(TunnelState.Failed(x.message ?: x.javaClass.simpleName))
         }
     }
 
-    private fun down() {
+    private fun down(tellService: Boolean = true) {
         poll?.cancel(); retry?.cancel()
         startFailures = 0
-        if (running || servers.isNotEmpty()) runCatching { client.call(ServiceClient.Request("down")) }.onFailure { Log.w(TAG, "down: ${it.message}") }
+        if (tellService && (running || servers.isNotEmpty())) runCatching { client.call(ServiceClient.Request("down")) }.onFailure { Log.w(TAG, "down: ${it.message}") }
         running = false
         servers = emptyList()
         TunnelRuntime.lastStats = null

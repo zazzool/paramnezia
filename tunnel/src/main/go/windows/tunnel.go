@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -46,9 +47,14 @@ type tunnel struct {
 	rebindIface func()
 }
 
-func (t *tunnel) up(s *upSpec) (err error) {
+// up builds the tunnel for s. A cancelled ctx (the app said "down" meanwhile) stops it at the next
+// step and removes whatever was built: "off" must never wait for a connect to finish.
+func (t *tunnel) up(ctx context.Context, s *upSpec) (err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	addrs, err := parsePrefixes(s.Addresses)
 	if err != nil {
 		return err
@@ -78,6 +84,10 @@ func (t *tunnel) up(s *upSpec) (err error) {
 	native, err := tun.CreateTUN(adapterName, mtu)
 	if err != nil {
 		return fmt.Errorf("wintun: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		native.Close()
+		return err
 	}
 	t.tun = native
 	luid := winipcfg.LUID(native.(*tun.NativeTun).LUID())
@@ -110,12 +120,19 @@ func (t *tunnel) up(s *upSpec) (err error) {
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		t.tun = dev
+		return err
+	}
 	t.bind = conn.NewDefaultBind()
 	t.dev = device.NewDevice(dev, t.bind, newLogger(s.Name))
 	if err := t.dev.IpcSet(s.UAPI); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := configure(luid, addrs, routes, dnsServers, s.DNSSearch, mtu); err != nil {
 		return err
 	}
@@ -127,6 +144,9 @@ func (t *tunnel) up(s *upSpec) (err error) {
 		if err := firewall.BlockDNSLeaks(dnsServers); err != nil {
 			log.Printf("DNS leak protection off: %v", err)
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := t.dev.Up(); err != nil {
 		return fmt.Errorf("up: %w", err)

@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net"
@@ -80,6 +81,24 @@ type server struct {
 	mu     sync.Mutex
 	direct *directProxy
 	wg     sync.WaitGroup
+	// abort is cancelled by every "down": an "up" that is still bringing a tunnel up (or waiting to)
+	// stops at its next step, so "off" never waits for a connect to finish.
+	abort       context.Context
+	abortCancel context.CancelFunc
+}
+
+// upContext: ended by the next "down".
+func (s *server) upContext() context.Context {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.abort
+}
+
+func (s *server) abortUps() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.abortCancel()
+	s.abort, s.abortCancel = context.WithCancel(context.Background())
 }
 
 func startServer() (*server, error) {
@@ -97,6 +116,7 @@ func startServer() (*server, error) {
 	}
 	t := &tunnel{}
 	s := &server{ln: ln, tunnel: t, watch: newSupervisor(t)}
+	s.abort, s.abortCancel = context.WithCancel(context.Background())
 	s.wg.Add(1)
 	go s.accept()
 	return s, nil
@@ -133,10 +153,11 @@ func (s *server) handle(r *request) response {
 		if r.Up == nil {
 			return response{Error: "no spec"}
 		}
+		ctx := s.upContext()
 		s.watch.op.Lock()
 		defer s.watch.op.Unlock()
 		s.watch.stop()
-		if err := s.tunnel.up(r.Up); err != nil {
+		if err := s.tunnel.up(ctx, r.Up); err != nil {
 			log.Printf("up %q: %v", r.Up.Name, err)
 			return fail(err)
 		}
@@ -150,6 +171,10 @@ func (s *server) handle(r *request) response {
 		log.Printf("up %q: %d routes, %d fallback servers", r.Up.Name, len(r.Up.Routes), len(specs)-1)
 		return response{OK: true}
 	case "down":
+		// First cancel whatever is still connecting (the app's "up", the watchdog's rebuild), then wait
+		// for the lock: it is free in moments instead of after a whole connect.
+		s.abortUps()
+		s.watch.stop()
 		s.watch.op.Lock()
 		defer s.watch.op.Unlock()
 		s.watch.stop()
