@@ -19,8 +19,12 @@ class FleetAdmin(
     /** Ed25519 seed; stays on the admin device. */
     val signingSeed: ByteArray,
     private val ed: Ed25519,
+    /** A co-admin's verify key (base64); null for the owner. */
+    val signer: String? = null,
 ) {
-    fun seal(m: FleetManifest): SignedManifest = FleetCrypto.seal(m, trust.fleetKey, signingSeed, ed)
+    val isOwner: Boolean get() = signer == null
+
+    fun seal(m: FleetManifest): SignedManifest = FleetCrypto.seal(m, trust.fleetKey, signingSeed, ed, signer)
 
     /** Next version with [change] applied; versions are wall-clock based and always increase. */
     fun next(current: FleetManifest, change: (FleetManifest) -> FleetManifest): FleetManifest {
@@ -101,21 +105,64 @@ class FleetMember(
     val deviceKey: WgKey,
     private val ed: Ed25519,
     manifest: FleetManifest? = null,
+    /** Newest version the owner signed that this device accepted (replay protection for the owner's key). */
+    ownerVersion: Long = 0,
+    /** Who signed [manifest]: null for the owner, else the co-admin's verify key. */
+    signer: String? = null,
 ) {
     var manifest: FleetManifest? = manifest
+        private set
+    var ownerVersion: Long = ownerVersion
+        private set
+    var signer: String? = signer
         private set
 
     /**
      * Offers a manifest fetched from anywhere. Returns true if it was accepted as a newer version.
      * Forged, foreign, older or replayed manifests are ignored.
+     *
+     * Two signers are trusted:
+     *  - the owner: any version newer than the last owner version seen, even one older than a
+     *    co-admin's latest. The owner always wins, so a co-admin whose rights were taken back cannot
+     *    lock the family out with a manifest numbered far ahead;
+     *  - a co-admin listed in the manifest this device has: only newer versions, and only if the
+     *    administrators and their grants stay exactly as they were (a co-admin cannot appoint,
+     *    remove or re-grant anyone).
      */
-    fun offer(text: String): Boolean {
+    fun offer(text: String): Boolean = offer(text, joining = false)
+
+    private fun offer(text: String, joining: Boolean): Boolean {
         val signed = FleetCrypto.decode(text.trim()) ?: return false
-        if (signed.version <= (manifest?.version ?: 0)) return false
-        // A manifest that no longer lists this device is accepted too: the device was revoked, and
-        // remembering the version stops older manifests from being replayed to it.
-        manifest = FleetCrypto.open(signed, trust, ed) ?: return false
+        val current = manifest
+        val next: FleetManifest
+        if (signed.signer != null && current == null && joining) {
+            // Joining from an invite a co-admin made: the invite itself is the trust root here (it
+            // carries the fleet keys), so the co-admin need only be listed in this very manifest.
+            next = FleetCrypto.open(signed, trust, ed, FleetCrypto.peekAdmins(signed, trust)) ?: return false
+        } else if (signed.signer == null) {
+            val newerThanCurrent = signed.version > (current?.version ?: 0)
+            if (signed.version <= ownerVersion || !(newerThanCurrent || signer != null)) return false
+            // A manifest that no longer lists this device is accepted too: the device was revoked, and
+            // remembering the version stops older manifests from being replayed to it.
+            next = FleetCrypto.open(signed, trust, ed) ?: return false
+            ownerVersion = signed.version
+        } else {
+            if (current == null || signed.version <= current.version) return false
+            val allowed = current.admins.map { it.verifyKey }
+            next = FleetCrypto.open(signed, trust, ed, allowed) ?: return false
+            if (next.admins != current.admins || GrantBox.digest(next.grants) != GrantBox.digest(current.grants)) return false
+        }
+        manifest = next
+        signer = signed.signer
         return true
+    }
+
+    /** This device's co-admin grant in the current manifest, if the owner made it one. */
+    fun grant(): AdminGrant? {
+        val me = deviceKey.publicKey().toBase64()
+        val m = manifest ?: return null
+        if (m.admins.none { it.device == me }) return null
+        return m.grants.firstOrNull { it.device == me }?.let { GrantBox.open(it, deviceKey) }
     }
 
     /** Tunnels for this device, master first. Empty when the device was removed from the fleet. */
@@ -130,7 +177,7 @@ class FleetMember(
         fun fromInvite(text: String, ed: Ed25519): FleetMember? {
             val inv = Invite.read(text) ?: return null
             val member = FleetMember(inv.trust, WgKey.fromBase64(inv.privateKey), ed)
-            if (!member.offer(inv.manifest)) return null
+            if (!member.offer(inv.manifest, joining = true)) return null
             return member
         }
     }

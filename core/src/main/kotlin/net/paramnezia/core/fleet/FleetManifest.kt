@@ -28,6 +28,10 @@ data class FleetManifest(
      * keep their own. Older apps ignore the field.
      */
     val policy: FleetPolicy? = null,
+    /** Co-administrators the owner appointed (since 2.16). Older apps ignore the field. */
+    val admins: List<FleetCoAdmin> = emptyList(),
+    /** Their credentials, each sealed to its device's key (see [GrantBox]). */
+    val grants: List<SealedGrant> = emptyList(),
 ) {
     fun deviceFor(publicKey: WgKey): FleetDevice? = devices.firstOrNull { it.publicKey == publicKey.toBase64() }
 }

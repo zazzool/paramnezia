@@ -71,7 +71,7 @@ data class FleetTrust(
     val fleetKey: String,
 )
 
-/** Wire form of a manifest: AES-GCM ciphertext signed by the admin. */
+/** Wire form of a manifest: AES-GCM ciphertext signed by the owner or a co-admin. */
 @Serializable
 data class SignedManifest(
     val fleetId: String,
@@ -80,9 +80,16 @@ data class SignedManifest(
     val body: String,
     /** base64 Ed25519 signature over [signedBytes]. */
     val sig: String,
+    /** A co-admin's verify key, base64; null when the owner signed (the only form before 2.16). */
+    val signer: String? = null,
 ) {
-    /** The signature covers the fleet, the version and the ciphertext, so none can be swapped. */
-    fun signedBytes(): ByteArray = "paramnezia-fleet-v1\n$fleetId\n$version\n$body".toByteArray()
+    /**
+     * The signature covers the fleet, the version and the ciphertext, so none can be swapped. A
+     * co-admin's signature has its own domain (and names the key), so it can never pass for the owner's.
+     */
+    fun signedBytes(): ByteArray =
+        if (signer == null) "paramnezia-fleet-v1\n$fleetId\n$version\n$body".toByteArray()
+        else "paramnezia-fleet-coadmin-v1\n$signer\n$fleetId\n$version\n$body".toByteArray()
 }
 
 object FleetCrypto {
@@ -91,22 +98,31 @@ object FleetCrypto {
 
     fun newFleetKey(): String = Base64.getEncoder().encodeToString(ByteArray(32).also(random::nextBytes))
 
-    fun seal(manifest: FleetManifest, fleetKey: String, signingSeed: ByteArray, ed: Ed25519): SignedManifest {
+    fun seal(manifest: FleetManifest, fleetKey: String, signingSeed: ByteArray, ed: Ed25519, signer: String? = null): SignedManifest {
         val nonce = ByteArray(12).also(random::nextBytes)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(Base64.getDecoder().decode(fleetKey), "AES"), GCMParameterSpec(128, nonce))
         cipher.updateAAD(aad(manifest.fleetId, manifest.version))
         val ct = cipher.doFinal(json.encodeToString(FleetManifest.serializer(), manifest).toByteArray())
         val body = Base64.getEncoder().encodeToString(nonce + ct)
-        val unsigned = SignedManifest(manifest.fleetId, manifest.version, body, "")
+        val unsigned = SignedManifest(manifest.fleetId, manifest.version, body, "", signer)
         return unsigned.copy(sig = Base64.getEncoder().encodeToString(ed.sign(signingSeed, unsigned.signedBytes())))
     }
 
-    /** Verifies and decrypts; returns null for anything forged, foreign, corrupt or mislabeled. */
-    fun open(signed: SignedManifest, trust: FleetTrust, ed: Ed25519): FleetManifest? {
+    /**
+     * Verifies and decrypts; returns null for anything forged, foreign, corrupt or mislabeled. An
+     * owner-signed manifest checks against the fleet's key; a co-admin's only against a key in
+     * [coAdmins] (the device decides which co-admins it trusts, see [FleetMember.offer]).
+     */
+    fun open(signed: SignedManifest, trust: FleetTrust, ed: Ed25519, coAdmins: Collection<String> = emptyList()): FleetManifest? {
         if (signed.fleetId != trust.fleetId) return null
+        val key = when (val s = signed.signer) {
+            null -> trust.verifyKey
+            in coAdmins -> s
+            else -> return null
+        }
         val sigOk = runCatching {
-            ed.verify(Base64.getDecoder().decode(trust.verifyKey), signed.signedBytes(), Base64.getDecoder().decode(signed.sig))
+            ed.verify(Base64.getDecoder().decode(key), signed.signedBytes(), Base64.getDecoder().decode(signed.sig))
         }.getOrDefault(false)
         if (!sigOk) return null
         return runCatching {
@@ -117,6 +133,19 @@ object FleetCrypto {
             val m = json.decodeFromString(FleetManifest.serializer(), cipher.doFinal(raw, 12, raw.size - 12).decodeToString())
             m.takeIf { it.fleetId == signed.fleetId && it.version == signed.version }
         }.getOrNull()
+    }
+
+    /** The co-admins a manifest lists, read before its signature is checked (for joining only). */
+    fun peekAdmins(signed: SignedManifest, trust: FleetTrust): List<String> = runCatching {
+        decrypt(signed, trust).admins.map { it.verifyKey }
+    }.getOrDefault(emptyList())
+
+    private fun decrypt(signed: SignedManifest, trust: FleetTrust): FleetManifest {
+        val raw = Base64.getDecoder().decode(signed.body)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(Base64.getDecoder().decode(trust.fleetKey), "AES"), GCMParameterSpec(128, raw, 0, 12))
+        cipher.updateAAD(aad(signed.fleetId, signed.version))
+        return json.decodeFromString(FleetManifest.serializer(), cipher.doFinal(raw, 12, raw.size - 12).decodeToString())
     }
 
     fun encode(signed: SignedManifest): String = json.encodeToString(SignedManifest.serializer(), signed)
