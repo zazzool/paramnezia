@@ -74,7 +74,6 @@ dependencies {
     implementation(compose.desktop.windows_x64)
     implementation(compose.material3)
     implementation(libs.jna.platform)
-    implementation(libs.jmdns)
     implementation(libs.kotlinx.coroutines.core)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:${libs.versions.coroutines.get()}")
     testImplementation(libs.junit)

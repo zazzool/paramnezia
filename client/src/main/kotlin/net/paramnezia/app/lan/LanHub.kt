@@ -272,7 +272,7 @@ class LanHub(
     fun watch(): AutoCloseable {
         synchronized(lock) {
             if (watchers++ == 0) {
-                // JmDNS needs a moment to open its sockets: never on the UI thread.
+                // Opening multicast sockets takes a moment: never on the UI thread.
                 browsing = scope.launch(Dispatchers.IO) {
                     val handle = runCatching {
                         platform.browse(
