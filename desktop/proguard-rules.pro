@@ -9,8 +9,6 @@
 -keep class * implements com.sun.jna.** { *; }
 -keep class javax.jmdns.** { *; }
 -keep class com.jcraft.jsch.** { *; }
-# QR codes (zxing looks enums up by name).
--keep class com.google.zxing.** { *; }
 # Enum.valueOf / values() work through reflection on the enum's own members: keep them for every enum.
 -keepclassmembers enum * {
     public static **[] values();

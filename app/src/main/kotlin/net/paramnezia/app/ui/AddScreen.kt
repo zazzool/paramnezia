@@ -87,8 +87,9 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
         if (payload != null) { qrProgress = null; runImport { app.servers.importQrPayload(payload) } }
         else { qrProgress = "QR ${assembler.received} из ${assembler.expected}"; scanAgain++ }
     }
-    // The next code of a series: opened again once the result of the previous one is handled.
-    LaunchedEffect(scanAgain) { if (scanAgain > 0) scan() }
+    // The next code of a series: opened again once the result of the previous one is handled, unless
+    // the series is complete by now (the scanner hands over a whole series at once).
+    LaunchedEffect(scanAgain) { if (scanAgain > 0 && qrProgress != null) scan() }
     val pickFile = platform.rememberFilePicker { content -> runImport { app.servers.import(content) } }
 
     Column(

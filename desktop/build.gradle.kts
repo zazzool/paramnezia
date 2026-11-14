@@ -73,7 +73,6 @@ dependencies {
     implementation(compose.desktop.currentOs)
     implementation(compose.desktop.windows_x64)
     implementation(compose.material3)
-    implementation(libs.zxing.core)
     implementation(libs.jna.platform)
     implementation(libs.jmdns)
     implementation(libs.kotlinx.coroutines.core)

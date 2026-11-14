@@ -10,8 +10,6 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
-import com.journeyapps.barcodescanner.ScanContract
-import com.journeyapps.barcodescanner.ScanOptions
 
 /** The shared screens on Android: toasts, the share sheet, the camera QR scanner, the file picker. */
 class AndroidUiPlatform(private val context: Context) : UiPlatform {
@@ -37,8 +35,8 @@ class AndroidUiPlatform(private val context: Context) : UiPlatform {
 
     @Composable
     override fun rememberQrScanner(onText: (String) -> Unit): () -> Unit {
-        val launcher = rememberLauncherForActivityResult(ScanContract()) { result -> result.contents?.let(onText) }
-        return { launcher.launch(scanOptions()) }
+        val launcher = rememberLauncherForActivityResult(QrScanActivity.Contract()) { texts -> texts?.forEach(onText) }
+        return { launcher.launch(Unit) }
     }
 
     @Composable
@@ -48,12 +46,5 @@ class AndroidUiPlatform(private val context: Context) : UiPlatform {
             if (content != null) onText(content)
         }
         return { launcher.launch(arrayOf("*/*")) }
-    }
-
-    private fun scanOptions() = ScanOptions().apply {
-        setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-        setBeepEnabled(false)
-        setOrientationLocked(false)
-        setPrompt("Наведите камеру на QR-код")
     }
 }
