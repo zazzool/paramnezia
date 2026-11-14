@@ -1,143 +1,206 @@
+/*
+ * Ported from ZXing (com.google.zxing.common.reedsolomon: GenericGF, GenericGFPoly,
+ * ReedSolomonEncoder, ReedSolomonDecoder), Copyright 2007-2008 ZXing authors,
+ * licensed under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * Changes: Kotlin; only the QR field GF(256)/0x11D; a decode failure is a -1 result, not an
+ * exception (it happens on every unreadable camera frame); error positions outside the block
+ * are refused before anything is written; the generator polynomials are cached thread-safely.
+ */
 package net.paramnezia.core.qr
 
-/**
- * Reed–Solomon over GF(256) with the QR field polynomial x^8 + x^4 + x^3 + x^2 + 1 (0x11D) and
- * generator roots α^0 … α^(n−1). Codewords are big-endian polynomials: index 0 is the highest power.
- *
- * Decoding: syndromes, Berlekamp–Massey for the error locator, Chien search for the positions and
- * Forney's formula for the values. Corrects up to n/2 wrong codewords; more is reported (null),
- * never "corrected" into garbage silently, as long as the locator's degree and its root count disagree.
- */
-internal object ReedSolomon {
-    private val exp = IntArray(512)
+/** GF(256) with the QR polynomial x^8 + x^4 + x^3 + x^2 + 1, generator base 0. */
+internal object Gf256 {
+    private val exp = IntArray(256)
     private val log = IntArray(256)
 
     init {
         var x = 1
-        for (i in 0 until 255) {
+        for (i in 0 until 256) {
             exp[i] = x
-            log[x] = i
             x = x shl 1
-            if (x and 0x100 != 0) x = x xor 0x11D
+            if (x >= 256) x = (x xor 0x11D) and 0xFF
         }
-        for (i in 255 until 512) exp[i] = exp[i - 255]
+        for (i in 0 until 255) log[exp[i]] = i
     }
 
-    private fun mul(a: Int, b: Int): Int = if (a == 0 || b == 0) 0 else exp[log[a] + log[b]]
-    private fun div(a: Int, b: Int): Int {
-        require(b != 0)
-        return if (a == 0) 0 else exp[(log[a] + 255 - log[b]) % 255]
+    fun exp(a: Int) = exp[a]
+    fun log(a: Int): Int { require(a != 0); return log[a] }
+    fun inverse(a: Int): Int { if (a == 0) throw ArithmeticException(); return exp[255 - log[a]] }
+    fun multiply(a: Int, b: Int): Int = if (a == 0 || b == 0) 0 else exp[(log[a] + log[b]) % 255]
+
+    val ZERO = Poly(intArrayOf(0))
+    val ONE = Poly(intArrayOf(1))
+    fun monomial(degree: Int, coefficient: Int): Poly {
+        require(degree >= 0)
+        if (coefficient == 0) return ZERO
+        return Poly(IntArray(degree + 1).also { it[0] = coefficient })
     }
-    private fun pow(e: Int): Int = exp[((e % 255) + 255) % 255]
 
-    private val generators = HashMap<Int, IntArray>()
+    /** A polynomial over GF(256), coefficients from the highest power down (leading zeros dropped). */
+    class Poly(coefficients: IntArray) {
+        val coefficients: IntArray = run {
+            require(coefficients.isNotEmpty())
+            if (coefficients.size > 1 && coefficients[0] == 0) {
+                val first = coefficients.indexOfFirst { it != 0 }
+                if (first < 0) intArrayOf(0) else coefficients.copyOfRange(first, coefficients.size)
+            } else coefficients
+        }
+        val degree: Int get() = coefficients.size - 1
+        val isZero: Boolean get() = coefficients[0] == 0
+        fun coefficient(degree: Int) = coefficients[coefficients.size - 1 - degree]
 
-    /** (x − α^0)(x − α^1)…(x − α^(n−1)), big-endian. */
-    private fun generator(n: Int): IntArray = synchronized(generators) {
-        generators.getOrPut(n) {
-            var g = intArrayOf(1)
-            for (i in 0 until n) {
-                val next = IntArray(g.size + 1)
-                for (j in g.indices) {
-                    next[j] = next[j] xor g[j]
-                    next[j + 1] = next[j + 1] xor mul(g[j], pow(i))
-                }
-                g = next
+        fun evaluateAt(a: Int): Int {
+            if (a == 0) return coefficient(0)
+            if (a == 1) return coefficients.fold(0) { r, c -> r xor c }
+            var result = coefficients[0]
+            for (i in 1 until coefficients.size) result = multiply(a, result) xor coefficients[i]
+            return result
+        }
+
+        fun plus(other: Poly): Poly {
+            if (isZero) return other
+            if (other.isZero) return this
+            var small = coefficients; var large = other.coefficients
+            if (small.size > large.size) { val t = small; small = large; large = t }
+            val sum = IntArray(large.size)
+            val diff = large.size - small.size
+            System.arraycopy(large, 0, sum, 0, diff)
+            for (i in diff until large.size) sum[i] = small[i - diff] xor large[i]
+            return Poly(sum)
+        }
+
+        fun times(other: Poly): Poly {
+            if (isZero || other.isZero) return ZERO
+            val a = coefficients; val b = other.coefficients
+            val product = IntArray(a.size + b.size - 1)
+            for (i in a.indices) for (j in b.indices) product[i + j] = product[i + j] xor multiply(a[i], b[j])
+            return Poly(product)
+        }
+
+        fun times(scalar: Int): Poly = when (scalar) {
+            0 -> ZERO
+            1 -> this
+            else -> Poly(IntArray(coefficients.size) { multiply(coefficients[it], scalar) })
+        }
+
+        fun timesMonomial(degree: Int, coefficient: Int): Poly {
+            require(degree >= 0)
+            if (coefficient == 0) return ZERO
+            val product = IntArray(coefficients.size + degree)
+            for (i in coefficients.indices) product[i] = multiply(coefficients[i], coefficient)
+            return Poly(product)
+        }
+
+        /** Quotient and remainder. */
+        fun divide(other: Poly): Pair<Poly, Poly> {
+            require(!other.isZero) { "Divide by 0" }
+            var quotient = ZERO
+            var remainder = this
+            val inverseLeading = inverse(other.coefficient(other.degree))
+            while (remainder.degree >= other.degree && !remainder.isZero) {
+                val degreeDifference = remainder.degree - other.degree
+                val scale = multiply(remainder.coefficient(remainder.degree), inverseLeading)
+                quotient = quotient.plus(monomial(degreeDifference, scale))
+                remainder = remainder.plus(other.timesMonomial(degreeDifference, scale))
             }
-            g
+            return quotient to remainder
         }
     }
+}
 
-    /** The [n] error correction codewords for [data]. */
-    fun encode(data: IntArray, n: Int): IntArray {
-        val g = generator(n)
-        val r = IntArray(n)
-        for (d in data) {
-            val factor = d xor r[0]
-            System.arraycopy(r, 1, r, 0, n - 1)
-            r[n - 1] = 0
-            if (factor != 0) for (j in 0 until n) r[j] = r[j] xor mul(g[j + 1], factor)
+internal object ReedSolomon {
+    private val generators = ArrayList<Gf256.Poly>().apply { add(Gf256.ONE) }
+
+    private fun generator(degree: Int): Gf256.Poly = synchronized(generators) {
+        while (generators.size <= degree) {
+            val last = generators.last()
+            generators += last.times(Gf256.Poly(intArrayOf(1, Gf256.exp(generators.size - 1))))
         }
-        return r
+        generators[degree]
+    }
+
+    /** The [n] error correction codewords for [data] (ReedSolomonEncoder.encode). */
+    fun encode(data: IntArray, n: Int): IntArray {
+        require(n > 0 && data.isNotEmpty())
+        val info = Gf256.Poly(data.copyOf()).timesMonomial(n, 1)
+        val remainder = info.divide(generator(n)).second.coefficients
+        val out = IntArray(n)
+        System.arraycopy(remainder, 0, out, n - remainder.size, remainder.size)
+        return out
     }
 
     /**
-     * Corrects [codewords] (data followed by [n] error correction codewords) in place. Returns the
-     * number of corrected codewords, or -1 if there are too many errors to correct.
+     * Corrects [codewords] (data followed by [n] error correction codewords) in place
+     * (ReedSolomonDecoder.decodeWithECCount). The number of corrected codewords, or -1 when there
+     * are more errors than the code can correct.
      */
     fun decode(codewords: IntArray, n: Int): Int {
-        val len = codewords.size
-        // Syndromes S_j = r(α^j).
-        val s = IntArray(n)
-        var clean = true
-        for (j in 0 until n) {
-            var v = 0
-            val a = pow(j)
-            for (c in codewords) v = mul(v, a) xor c
-            s[j] = v
-            if (v != 0) clean = false
-        }
-        if (clean) return 0
-
-        // Berlekamp–Massey: Λ(x) little-endian (index = power).
-        var lambda = IntArray(n + 1).also { it[0] = 1 }
-        var prev = IntArray(n + 1).also { it[0] = 1 }
-        var l = 0
-        var m = 1
-        var b = 1
-        for (k in 0 until n) {
-            var d = s[k]
-            for (i in 1..l) d = d xor mul(lambda[i], s[k - i])
-            if (d == 0) { m++; continue }
-            val t = lambda.copyOf()
-            val coef = div(d, b)
-            for (i in 0..n - m) lambda[i + m] = lambda[i + m] xor mul(coef, prev[i])
-            if (2 * l <= k) {
-                l = k + 1 - l
-                prev = t
-                b = d
-                m = 1
-            } else m++
-        }
-        if (l == 0 || 2 * l > n) return -1
-
-        // Chien search over every codeword position p (power of x): Λ(α^−p) = 0.
-        val positions = ArrayList<Int>()
-        for (p in 0 until len) {
-            var v = 0
-            val inv = pow(-p)
-            for (i in l downTo 0) v = mul(v, inv) xor lambda[i]
-            if (v == 0) positions += p
-        }
-        if (positions.size != l) return -1
-
-        // Ω(x) = S(x)·Λ(x) mod x^n.
-        val omega = IntArray(n)
+        val poly = Gf256.Poly(codewords)
+        val syndromes = IntArray(n)
+        var noError = true
         for (i in 0 until n) {
-            var v = 0
-            for (j in 0..minOf(i, l)) v = v xor mul(lambda[j], s[i - j])
-            omega[i] = v
+            val eval = poly.evaluateAt(Gf256.exp(i))
+            syndromes[n - 1 - i] = eval
+            if (eval != 0) noError = false
         }
-        // Forney (generator roots from α^0): e = X·Ω(X^−1) / Λ'(X^−1).
-        for (p in positions) {
-            val x = pow(p)
-            val xInv = pow(-p)
-            var om = 0
-            for (i in n - 1 downTo 0) om = mul(om, xInv) xor omega[i]
-            var dl = 0
-            // Formal derivative: odd powers only (characteristic 2).
-            var i = 1
-            var xp = 1
-            while (i <= l) {
-                dl = dl xor mul(lambda[i], xp)
-                xp = mul(xp, mul(xInv, xInv))
-                i += 2
+        if (noError) return 0
+        val (sigma, omega) = euclid(Gf256.monomial(n, 1), Gf256.Poly(syndromes), n) ?: return -1
+        val locations = errorLocations(sigma) ?: return -1
+        val magnitudes = errorMagnitudes(omega, locations)
+        val positions = IntArray(locations.size) { codewords.size - 1 - Gf256.log(locations[it]) }
+        if (positions.any { it < 0 }) return -1
+        for (i in locations.indices) codewords[positions[i]] = codewords[positions[i]] xor magnitudes[i]
+        return locations.size
+    }
+
+    private fun euclid(a0: Gf256.Poly, b0: Gf256.Poly, r: Int): Pair<Gf256.Poly, Gf256.Poly>? {
+        var a = a0; var b = b0
+        if (a.degree < b.degree) { val t = a; a = b; b = t }
+        var rLast = a; var rCur = b
+        var tLast = Gf256.ZERO; var t = Gf256.ONE
+        while (2 * rCur.degree >= r) {
+            val rLastLast = rLast; val tLastLast = tLast
+            rLast = rCur; tLast = t
+            if (rLast.isZero) return null
+            rCur = rLastLast
+            var q = Gf256.ZERO
+            val dltInverse = Gf256.inverse(rLast.coefficient(rLast.degree))
+            while (rCur.degree >= rLast.degree && !rCur.isZero) {
+                val degreeDiff = rCur.degree - rLast.degree
+                val scale = Gf256.multiply(rCur.coefficient(rCur.degree), dltInverse)
+                q = q.plus(Gf256.monomial(degreeDiff, scale))
+                rCur = rCur.plus(rLast.timesMonomial(degreeDiff, scale))
             }
-            if (dl == 0) return -1
-            val e = mul(x, div(om, dl))
-            val idx = len - 1 - p
-            codewords[idx] = codewords[idx] xor e
+            t = q.times(tLast).plus(tLastLast)
+            if (rCur.degree >= rLast.degree) return null
         }
-        return positions.size
+        val sigmaTildeAtZero = t.coefficient(0)
+        if (sigmaTildeAtZero == 0) return null
+        val inverse = Gf256.inverse(sigmaTildeAtZero)
+        return t.times(inverse) to rCur.times(inverse)
+    }
+
+    private fun errorLocations(locator: Gf256.Poly): IntArray? {
+        val numErrors = locator.degree
+        if (numErrors == 1) return intArrayOf(locator.coefficient(1))
+        val result = IntArray(numErrors)
+        var e = 0
+        var i = 1
+        while (i < 256 && e < numErrors) {
+            if (locator.evaluateAt(i) == 0) result[e++] = Gf256.inverse(i)
+            i++
+        }
+        return if (e == numErrors) result else null
+    }
+
+    private fun errorMagnitudes(evaluator: Gf256.Poly, locations: IntArray): IntArray = IntArray(locations.size) { i ->
+        val xiInverse = Gf256.inverse(locations[i])
+        var denominator = 1
+        for (j in locations.indices) if (i != j) {
+            val term = Gf256.multiply(locations[j], xiInverse)
+            denominator = Gf256.multiply(denominator, if (term and 1 == 0) term or 1 else term and 1.inv())
+        }
+        Gf256.multiply(evaluator.evaluateAt(xiInverse), Gf256.inverse(denominator))
     }
 }

@@ -144,4 +144,62 @@ class QrTest {
         assertTrue(QrDecoder.decodeAll(LumaImage(200, 200, ByteArray(200 * 200) { -1 })).isEmpty())
         assertTrue(QrDecoder.decodeAll(LumaImage(200, 200, ByteArray(200 * 200) { rnd.nextInt(256).toByte() })).isEmpty())
     }
+
+    /** The tables generated from the BCH codes are ZXing's FORMAT_INFO_DECODE_LOOKUP and VERSION_DECODE_INFO. */
+    @Test
+    fun formatAndVersionWordsMatchZxing() {
+        val zxingFormat = intArrayOf(0x5412, 0x5125, 0x5E7C, 0x5B4B, 0x45F9, 0x40CE, 0x4F97, 0x4AA0, 0x77C4, 0x72F3, 0x7DAA, 0x789D,
+            0x662F, 0x6318, 0x6C41, 0x6976, 0x1689, 0x13BE, 0x1CE7, 0x19D0, 0x0762, 0x0255, 0x0D0C, 0x083B, 0x355F, 0x3068, 0x3F31,
+            0x3A06, 0x24B4, 0x2183, 0x2EDA, 0x2BED)
+        for (v in 0 until 32) {
+            val level = EcLevel.entries.first { it.bits == v shr 3 }
+            assertEquals("format $v", zxingFormat[v], net.paramnezia.core.qr.QrLayout.formatWord(level, v and 7))
+        }
+        assertEquals(0x07C94, net.paramnezia.core.qr.QrLayout.versionWord(7))
+        assertEquals(0x1F250, net.paramnezia.core.qr.QrLayout.versionWord(31))
+        assertEquals(0x28C69, net.paramnezia.core.qr.QrLayout.versionWord(40))
+        // Three wrong bits are still the right word; four are not trusted.
+        assertEquals(EcLevel.Q to 5, net.paramnezia.core.qr.FormatInfo.decode(zxingFormat[0x1D] xor 0b10101, zxingFormat[0x1D] xor 0b10101))
+    }
+
+    /** Digits and upper-case text take the compact modes, and both readers agree on them. */
+    @Test
+    fun numericAndAlphanumericModes() {
+        for (text in listOf("0123456789012345678901234567890123456789", "HTTPS://EXAMPLE.COM/A1B2-C3 $%*+./:", "7", "12")) {
+            val m = QrEncoder.encode(text, EcLevel.L)
+            val (side, px) = render(m)
+            assertEquals(text, zxingDecode(side, px))
+            assertEquals(text, QrDecoder.decode(LumaImage.fromArgb(side, side, px)))
+        }
+        // 40 digits fit version 1 in numeric mode; in byte mode they would need version 2.
+        assertEquals(21, QrEncoder.encode("0123456789012345678901234567890123456789", EcLevel.L).size)
+    }
+
+    /** The level asked for is a minimum: whatever still fits the same version is used. */
+    @Test
+    fun errorCorrectionIsRaisedWhenItFits() {
+        val m = QrEncoder.encode("hi", EcLevel.L)
+        val (side, px) = render(m)
+        val r = QRCodeReader().decode(BinaryBitmap(HybridBinarizer(RGBLuminanceSource(side, side, px))), mapOf(DecodeHintType.PURE_BARCODE to true))
+        assertEquals("H", r.resultMetadata[com.google.zxing.ResultMetadataType.ERROR_CORRECTION_LEVEL])
+        assertEquals(21, m.size)
+        // A long key at L stays at L if a higher level would need a bigger version.
+        val long = "vpn://" + randomText(1100)
+        assertEquals(QrEncoder.encode(long, EcLevel.L).size, zxingEncode(long, ErrorCorrectionLevel.L).size)
+    }
+
+    /** A UTF-8 letter split across two byte segments (other writers do this) stays one letter. */
+    @Test
+    fun byteSegmentsAreJoinedBeforeDecoding() {
+        val text = "ключ"
+        val b = text.toByteArray(Charsets.UTF_8) // 8 bytes; split after 3 (inside the second letter)
+        val bits = ArrayList<Boolean>()
+        fun put(v: Int, n: Int) { for (i in n - 1 downTo 0) bits += (v shr i) and 1 == 1 }
+        put(0b0100, 4); put(3, 8); for (i in 0 until 3) put(b[i].toInt() and 0xFF, 8)
+        put(0b0100, 4); put(5, 8); for (i in 3 until 8) put(b[i].toInt() and 0xFF, 8)
+        put(0, 4)
+        while (bits.size % 8 != 0) bits += false
+        val data = IntArray(19) { i -> if (i < bits.size / 8) (0 until 8).fold(0) { a, j -> (a shl 1) or if (bits[i * 8 + j]) 1 else 0 } else if ((i - bits.size / 8) % 2 == 0) 0xEC else 0x11 }
+        assertEquals(text, net.paramnezia.core.qr.BitStreamParser.decode(data, 1))
+    }
 }
