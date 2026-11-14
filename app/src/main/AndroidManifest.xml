@@ -76,12 +76,10 @@
 
         <!-- Settings files the admin sends to people through a messenger (user-initiated share). -->
         <provider
-            android:name="androidx.core.content.FileProvider"
+            android:name=".ui.ShareProvider"
             android:authorities="${applicationId}.share"
             android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/share_paths" />
-        </provider>
+            android:grantUriPermissions="true" />
 
         <!-- The QR scanner (Camera2 + core/qr, ui/QrScanActivity.kt). -->
         <activity

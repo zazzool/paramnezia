@@ -2,7 +2,6 @@ package net.paramnezia.app.ui
 
 import android.content.Context
 import android.content.Intent
-import androidx.core.content.FileProvider
 import java.io.File
 
 /**
@@ -24,12 +23,12 @@ object Share {
      * manager and Paramnezia opens with it (AmneziaVPN reads the same file).
      */
     fun file(context: Context, name: String, key: String) {
-        val dir = File(context.cacheDir, "share").apply { mkdirs() }
+        val dir = ShareProvider.dir(context).apply { mkdirs() }
         // Old files hold keys: keep only today's.
         dir.listFiles()?.forEach { if (System.currentTimeMillis() - it.lastModified() > 24 * 3600_000L) it.delete() }
         val file = File(dir, settingsFileName(name))
         file.writeText(key.trim() + "\n")
-        val uri = FileProvider.getUriForFile(context, context.packageName + ".share", file)
+        val uri = ShareProvider.uriFor(context, file)
         val send = Intent(Intent.ACTION_SEND)
             .setType("application/octet-stream")
             .putExtra(Intent.EXTRA_STREAM, uri)
