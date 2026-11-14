@@ -3,7 +3,6 @@ module net.paramnezia/tunnel
 go 1.25.0
 
 require (
-	github.com/Microsoft/go-winio v0.6.2
 	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260828
 	golang.org/x/sys v0.36.0
 	golang.zx2c4.com/wireguard/windows v0.5.3

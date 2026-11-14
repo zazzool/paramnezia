@@ -11,7 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Microsoft/go-winio"
+	"github.com/amnezia-vpn/amneziawg-go/v3/ipc/namedpipe"
+	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
 
 	"net.paramnezia/tunnel/dnsfilter"
@@ -19,8 +20,10 @@ import (
 
 // The app talks to the service over a local named pipe, one JSON request and one JSON answer per
 // connection. Only local SYSTEM, administrators and interactively logged-on users may connect;
-// the pipe is not reachable over the network (remote clients are rejected).
-const pipeSDDL = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)"
+// network logons are denied outright (the deny ACE comes first, so it wins even for an
+// administrator connecting over SMB). The listener is amneziawg-go's own named pipe code (overlapped
+// I/O, deadlines), which the tunnel already carries, so no separate pipe library is needed.
+const pipeSDDL = "D:P(D;;GA;;;NU)(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)"
 
 type request struct {
 	Op string `json:"op"` // up, down, rebind, recheck, status, set, rules, direct, version
@@ -80,11 +83,15 @@ type server struct {
 }
 
 func startServer() (*server, error) {
-	ln, err := winio.ListenPipe(pipeName, &winio.PipeConfig{
-		SecurityDescriptor: pipeSDDL,
+	sd, err := windows.SecurityDescriptorFromString(pipeSDDL)
+	if err != nil {
+		return nil, err
+	}
+	ln, err := (&namedpipe.ListenConfig{
+		SecurityDescriptor: sd,
 		InputBufferSize:    1 << 16,
 		OutputBufferSize:   1 << 16,
-	})
+	}).Listen(pipeName)
 	if err != nil {
 		return nil, err
 	}
