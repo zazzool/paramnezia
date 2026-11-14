@@ -116,23 +116,32 @@ class VisibilityCheck(
                     ip
                 }
             } else null
-            val foreign = async { foreign() }
+            val foreign = async { foreign(vpnUp) }
             val ru = async { russian(vpnUp, ruDirect, direct, errors) }
             val serverIps = async { serverHost?.let(::resolve) }
 
             var (cfAnswer, foreignIp) = foreign.await()
             val ips = serverIps.await()
-            var leak = false
-            if (vpnUp && foreignIp != null && (ips.isNullOrEmpty() || foreignIp !in ips)) {
-                val directIp = withTimeoutOrNull(12_000) { direct?.await() }
-                if (directIp != null && directIp.equals(foreignIp, ignoreCase = true)) {
-                    // Possibly a request that raced a rebuilt tunnel: look once more before saying so.
-                    Log.w(TAG, "foreign sites saw the direct address $foreignIp; checking again")
-                    delay(2_500)
-                    val again = foreign()
-                    if (again.second != null) { cfAnswer = again.first; foreignIp = again.second }
-                    leak = directIp.equals(foreignIp, ignoreCase = true)
-                }
+            val directIp = if (vpnUp) withTimeoutOrNull(12_000) { direct?.await() } else null
+            // Did foreign traffic go around the tunnel? The physical network's own address proves it,
+            // and so does the physical network's provider (ASN): mobile carriers give every connection
+            // another address from their pool, so equal addresses alone miss most leaks.
+            suspend fun leaky(ip: String?, cf: GeoAnswer?): Boolean {
+                if (!vpnUp || ip == null || directIp == null) return false
+                if (!ips.isNullOrEmpty() && ip in ips) return false
+                if (directIp.equals(ip, ignoreCase = true)) return true
+                val a = geo(ip, cf?.takeIf { it.ip.equals(ip, true) })?.asn ?: return false
+                return a == geo(directIp, null)?.asn
+            }
+            var leak = leaky(foreignIp, cfAnswer)
+            // Possibly a request that raced the tunnel's start: look again (twice) before saying so.
+            for (pause in LEAK_RETRY_MS) {
+                if (!leak) break
+                Log.w(TAG, "foreign sites saw the physical network ($foreignIp, direct $directIp); checking again")
+                delay(pause)
+                val again = foreign(vpnUp)
+                if (again.second != null) { cfAnswer = again.first; foreignIp = again.second }
+                leak = leaky(foreignIp, cfAnswer)
             }
             val probe = ru.await()
             var russianIp = probe.ip
@@ -158,10 +167,15 @@ class VisibilityCheck(
         }
     }
 
-    /** Cloudflare's view plus plain "what is my IP" services, the way any app's traffic goes. */
-    private suspend fun foreign(): Pair<GeoAnswer?, String?> = coroutineScope {
-        val cf = async { get(GeoIp.CLOUDFLARE_TRACE)?.let(GeoIp::parseCloudflareTrace) }
-        val plain = GeoIp.SELF_PLAIN.map { url -> async { GeoIp.parsePlainIp(get(url)) } }
+    /**
+     * Cloudflare's view plus plain "what is my IP" services. With the VPN on they are asked through
+     * the tunnel only ([Http.getThroughTunnel]): a request that cannot get through the tunnel gives
+     * no answer rather than the physical network's address under "foreign sites".
+     */
+    private suspend fun foreign(vpnUp: Boolean): Pair<GeoAnswer?, String?> = coroutineScope {
+        fun fetch(url: String) = if (vpnUp) net.getThroughTunnel(url, 1024) else get(url)
+        val cf = async { fetch(GeoIp.CLOUDFLARE_TRACE)?.let(GeoIp::parseCloudflareTrace) }
+        val plain = GeoIp.SELF_PLAIN.map { url -> async { GeoIp.parsePlainIp(fetch(url)) } }
         val cfAnswer = cf.await()
         cfAnswer to GeoIp.pickIp(listOfNotNull(cfAnswer?.ip) + plain.awaitAll().filterNotNull())
     }
@@ -265,6 +279,8 @@ class VisibilityCheck(
     companion object {
         private const val TAG = "ParamneziaSeen"
         private const val STAGGER_MS = 400L
+        /** Second and third looks when foreign sites seem to see the physical network. */
+        private val LEAK_RETRY_MS = listOf(2_500L, 5_000L)
         /** Addresses kept across restarts, and for how long (hosters rarely move an address). */
         private const val GEO_KEEP = 16
         private const val GEO_KEEP_MS = 7 * 24 * 3600_000L

@@ -4,8 +4,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -162,7 +160,7 @@ private fun DeployCard(app: App, toast: (String) -> Unit, onDone: () -> Unit) {
         GroupRow(
             "Купить у хостера", subtitle = "В одно нажатие: Cloudzy, Timeweb, Vultr, Hetzner, DigitalOcean · 3–8 минут",
             icon = Glyph.Cloud, onClick = { if (!running) buying = true },
-            trailing = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+            trailing = { Icon(PnIcons.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
         )
     }
     ExpandTile(Glyph.Server, "Свой VPS", "Есть IP и пароль от хостера: установка 2–5 минут", vps, onToggle = { vps = !vps }) {

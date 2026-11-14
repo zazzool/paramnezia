@@ -4,6 +4,9 @@ import net.paramnezia.app.platform.Log
 import net.paramnezia.app.data.Repo
 import net.paramnezia.app.data.Settings
 import net.paramnezia.app.data.StoredFleet
+import net.paramnezia.app.data.PooledDevice
+import net.paramnezia.core.fleet.FleetDevice
+import kotlinx.coroutines.sync.withLock
 import net.paramnezia.core.fleet.FleetPolicy
 import net.paramnezia.app.platform.Http
 import net.paramnezia.core.config.TunnelConfig
@@ -202,11 +205,32 @@ class FleetManager(
         onServerReady(ssh)
     }
 
-    /** Admin: a new trusted device. Returns its invite (a vpn:// key, also readable by AmneziaVPN). */
+    /**
+     * Admin: a new trusted device. Returns its invite (a vpn:// key, also readable by AmneziaVPN).
+     *
+     * Instant when a prepared slot is there ([fillPool]): the key, the address and the peer on the
+     * servers are ready, so only the manifest is signed and the invite built, both locally; the new
+     * manifest spreads in the background as always. Without a slot the servers are asked, all at once.
+     */
     suspend fun addDevice(name: String): String = withContext(Dispatchers.IO) {
         val admin = admin() ?: error("not admin")
         val current = manifest() ?: error("no manifest")
-        val reserved = current.servers.mapNotNull(::access).flatMap { a -> runCatching { servers.usedAddresses(a) }.getOrDefault(emptySet()) }
+        takeSlot(current)?.let { (slot, key) ->
+            val device = FleetDevice(name, key.publicKey().toBase64(), slot.address)
+            val next = admin.next(current) { it.copy(devices = it.devices + device) }
+            accept(FleetCrypto.encode(admin.seal(next)))
+            // A server the slot missed (added since, or down when the slot was made) and the next slot.
+            scope.launch {
+                val missing = current.servers.filter { it.id !in slot.servers }
+                if (missing.isNotEmpty()) registerEverywhere(missing, key.publicKey(), name, slot.address)
+                runCatching { fillPool() }
+            }
+            Log.i(TAG, "device $name from a prepared slot")
+            return@withContext admin.invite(next, device, key)
+        }
+        val reserved = coroutineScope {
+            current.servers.mapNotNull(::access).map { a -> async { runCatching { servers.usedAddresses(a) }.getOrDefault(emptySet()) } }.awaitAll().flatten()
+        } + (stored?.pool?.map { it.address } ?: emptyList())
         val (device, key) = admin.newDevice(current, name, reserved = reserved)
         val failed = registerEverywhere(current.servers, key.publicKey(), name, device.address)
         // The master must take the device now; a standby that is down gets it at the next self-check.
@@ -216,7 +240,71 @@ class FleetManager(
         val next = admin.next(current) { it.copy(devices = it.devices + device) }
         val signed = FleetCrypto.encode(admin.seal(next))
         accept(signed)
+        scope.launch { runCatching { fillPool() } }
         admin.invite(next, device, key)
+    }
+
+    private val poolLock = kotlinx.coroutines.sync.Mutex()
+
+    /** Takes a prepared slot the master already knows, or null. */
+    private suspend fun takeSlot(current: FleetManifest): Pair<PooledDevice, WgKey>? = poolLock.withLock {
+        val master = current.servers.firstOrNull() ?: return null
+        val taken = current.devices.mapTo(HashSet()) { it.address.substringBefore('/') }
+        val slot = stored?.pool?.firstOrNull { it.address.substringBefore('/') !in taken && (master.id in it.servers || access(master) == null) }
+            ?: return null
+        repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(pool = it.pool - slot) }) }
+        slot to WgKey.fromBase64(slot.privateKey)
+    }
+
+    /**
+     * Admin: prepares up to [target] device slots in the background: keys made here, free addresses
+     * found and the peers registered on every reachable server, each server over one SSH session and
+     * all servers at once. Called when the family screen opens and after a slot is used, so that the
+     * next "add a person" is instant. Unused slots are harmless: a peer whose key nobody holds.
+     */
+    suspend fun fillPool(target: Int = POOL_SIZE): Unit = withContext(Dispatchers.IO) {
+        poolLock.withLock {
+            val admin = admin() ?: return@withLock
+            val current = manifest() ?: return@withLock
+            val reachable = current.servers.mapNotNull { s -> access(s)?.let { s to it } }
+            if (reachable.isEmpty()) return@withLock
+            val taken = current.devices.mapTo(HashSet()) { it.address.substringBefore('/') }
+            val masterId = current.servers.first().id
+            val now = System.currentTimeMillis()
+            // A slot the master still refuses after a day (its address taken there meanwhile) is dropped.
+            var pool = (stored?.pool ?: emptyList()).filter {
+                it.address.substringBefore('/') !in taken && (masterId in it.servers || now - it.createdAt < DAY_MS)
+            }
+            val complete = pool.count { slot -> reachable.all { it.first.id in slot.servers } }
+            if (pool.size >= target && complete == pool.size) return@withLock
+            if (pool.size < target) {
+                val used = coroutineScope {
+                    reachable.map { (_, a) -> async { runCatching { servers.usedAddresses(a) }.getOrDefault(emptySet()) } }.awaitAll().flatten()
+                }
+                val reserved = (used + pool.map { it.address }).toMutableList()
+                repeat(target - pool.size) {
+                    val (d, key) = admin.newDevice(current, "", reserved = reserved)
+                    reserved += d.address
+                    pool = pool + PooledDevice(key.toBase64(), d.address, createdAt = System.currentTimeMillis())
+                }
+            }
+            val registered = coroutineScope {
+                reachable.map { (s, a) ->
+                    async {
+                        val todo = pool.filter { s.id !in it.servers }
+                        val specs = todo.map { ServerManager.PeerSpec(WgKey.fromBase64(it.privateKey).publicKey(), POOL_PEER_NAME, it.address.substringBefore('/')) }
+                        val failed = runCatching { servers.ensurePeers(a, specs) }.getOrElse { e -> specs.associate { it.publicKey.toBase64() to (e.message ?: "error") } }
+                        s.id to todo.filter { WgKey.fromBase64(it.privateKey).publicKey().toBase64() !in failed }.map { it.privateKey }.toSet()
+                    }
+                }.awaitAll()
+            }
+            pool = pool.map { slot -> slot.copy(servers = slot.servers + registered.filter { (_, ok) -> slot.privateKey in ok }.map { it.first }) }
+            val master = current.servers.first().id
+            // Only slots the master knows can be handed out; the others are tried again next time.
+            val ready = pool.count { master in it.servers }
+            repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(pool = pool) }) }
+            Log.i(TAG, "device slots: $ready ready of ${pool.size}")
+        }
     }
 
     /**
@@ -376,20 +464,21 @@ class FleetManager(
         }
     }
 
-    /** Registers a device on every server; returns the failures by server id. */
-    private fun registerEverywhere(list: List<FleetServer>, publicKey: WgKey, name: String, address: String): Map<String, Exception> {
-        val failed = HashMap<String, Exception>()
-        for (s in list) {
-            val a = access(s) ?: continue
-            try {
-                servers.registerPeer(a, publicKey, name, clientIp = address.substringBefore('/'))
-            } catch (e: Exception) {
-                Log.w(TAG, "could not register $name on ${s.name}: ${e.message}")
-                failed[s.id] = e
-            }
+    /** Registers a device on every server, all at once; returns the failures by server id. */
+    private suspend fun registerEverywhere(list: List<FleetServer>, publicKey: WgKey, name: String, address: String): Map<String, Exception> =
+        coroutineScope {
+            list.mapNotNull { s -> access(s)?.let { a -> s to a } }.map { (s, a) ->
+                async(Dispatchers.IO) {
+                    try {
+                        servers.registerPeer(a, publicKey, name, clientIp = address.substringBefore('/'))
+                        null
+                    } catch (e: Exception) {
+                        Log.w(TAG, "could not register $name on ${s.name}: ${e.message}")
+                        s.id to e
+                    }
+                }
+            }.awaitAll().filterNotNull().toMap()
         }
-        return failed
-    }
 
     private fun access(s: FleetServer): SshCredentials? = stored?.serverAccess?.get(s.id)
 
@@ -402,6 +491,11 @@ class FleetManager(
 
     private companion object {
         const val TAG = "PnFleet"
+        /** Prepared device slots: enough for a couple of people in a row without waiting. */
+        const val POOL_SIZE = 2
+        /** How a prepared slot is called on the server until someone gets it. */
+        const val POOL_PEER_NAME = "Paramnezia"
+        const val DAY_MS = 24 * 3600_000L
         /** While the tunnel works, look for a newer manifest at most this often. */
         const val SYNC_EVERY_MS = 3600_000L
     }

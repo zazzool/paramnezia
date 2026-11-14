@@ -192,6 +192,12 @@ class DeployE2ETest {
         sh("docker stop paramnezia-invite >/dev/null")
         assertEquals(18080, java.net.URI(links.create(creds, invite, "again", null, preferredPort = 80).url).port)
         assertEquals(200, http("$base/").first)
+        // The quick path (page prepared earlier): only the token is written; a stopped page is started
+        // again, and the link works exactly like one made the long way.
+        sh("docker stop paramnezia-invite >/dev/null")
+        val quick = links.create(creds, invite, "quick", app, fast = true)
+        assertEquals(18080, java.net.URI(quick.url).port)
+        assertEquals(plain, http("$base/cgi-bin/get?${quick.token}&key").second.trim())
     }
 
     /** Puts [bytes] where release-mirror.sh keeps verified releases, as if downloaded earlier. */

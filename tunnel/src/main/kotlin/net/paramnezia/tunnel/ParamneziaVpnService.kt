@@ -53,6 +53,8 @@ class ParamneziaVpnService : VpnService() {
     private var spec: TunnelSpec? = null
     /** Start of the session shown to the user; automatic repairs of the same server keep it. */
     private var sessionSince = 0L
+    /** When the current tunnel was built (Android connects its network a moment later). */
+    private var builtAt = 0L
     private var screenOn = true
     private val watch = LinkWatch()
 
@@ -180,6 +182,7 @@ class ParamneziaVpnService : VpnService() {
             handle = h
             spec = next
             val now = System.currentTimeMillis()
+            builtAt = now
             if (!(reconnecting && sameServer) || sessionSince == 0L) sessionSince = now
             watch.started(now, sameServer = reconnecting && sameServer)
             TunnelRuntime.setLink(unstable = repair, offline = false)
@@ -255,7 +258,12 @@ class ParamneziaVpnService : VpnService() {
         if (action == LinkWatch.Action.Probe) {
             // Nothing to fix (and nothing to count) while the phone itself is offline.
             if (!networkValidated()) { offline(); return }
-            val rtt = runInterruptible { LinkProbe.run(probeTargets(current)) }
+            // The probe must go through the tunnel, so it is bound to the VPN network. Android connects
+            // that network a moment after the tunnel is built: until then there is nothing to probe yet.
+            val vpn = TunnelRuntime.vpnNetwork(this)
+            if (vpn == null && System.currentTimeMillis() - builtAt < VPN_WAIT_MS) { scheduleCheck(VPN_NOT_READY_MS); return }
+            // Never connected by Android: counts as a failed probe (the ladder rebuilds the tunnel).
+            val rtt = if (vpn == null) null else runInterruptible { LinkProbe.run(probeTargets(current), sockets = boundTo(vpn)) }
             action = watch.onProbe(System.currentTimeMillis(), rtt, screenOn)
             watch.rttMs?.takeIf { rtt != null }?.let(TunnelRuntime::setRtt)
             if (rtt == null) Log.w(TAG, "${current.serverName}: no reply (${watch.phase}, failure ${watch.failures}, builds ${watch.failedBuilds})")
@@ -322,6 +330,11 @@ class ParamneziaVpnService : VpnService() {
         connect(next, reconnecting = true)
         // connect() schedules its own first look; a failed build needs another try later.
         if (handle < 0) { spec = spec ?: next; scheduleCheck(minOf(RETRY_BASE_MS shl minOf(watch.failedBuilds, 4), WATCH_SCREEN_OFF_MS)) }
+    }
+
+    private fun boundTo(network: Network) = object : LinkProbe.Sockets() {
+        override fun udp(): DatagramSocket = DatagramSocket().also { network.bindSocket(it) }
+        override fun tcp(): java.net.Socket = network.socketFactory.createSocket()
     }
 
     /** The tunnel's own resolvers first (they answer only through it), then public ones. */
@@ -402,6 +415,9 @@ class ParamneziaVpnService : VpnService() {
         /** First verification probe of a fresh tunnel: right after its first handshake could finish. */
         private const val VERIFY_FIRST_MS = 150L
         private const val NETWORK_CHANGE_CHECK_MS = 3_000L
+        /** Look again this soon while Android is still connecting the VPN network. */
+        private const val VPN_NOT_READY_MS = 200L
+        private const val VPN_WAIT_MS = 8_000L
         private const val SCREEN_ON_CHECK_MS = 3_000L
         /** Link properties arrive in bursts while Wi-Fi connects; look once they settle. */
         private const val LAN_SETTLE_MS = 2_000L

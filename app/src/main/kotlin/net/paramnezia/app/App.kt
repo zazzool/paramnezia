@@ -80,7 +80,7 @@ class App : Application(), TunnelHost {
         is TunnelState.Connecting -> "connecting"
     }
 
-    suspend fun refreshVisibility() {
+    suspend fun refreshVisibility(again: Boolean = true) {
         val key = visibilityKey()
         val up = TunnelRuntime.state.value as? TunnelState.Up
         val host = up?.let { serverHost(it.serverId) }
@@ -88,8 +88,12 @@ class App : Application(), TunnelHost {
         // The tunnel may have changed while the check ran; a result for an old state is dropped.
         if (key != visibilityKey()) return
         _visibility.value = v
-        // Foreign traffic went around the tunnel: let the watchdog probe and repair right away.
-        if (v.foreignLeak) TunnelRuntime.recheck()
+        // Foreign traffic went around the tunnel: let the watchdog probe and repair right away, then
+        // look again by itself, so the warning does not stay up after the tunnel is fine.
+        if (v.foreignLeak) {
+            TunnelRuntime.recheck()
+            if (again) scope.launch { kotlinx.coroutines.delay(8_000); if (key == visibilityKey()) runCatching { refreshVisibility(again = false) } }
+        }
     }
 
     /** Host (name or address) of a fleet server or a standalone profile. */

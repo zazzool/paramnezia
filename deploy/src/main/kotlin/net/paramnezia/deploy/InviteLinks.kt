@@ -66,13 +66,18 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
         ttlMs: Long = 7 * DAY_MS,
         preferredPort: Int = 80,
         now: Long = System.currentTimeMillis(),
+        /** The page was prepared earlier in this run of the app: skip re-sending it. */
+        fast: Boolean = false,
     ): Link {
         val token = newToken()
         val key = Invite.plainKey(invite)
         val conf = AmneziaFormat.import(AmneziaKey.decode(key)).firstNotNullOfOrNull { it.tunnel }?.let(WgQuick::write).orEmpty()
         val expiresAt = now + ttlMs
         SshConnection.open(creds, hostKeys).use { ssh ->
-            val port = ensurePage(ssh, preferredPort, app)
+            // The page is usually ready already (prepare() ran in the background): then only the
+            // container's port is read and the container started if a reboot stopped it, instead of
+            // sending the whole page and its pictures again. Anything missing: the full setup.
+            val port = (if (fast) quickPort(ssh) else null) ?: ensurePage(ssh, preferredPort, app)
             val r = ssh.run(
                 """
                 set -eu
@@ -99,6 +104,23 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
     /** Gets a server ready for links ahead of time (page container, image pull, download info). */
     fun prepare(creds: SshCredentials, app: AppDownload?, preferredPort: Int = 80): String =
         SshConnection.open(creds, hostKeys).use { ssh -> pageUrl(creds.host, ensurePage(ssh, preferredPort, app)) }
+
+    /** Port of the running page container (started if it was stopped), or null if there is none. */
+    private fun quickPort(ssh: SshConnection): Int? {
+        val r = runCatching {
+            ssh.run(
+                """
+                $SUDO
+                N=paramnezia-invite
+                [ "${'$'}(${'$'}S docker inspect -f '{{.State.Running}}' ${'$'}N 2>/dev/null)" = true ] || ${'$'}S docker start ${'$'}N >/dev/null 2>&1 || exit 0
+                p=${'$'}(${'$'}S docker inspect -f '{{range ${'$'}p, ${'$'}b := .HostConfig.PortBindings}}{{(index ${'$'}b 0).HostPort}}{{end}}' ${'$'}N 2>/dev/null)
+                [ -d $DATA/t ] && [ -n "${'$'}p" ] && echo "::result::port=${'$'}p"
+                """.trimIndent(),
+                timeoutMs = 30_000,
+            )
+        }.getOrNull() ?: return null
+        return r.results["port"]?.toIntOrNull()
+    }
 
     private fun ensurePage(ssh: SshConnection, preferredPort: Int, app: AppDownload?): Int {
         val page = ssh.run(

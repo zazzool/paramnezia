@@ -17,10 +17,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -99,10 +95,10 @@ fun LanSharePanel(app: App, onDismiss: () -> Unit, toast: (String) -> Unit) {
                     Text("Открываю раздачу…", style = MaterialTheme.typography.bodyMedium)
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                 } else if (s.error != null) {
-                    Hint(s.error.orEmpty(), Icons.Filled.Warning, Brand.Coral)
+                    Hint(s.error.orEmpty(), PnIcons.Warning, Brand.Coral)
                 } else if (s.addresses.isEmpty()) {
                     Hint("Нет подключения к Wi-Fi или проводной сети. Подключитесь к той же сети, что и телевизор или компьютер, или включите точку доступа и подключите их к ней.",
-                        Icons.Filled.Warning, Brand.Amber)
+                        PnIcons.Warning, Brand.Amber)
                 } else {
                     AddressCard(s.addresses.first(), s.addresses.drop(1))
                     // Asks first: someone is waiting for an answer right now.
@@ -120,8 +116,8 @@ fun LanSharePanel(app: App, onDismiss: () -> Unit, toast: (String) -> Unit) {
                     Files(s.apk, s.exe, s.served, s.downloads, preparing) { what ->
                         scope.launch { runCatching { app.lan.fetch(what) }.onFailure { toast(it.message ?: "Не удалось скачать") } }
                     }
-                    if (s.given.isNotEmpty()) Hint("Получили настройки: ${s.given.joinToString()}", Icons.Filled.CheckCircle, Brand.Mint)
-                    ExpandTile(Icons.Filled.Info, "Как поставить на телевизор", "Без браузера и длинных адресов", help, onToggle = { help = !help }) {
+                    if (s.given.isNotEmpty()) Hint("Получили настройки: ${s.given.joinToString()}", PnIcons.CheckCircle, Brand.Mint)
+                    ExpandTile(PnIcons.Info, "Как поставить на телевизор", "Без браузера и длинных адресов", help, onToggle = { help = !help }) {
                         HowTo(s.addresses.first(), s.settings, LocalUiPlatform.current.deviceWhere)
                     }
                     Hint("Адрес работает только в этой сети. Настройки получает лишь то устройство, которому вы нажмёте «Разрешить».", Glyph.Shield)

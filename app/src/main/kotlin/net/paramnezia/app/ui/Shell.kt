@@ -39,8 +39,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -293,9 +291,9 @@ private fun HomeOrb(power: PowerState, onClick: () -> Unit) {
                     r,
                 )
             }
-            PowerGlyph(glyph, Modifier.size(15.dp))
+            PowerGlyph(glyph, Modifier.size(15.dp), shield = power == PowerState.ON)
         }
-        Icon(Icons.AutoMirrored.Rounded.ArrowBack, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(PnIcons.ArrowLeft, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.width(4.dp))
         Text(Tab.HOME.title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }

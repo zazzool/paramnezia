@@ -1,5 +1,10 @@
 package net.paramnezia.app.ui
 
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -150,23 +155,40 @@ fun PowerButton(state: PowerState, onClick: () -> Unit, modifier: Modifier = Mod
                     }
                 }
             }
-            PowerGlyph(iconColor, Modifier.size(size * 0.36f))
+            PowerGlyph(iconColor, Modifier.size(size * 0.36f), shield = state == PowerState.ON)
         }
     }
 }
 
-/** The IEC power symbol: an open ring and a bar. */
+/**
+ * The button's glyph: Lucide's power symbol while off or connecting, and a shield with a check once
+ * the tunnel is proven to work, cross-fading between the two (a state you can read at a glance).
+ */
 @Composable
-fun PowerGlyph(color: Color, modifier: Modifier = Modifier) {
-    Canvas(modifier.padding(2.dp)) {
-        val stroke = this.size.minDimension * 0.12f
-        val inset = stroke / 2
-        drawArc(
-            color, startAngle = -60f, sweepAngle = 300f, useCenter = false,
-            topLeft = Offset(inset, inset + this.size.height * 0.06f),
-            size = Size(this.size.width - stroke, this.size.height - stroke - this.size.height * 0.06f),
-            style = Stroke(stroke, cap = StrokeCap.Round),
-        )
-        drawLine(color, Offset(center.x, inset), Offset(center.x, this.size.height * 0.48f), stroke, StrokeCap.Round)
+fun PowerGlyph(color: Color, modifier: Modifier = Modifier, shield: Boolean = false) {
+    val t by animateFloatAsState(if (shield) 1f else 0f, tween(450, easing = FastOutSlowInEasing), label = "glyph")
+    Canvas(modifier) {
+        val box = this.size.minDimension
+        val stroke = box * 0.105f
+        // The shield grows in from slightly smaller as the power symbol fades out.
+        if (t < 1f) drawLucide("Power", center, box * (1f - 0.12f * t), color.copy(alpha = color.alpha * (1f - t)), stroke)
+        if (t > 0f) drawLucide("ShieldCheck", center, box * (0.88f + 0.12f * t), color.copy(alpha = color.alpha * t), stroke)
+    }
+}
+
+private val lucideCache = HashMap<String, List<Path>>()
+
+private fun lucidePaths(name: String): List<Path> = synchronized(lucideCache) {
+    lucideCache.getOrPut(name) { PnIcons.paths.getValue(name).map { PathParser().parsePathString(it).toPath() } }
+}
+
+/** Draws the Lucide icon [name] centred at [at], [box] px wide, with a stroke of [stroke] px. */
+fun DrawScope.drawLucide(name: String, at: Offset, box: Float, color: Color, stroke: Float) {
+    val k = box / 24f
+    withTransform({
+        translate(at.x - box / 2, at.y - box / 2)
+        scale(k, k, Offset.Zero)
+    }) {
+        for (p in lucidePaths(name)) drawPath(p, color, style = Stroke(stroke / k, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 }
