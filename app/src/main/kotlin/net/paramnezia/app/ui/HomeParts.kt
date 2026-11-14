@@ -16,13 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -153,7 +146,7 @@ fun VisibilityCard(app: App, tunnel: TunnelState) {
                 }
                 Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
                     if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    else IconButton(onClick = refresh) { Icon(Icons.Filled.Refresh, "Обновить") }
+                    else IconButton(onClick = refresh) { Icon(PnIcons.Refresh, "Обновить") }
                 }
             }
             SeenRow("Зарубежные сайты", if (up && v?.foreignLeak != true) Route.TUNNEL else Route.DIRECT, v?.foreign, loading, v?.foreignError)
@@ -230,7 +223,7 @@ private data class Note(val ok: Boolean?, val text: String)
 private fun NoteRow(n: Note) {
     val color = when (n.ok) { true -> Brand.Mint; false -> Brand.Amber; null -> MaterialTheme.colorScheme.onSurfaceVariant }
     Row(verticalAlignment = Alignment.Top) {
-        Icon(when (n.ok) { true -> Icons.Filled.CheckCircle; false -> Icons.Filled.Warning; null -> Icons.Filled.Info }, null,
+        Icon(when (n.ok) { true -> PnIcons.CheckCircle; false -> PnIcons.Warning; null -> PnIcons.Info }, null,
             Modifier.size(16.dp).padding(top = 2.dp), tint = color)
         Spacer(Modifier.width(8.dp))
         Text(n.text, style = MaterialTheme.typography.bodySmall)

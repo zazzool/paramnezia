@@ -5,8 +5,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -73,7 +71,7 @@ fun SshFields(state: SshFormState, enabled: Boolean, toast: (String) -> Unit, sh
         } else single(text)
     }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Hint("Скопируйте письмо хостера целиком и нажмите «Вставить»: адрес, логин, пароль и порт заполнятся сами.", Icons.Filled.Info)
+        Hint("Скопируйте письмо хостера целиком и нажмите «Вставить»: адрес, логин, пароль и порт заполнятся сами.", PnIcons.Info)
         PasteField(
             state.host, { state.host = it.trim() }, "IP или домен сервера",
             placeholder = "203.0.113.10", keyboardType = KeyboardType.Uri, enabled = enabled,

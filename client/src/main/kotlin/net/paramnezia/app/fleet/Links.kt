@@ -1,5 +1,8 @@
 package net.paramnezia.app.fleet
 
+import kotlinx.coroutines.sync.withLock
+import net.paramnezia.core.config.WgQuick
+import net.paramnezia.app.data.PooledClient
 import net.paramnezia.app.platform.Log
 import net.paramnezia.app.data.Repo
 import net.paramnezia.app.data.StoredLink
@@ -69,7 +72,7 @@ class Links(
         val pub = Invite.read(invite)?.let { WgKey.fromBase64(it.privateKey).publicKey().toBase64() }
         if (delivery == Delivery.FILE) return@withContext Created(name, storeFile(name, server.id, pub, fleetDevice = true), invite)
         val link = try {
-            links.create(ssh, invite, name, appDownload())
+            links.create(ssh, invite, name, appDownload(), fast = isPrepared(ssh))
         } catch (e: Exception) {
             // No link, no device: do not leave a member nobody can use.
             pub?.let { runCatching { fleet.removeDevice(it) } }
@@ -83,12 +86,16 @@ class Links(
     suspend fun forProfile(profile: StoredProfile, name: String, delivery: Delivery = Delivery.LINK): Created = withContext(Dispatchers.IO) {
         val ssh = profile.ssh ?: error("Нет SSH-доступа к этому серверу")
         val protocol = runCatching { Protocol.valueOf(profile.protocol) }.getOrDefault(Protocol.AWG)
-        val client = WgKey.generatePrivate()
-        val tunnel = try { manager.addClient(ssh, client, name, protocol) } catch (e: Exception) { throw friendly(e) }
+        // A prepared account is instant; without one the server is asked now.
+        val pooled = takeClient(profile.id)
+        val client = pooled?.let { WgKey.fromBase64(it.privateKey) } ?: WgKey.generatePrivate()
+        val tunnel = pooled?.let { runCatching { WgQuick.parse(it.conf) }.getOrNull() }
+            ?: try { manager.addClient(ssh, client, name, protocol) } catch (e: Exception) { throw friendly(e) }
+        scope.launch { runCatching { fillClientPool(profile) } }
         val key = AmneziaFormat.export(profile.name, tunnel).let(AmneziaKey::encode)
         if (delivery == Delivery.FILE) return@withContext Created(name, storeFile(name, profile.id, client.publicKey().toBase64()), key)
         val link = try {
-            links.create(ssh, key, name, appDownload())
+            links.create(ssh, key, name, appDownload(), fast = isPrepared(ssh))
         } catch (e: Exception) {
             runCatching { manager.removeClient(ssh, client.publicKey(), protocol) }
             throw friendly(e)
@@ -110,7 +117,38 @@ class Links(
         return IllegalStateException(text, e)
     }
 
+    private val poolLock = kotlinx.coroutines.sync.Mutex()
+
+    private suspend fun takeClient(profileId: String): PooledClient? = poolLock.withLock {
+        val c = repo.current.clientPool.firstOrNull { it.profileId == profileId } ?: return null
+        repo.update { s -> s.copy(clientPool = s.clientPool - c) }
+        c
+    }
+
+    /**
+     * Prepares up to [CLIENT_POOL] accounts on [profile]'s server in the background (one SSH session),
+     * so that the next "add a person" without a fleet is instant too.
+     */
+    suspend fun fillClientPool(profile: StoredProfile) = withContext(Dispatchers.IO) {
+        val ssh = profile.ssh ?: return@withContext
+        val protocol = runCatching { Protocol.valueOf(profile.protocol) }.getOrDefault(Protocol.AWG)
+        poolLock.withLock {
+            val have = repo.current.clientPool.count { it.profileId == profile.id }
+            repeat(CLIENT_POOL - have) {
+                val key = WgKey.generatePrivate()
+                val conf = runCatching { manager.addClient(ssh, key, POOL_PEER_NAME, protocol) }.getOrElse { e ->
+                    Log.w(TAG, "prepare an account on ${ssh.host}: ${e.message}"); return@withLock
+                }
+                val c = PooledClient(profile.id, key.toBase64(), WgQuick.write(conf), System.currentTimeMillis())
+                repo.update { s -> s.copy(clientPool = s.clientPool + c) }
+            }
+        }
+    }
+
     private val prepared = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    /** The page on [ssh] was set up in this run of the app (with the current app download info). */
+    private fun isPrepared(ssh: SshCredentials): Boolean = prepared.any { it.startsWith("${ssh.host}:${ssh.port}:") }
 
     /**
      * Readies the servers this admin can hand out links from (page container, image pull, the app's
@@ -129,6 +167,11 @@ class Links(
                 app?.let { publisher.mirrorRelease(ssh, it.sha256, it.urls, null, forInvites = true, protocol = null, windows = it.windows) }
             }.onSuccess { prepared += key }.onFailure { Log.w(TAG, "prepare ${ssh.host}: ${it.message}") }
         }
+        // Accounts prepared for servers that are gone from the app are dropped (their peers are harmless).
+        repo.update { s -> s.copy(clientPool = s.clientPool.filter { c -> s.profiles.any { it.id == c.profileId && it.ssh != null } }) }
+        // Ready slots, so that adding a person is instant (they refill after each use).
+        runCatching { fleet.fillPool() }.onFailure { Log.w(TAG, "device slots: ${it.message}") }
+        for (p in repo.current.profiles.filter { it.ssh != null }) runCatching { fillClientPool(p) }
     }
 
     /**
@@ -220,5 +263,7 @@ class Links(
 
     private companion object {
         const val TAG = "PnLinks"
+        const val CLIENT_POOL = 2
+        const val POOL_PEER_NAME = "Paramnezia"
     }
 }

@@ -32,15 +32,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
@@ -149,11 +140,11 @@ fun CloudBuyDialog(
 @Composable
 private fun TopBar(title: String, onClose: () -> Unit, onRefresh: (() -> Unit)?, refreshing: Boolean) {
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onClose) { Icon(Icons.Filled.Close, "Закрыть") }
+        IconButton(onClick = onClose) { Icon(PnIcons.Close, "Закрыть") }
         Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
         if (onRefresh != null) {
             if (refreshing) CircularProgressIndicator(Modifier.padding(12.dp).size(24.dp), strokeWidth = 2.dp)
-            else IconButton(onClick = onRefresh) { Icon(Icons.Filled.Refresh, "Обновить цены") }
+            else IconButton(onClick = onRefresh) { Icon(PnIcons.Refresh, "Обновить цены") }
         }
     }
 }
@@ -201,7 +192,7 @@ private fun PickScreen(
                 data == null -> Skeleton()
                 region == null || priced == null -> ErrorCard("У ${info.name} сейчас нечего купить: нет тарифов ни в одном месте.") { app.cloud.refresh(provider, force = true) }
                 else -> {
-                    if (cat.error != null) Hint("Показаны сохранённые цены: ${cat.error}", Icons.Filled.Warning, MaterialTheme.colorScheme.error)
+                    if (cat.error != null) Hint("Показаны сохранённые цены: ${cat.error}", PnIcons.Warning, MaterialTheme.colorScheme.error)
                     Hero(
                         region, priced, info,
                         recommended = rec?.region?.id == region.id && plan?.id == suggested?.id,
@@ -219,7 +210,7 @@ private fun PickScreen(
                     }
                     Hint(
                         "${info.name} спишет деньги со своего баланса. Сервер появится в вашем аккаунте у хостера; удалить его можно и там, и в приложении.",
-                        Icons.Filled.Info,
+                        PnIcons.Info,
                     )
                 }
             }
@@ -254,7 +245,7 @@ private fun ProviderStrip(connected: List<ProviderInfo>, selected: String, onSel
                 modifier = Modifier.clip(CircleShape).tactile(onClick = onAdd),
             ) {
                 Row(Modifier.padding(start = 10.dp, end = 14.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Add, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                    Icon(PnIcons.Plus, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(6.dp))
                     Text("Хостер", style = MaterialTheme.typography.labelLarge)
                 }
@@ -327,11 +318,11 @@ private fun Hero(
             )
             if (plan.tooSmall) {
                 Spacer(Modifier.height(Space.S))
-                Hint("Меньше 1 ГБ памяти: установка AmneziaWG может не поместиться", Icons.Filled.Warning, scheme.error)
+                Hint("Меньше 1 ГБ памяти: установка AmneziaWG может не поместиться", PnIcons.Warning, scheme.error)
             }
             Spacer(Modifier.height(Space.M))
             Row(horizontalArrangement = Arrangement.spacedBy(Space.S)) {
-                Door(Icons.Filled.LocationOn, "Место", openPlaces, Modifier.weight(1f), onPlaces)
+                Door(PnIcons.MapPin, "Место", openPlaces, Modifier.weight(1f), onPlaces)
                 Door(Glyph.Tune, "Тариф", openPlans, Modifier.weight(1f), onPlans)
             }
         }
@@ -460,7 +451,7 @@ private fun PlanCard(p: CloudPlan, selected: Boolean, best: Boolean, onClick: ()
             }
             if (selected) {
                 Spacer(Modifier.width(Space.S))
-                Icon(Icons.Filled.Check, null, tint = scheme.primary)
+                Icon(PnIcons.Check, null, tint = scheme.primary)
             }
         }
     }
@@ -519,7 +510,7 @@ private fun ErrorCard(text: String, onRetry: () -> Unit) {
     Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(Space.M), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Warning, null, tint = MaterialTheme.colorScheme.error)
+                Icon(PnIcons.Warning, null, tint = MaterialTheme.colorScheme.error)
                 Spacer(Modifier.width(Space.S))
                 Text(text, style = MaterialTheme.typography.bodyMedium)
             }
@@ -548,7 +539,7 @@ private fun ProvidersScreen(app: App, initial: String?, busy: Boolean, onBusy: (
             ProviderCard(app, p, p.id in state.cloud.tokens, expanded = open == p.id, busy = busy, onBusy = onBusy,
                 onToggle = { open = if (open == p.id) null else p.id }, onSaved = onSaved)
         }
-        Hint("Другой хостер с API? Его можно добавить в приложение: список и как добавить в providers/README.md репозитория.", Icons.Filled.Info)
+        Hint("Другой хостер с API? Его можно добавить в приложение: список и как добавить в providers/README.md репозитория.", PnIcons.Info)
         Spacer(Modifier.height(Space.M))
     }
 }
@@ -582,7 +573,7 @@ private fun ProviderCard(
                     }
                     Text(p.blurb, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
                 }
-                if (connected && !expanded) Icon(Icons.Filled.Check, null, tint = Brand.Mint)
+                if (connected && !expanded) Icon(PnIcons.Check, null, tint = Brand.Mint)
             }
             AnimatedVisibility(expanded) {
                 Column(Modifier.padding(start = Space.M, end = Space.M, bottom = Space.M), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -596,7 +587,7 @@ private fun ProviderCard(
                         OutlinedButton(onClick = { runCatching { uri.openUri(p.tokenUrl) } }) {
                             Text("Открыть панель ${p.name}")
                             Spacer(Modifier.width(6.dp))
-                            Icon(Icons.AutoMirrored.Filled.ArrowForward, null, Modifier.size(18.dp))
+                            Icon(PnIcons.ArrowRight, null, Modifier.size(18.dp))
                         }
                         PasteField(token, { token = it.trim(); error = null }, "Токен API ${p.name}", secret = true, enabled = !busy,
                             onEmptyClipboard = { error = "Буфер обмена пуст: скопируйте токен в панели ${p.name}" })
@@ -645,10 +636,10 @@ private fun JobScreen(app: App, j: Cloud.Job, toast: (String) -> Unit, onClose: 
                             Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
                                 when {
                                     done -> Box(Modifier.size(24.dp).clip(CircleShape).background(Brand.Mint), contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Filled.Check, null, Modifier.size(16.dp), tint = Color.White)
+                                        Icon(PnIcons.Check, null, Modifier.size(16.dp), tint = Color.White)
                                     }
                                     now -> CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.5.dp)
-                                    failed -> Icon(Icons.Filled.Warning, null, tint = scheme.error)
+                                    failed -> Icon(PnIcons.Warning, null, tint = scheme.error)
                                     else -> Box(Modifier.size(12.dp).clip(CircleShape).border(1.5.dp, scheme.outline, CircleShape))
                                 }
                             }
@@ -662,10 +653,10 @@ private fun JobScreen(app: App, j: Cloud.Job, toast: (String) -> Unit, onClose: 
                 }
             }
             j.server?.host?.let { Text("IP: $it", style = MaterialTheme.typography.bodyMedium.merge(TabularNumbers), color = scheme.onSurfaceVariant) }
-            if (running) Hint("Обычно 3–8 минут. Окно можно свернуть: работа продолжится, пока приложение открыто.", Icons.Filled.Info)
+            if (running) Hint("Обычно 3–8 минут. Окно можно свернуть: работа продолжится, пока приложение открыто.", PnIcons.Info)
             val err = j.error
             if (err != null) {
-                Hint(err, Icons.Filled.Warning, scheme.error)
+                Hint(err, PnIcons.Warning, scheme.error)
                 val s = j.server
                 if (s != null) {
                     Text("Сервер уже создан у хостера и оплачивается. Удалите его, если не будете пробовать снова.", style = MaterialTheme.typography.bodySmall)

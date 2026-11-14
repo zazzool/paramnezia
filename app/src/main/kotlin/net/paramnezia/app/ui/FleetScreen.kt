@@ -23,17 +23,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -167,7 +156,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
             if (isAdmin) "Вы администратор · ${plural(devices.size, "устройство", "устройства", "устройств")}, ${plural(servers.size, "сервер", "сервера", "серверов")}"
             else "Серверы и настройки приходят от администратора",
         ) {
-            IconButton(enabled = !busy, onClick = sync) { Icon(Icons.Filled.Refresh, "Проверить обновления конфигурации") }
+            IconButton(enabled = !busy, onClick = sync) { Icon(PnIcons.Refresh, "Проверить обновления конфигурации") }
         }
         SyncStatus(fleet.lastSync, fleet.lastSyncVia)
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -196,7 +185,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
 
         SectionTitle("Серверы") { Pill(servers.size.toString()) }
         if (isAdmin && servers.size < 2) {
-            Hint("Добавьте резервный сервер: если основной заблокируют, устройства сами переключатся на него.", Icons.Filled.Warning, Brand.Amber)
+            Hint("Добавьте резервный сервер: если основной заблокируют, устройства сами переключатся на него.", PnIcons.Warning, Brand.Amber)
         }
         Group {
             servers.forEachIndexed { i, s ->
@@ -236,7 +225,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
             Group {
                 GroupRow(
                     "Мои настройки на всех устройствах", subtitle = "Обход российского, блокировка рекламы, списки «через VPN» и «напрямую»",
-                    icon = Icons.Filled.Settings,
+                    icon = PnIcons.Settings,
                     onClick = { if (!busy) work(if (!fleet.sharePolicy) "Устройства получат ваши настройки" else "Устройства оставят свои настройки") {
                         app.fleet.sharePolicy(state.settings, !fleet.sharePolicy)
                     } },
@@ -253,7 +242,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
             }
         } else {
             if (manifest?.policy != null) {
-                Hint("Обход российских сайтов и блокировку рекламы настраивает администратор семьи, они обновляются сами.", Icons.Filled.Info)
+                Hint("Обход российских сайтов и блокировку рекламы настраивает администратор семьи, они обновляются сами.", PnIcons.Info)
             }
             SectionTitle("Раздача")
             Group { LanShareRow("Приложение для телевизора и компьютера рядом; настройки выдаёт администратор") { lanShare = true } }
@@ -293,7 +282,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
     created?.let { list ->
         AlertDialog(
             onDismissRequest = { created = null },
-            icon = { Icon(Icons.Filled.CheckCircle, null, tint = Brand.Mint) },
+            icon = { Icon(PnIcons.CheckCircle, null, tint = Brand.Mint) },
             title = { Text(if (list.size == 1) "Готово" else "Готово: ${list.size}") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(Space.S)) {
@@ -312,7 +301,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                                 FilledTonalButton(onClick = {
                                     if (c.stored.file) platform.shareFile(c.name, c.key)
                                     else platform.shareText(inviteMessage(c.name, c.stored.url), "Отправить ссылку")
-                                }) { Icon(Icons.Filled.Share, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (c.stored.file) "Файл" else "Ссылку") }
+                                }) { Icon(PnIcons.Share, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (c.stored.file) "Файл" else "Ссылку") }
                             },
                         )
                     }
@@ -470,12 +459,12 @@ private fun FleetPitch(managed: List<StoredProfile>, busy: Boolean, onCreate: (S
 @Composable
 private fun SyncStatus(lastSync: Long, via: String?) {
     if (lastSync <= 0) {
-        Hint("Конфигурация ещё не проверялась. Нажмите ⟳ вверху.", Icons.Filled.Info)
+        Hint("Конфигурация ещё не проверялась. Нажмите ⟳ вверху.", PnIcons.Info)
         return
     }
     val from = when (via) { "tunnel" -> "с сервера"; "github" -> "через GitHub"; "tor" -> "через Tor (Orbot)"; else -> "с зеркала" }
     Hint("Конфигурация актуальна: проверено ${ago(System.currentTimeMillis() - lastSync)}, $from",
-        Icons.Filled.CheckCircle, Brand.Mint)
+        PnIcons.CheckCircle, Brand.Mint)
 }
 
 @Composable
@@ -484,14 +473,14 @@ private fun LanShareRow(subtitle: String, onClick: () -> Unit) = GroupRow(
 )
 
 @Composable
-private fun Chevron() = Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun Chevron() = Icon(PnIcons.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
 
 /** «⋮» with the row's less frequent (and destructive) actions. */
 @Composable
 private fun Overflow(busy: Boolean, vararg actions: Pair<String, () -> Unit>) {
     var open by remember { mutableStateOf(false) }
     Box {
-        IconButton(enabled = !busy, onClick = { open = true }) { Icon(Icons.Filled.MoreVert, "Действия") }
+        IconButton(enabled = !busy, onClick = { open = true }) { Icon(PnIcons.MoreVertical, "Действия") }
         DropdownMenu(open, onDismissRequest = { open = false }) {
             for ((label, action) in actions) DropdownMenuItem(text = { Text(label) }, onClick = { open = false; action() })
         }
@@ -540,7 +529,7 @@ private fun FamilyPage(url: String?, busy: Boolean, onCreate: () -> Unit, onShar
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(Space.S)) {
                     Button(onClick = { onShare(url) }, modifier = Modifier.weight(1f).height(48.dp)) {
-                        Icon(Icons.Filled.Share, null, Modifier.size(18.dp)); Spacer(Modifier.width(Space.S)); Text("Отправить")
+                        Icon(PnIcons.Share, null, Modifier.size(18.dp)); Spacer(Modifier.width(Space.S)); Text("Отправить")
                     }
                     OutlinedButton(onClick = { onOpen(url) }, modifier = Modifier.weight(1f).height(48.dp)) { Text("Открыть") }
                 }
@@ -651,7 +640,7 @@ private fun ReserveChannel(on: Boolean, error: String?, busy: Boolean, toast: (S
                 badge = if (on && error == null) "включён" else null,
                 onClick = { open = !open },
                 trailing = {
-                    Icon(if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, if (open) "Свернуть" else "Настроить",
+                    Icon(if (open) PnIcons.ChevronUp else PnIcons.ChevronDown, if (open) "Свернуть" else "Настроить",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 12.dp))
                 },
             )

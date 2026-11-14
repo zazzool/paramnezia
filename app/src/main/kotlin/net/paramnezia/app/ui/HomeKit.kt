@@ -33,9 +33,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -144,7 +141,7 @@ fun EmptyHero(follower: Boolean, onAdd: (() -> Unit)?, onPaste: () -> Unit, modi
         )
         Spacer(Modifier.height(Space.L))
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.S + 4.dp)) {
-            if (onAdd != null) ActionTile(Icons.Filled.Add, "Добавить сервер", "ключ, QR-код или свой VPS", primary = true, onClick = onAdd)
+            if (onAdd != null) ActionTile(PnIcons.Plus, "Добавить сервер", "ключ, QR-код или свой VPS", primary = true, onClick = onAdd)
             ActionTile(null, "Вставить ключ", "из буфера обмена", primary = onAdd == null, onClick = onPaste)
         }
     }
@@ -282,7 +279,7 @@ fun InfoPanel(app: App, tunnel: TunnelState, onMore: () -> Unit) {
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.KeyboardArrowUp, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Icon(PnIcons.ChevronUp, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.width(4.dp))
                 FitText("Подробнее", MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }

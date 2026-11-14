@@ -262,30 +262,14 @@ private fun DrawScope.engraved(tab: Tab, at: Offset, r: Float, enamel: Color, pr
     glyph(tab, at - Offset(0f, d * 0.5f), r, Color.White.copy(alpha = 0.16f * (1 - pressed)), 0.4f)
 }
 
-/** The glyph on a 24-unit grid centred at [at], [r] being half its size; [weight] scales the strokes. */
+/** The segment's Lucide glyph centred at [at], [r] being half its size; [weight] scales the strokes. */
 private fun DrawScope.glyph(tab: Tab, at: Offset, r: Float, color: Color, weight: Float) {
-    val u = r / 12f * 1.15f
-    fun p(x: Float, y: Float) = Offset(at.x + (x - 12f) * u, at.y + (y - 12f) * u)
-    val stroke = 2.6f * u * weight
-    when (tab) {
-        Tab.ADD -> {
-            drawLine(color, p(12f, 5f), p(12f, 19f), stroke * 1.1f, StrokeCap.Round)
-            drawLine(color, p(5f, 12f), p(19f, 12f), stroke * 1.1f, StrokeCap.Round)
-        }
-        Tab.FLEET -> {
-            // Two people: a grown-up and a smaller one beside.
-            drawCircle(color, 3.2f * u + (stroke - 2.6f * u) / 2, p(9f, 7.6f))
-            drawArc(color, 180f, 180f, false, topLeft = p(3.2f, 13.6f), size = Size(11.6f * u, 11.6f * u), style = Stroke(stroke, cap = StrokeCap.Round))
-            drawCircle(color, 2.5f * u + (stroke - 2.6f * u) / 2, p(16.8f, 9.6f))
-            drawArc(color, 200f, 140f, false, topLeft = p(13f, 14.6f), size = Size(8.4f * u, 8.4f * u), style = Stroke(stroke * 0.9f, cap = StrokeCap.Round))
-        }
-        Tab.SETTINGS -> {
-            // Sliders: three tracks with knobs.
-            for ((y, x) in listOf(6.5f to 9f, 12f to 15.5f, 17.5f to 11f)) {
-                drawLine(color, p(5f, y), p(19f, y), stroke * 0.7f, StrokeCap.Round)
-                drawCircle(color, 2.6f * u + (stroke - 2.6f * u) / 2, p(x, y))
-            }
-        }
-        Tab.HOME -> Unit
+    val name = when (tab) {
+        Tab.ADD -> "Plus"
+        Tab.FLEET -> "Users"
+        Tab.SETTINGS -> "Sliders"
+        Tab.HOME -> return
     }
+    val box = r * 2f * 1.15f
+    drawLucide(name, at, box, color, box / 24f * 2.3f * weight)
 }

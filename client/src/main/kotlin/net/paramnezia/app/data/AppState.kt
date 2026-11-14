@@ -28,6 +28,8 @@ data class AppState(
     val cloud: CloudState = CloudState(),
     /** Where the last few addresses are (geolocation vote), so a check after a restart asks no databases. */
     val geo: Map<String, StoredGeo> = emptyMap(),
+    /** Admin without a fleet: accounts made in advance on standalone servers (Links.forProfile takes one). */
+    val clientPool: List<PooledClient> = emptyList(),
 ) {
     /** Follower devices of a fleet get the one-button screen; the admin and standalone users get everything. */
     val simpleUi: Boolean get() = when (uiMode) {
@@ -84,6 +86,21 @@ data class StoredFleet(
     val revoked: Set<String> = emptySet(),
     /** Admin: when the servers were last checked and repaired (see FleetManager.heal). */
     val lastHeal: Long = 0,
+    /**
+     * Admin: device slots prepared in advance (key, address, already a peer on the servers), so adding
+     * a person takes one instead of a round of SSH sessions (FleetManager.fillPool / addDevice).
+     */
+    val pool: List<PooledDevice> = emptyList(),
+)
+
+/** A device slot ready to hand out: its key, its fixed address and the servers that already know it. */
+@Serializable
+data class PooledDevice(
+    /** WireGuard private key, base64 (encrypted with the rest of the state, never leaves this device until handed out). */
+    val privateKey: String,
+    val address: String,
+    val servers: Set<String> = emptySet(),
+    val createdAt: Long = 0,
 )
 
 @Serializable
@@ -156,3 +173,13 @@ data class CloudServerRef(
 
 @Serializable
 data class StoredGeo(val verdict: net.paramnezia.core.net.GeoVerdict, val at: Long)
+
+/** An account already added on a standalone server, ready to hand out: its key and its config. */
+@Serializable
+data class PooledClient(
+    val profileId: String,
+    val privateKey: String,
+    /** The client config the server gave (wg-quick form with the AmneziaWG fields). */
+    val conf: String,
+    val createdAt: Long = 0,
+)

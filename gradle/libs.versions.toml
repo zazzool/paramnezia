@@ -17,7 +17,6 @@ datastore = "1.2.0"
 navigation = "2.8.5"
 profileinstaller = "1.4.1"
 composeMultiplatform = "1.10.3"
-cmpIcons = "1.7.3"
 jna = "5.18.1"
 jmdns = "3.6.5"
 
@@ -39,7 +38,6 @@ androidx-compose-ui = { module = "androidx.compose.ui:ui" }
 androidx-compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
 androidx-compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
 androidx-compose-material3 = { module = "androidx.compose.material3:material3" }
-androidx-compose-material-icons = { module = "androidx.compose.material:material-icons-core" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity" }
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
@@ -52,7 +50,6 @@ androidx-profileinstaller = { module = "androidx.profileinstaller:profileinstall
 android-gradle = { module = "com.android.tools.build:gradle", version.ref = "agp" }
 
 # Windows app (desktop/): Compose Multiplatform, the same UI toolkit as the Android app.
-cmp-icons-core = { module = "org.jetbrains.compose.material:material-icons-core", version.ref = "cmpIcons" }
 jna-platform = { module = "net.java.dev.jna:jna-platform", version.ref = "jna" }
 
 [plugins]

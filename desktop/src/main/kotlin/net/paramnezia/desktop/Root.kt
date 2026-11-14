@@ -1,11 +1,10 @@
 package net.paramnezia.desktop
 
+import net.paramnezia.app.ui.PnIcons
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -122,7 +121,7 @@ fun Root(app: App, platform: DesktopUiPlatform, incoming: MutableSharedFlow<Stri
 private fun ServiceBanner() {
     Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Warning, null, tint = MaterialTheme.colorScheme.onErrorContainer)
+            Icon(PnIcons.Warning, null, tint = MaterialTheme.colorScheme.onErrorContainer)
             Spacer(Modifier.width(10.dp))
             Text(
                 "Служба Paramnezia не отвечает, VPN не включится. Переустановите Paramnezia или запустите службу «Paramnezia VPN» (services.msc).",
