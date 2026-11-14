@@ -23,6 +23,12 @@ https://github.com/mwiede/jsch
 
 Followed: the hybrid ML-KEM key exchange in `deploy/src/main/kotlin/net/paramnezia/deploy/ssh/SshClient.kt`.
 
+## Bouncy Castle — MIT License
+
+Copyright (c) 2000-2026 The Legion of the Bouncy Castle Inc. https://www.bouncycastle.org
+
+Ported (to Kotlin, changed): ML-KEM-768 and Keccak in `deploy/src/main/kotlin/net/paramnezia/deploy/ssh/MlKem.kt`.
+
 ## TweetNaCl — public domain
 
 Daniel J. Bernstein, Bernard van Gastel, Wesley Janssen, Tanja Lange, Peter Schwabe, Sjaak Smetsers.

@@ -540,8 +540,8 @@ internal class SshClient(
         private const val MAX_DATA = 32 * 1024
         private const val WINDOW = 2 * 1024 * 1024
 
-        /** What we offer: the post-quantum hybrid first where the JDK has ML-KEM (Java 24+), then [KEX]. */
-        val kexAlgorithms: List<String> by lazy { if (MlKem768.available) listOf("mlkem768x25519-sha256") + KEX else KEX }
+        /** What we offer: the post-quantum hybrid first (as OpenSSH 9.9+ does), then [KEX]. */
+        val kexAlgorithms: List<String> by lazy { listOf("mlkem768x25519-sha256") + KEX }
 
         val KEX = listOf(
             "curve25519-sha256", "curve25519-sha256@libssh.org",
@@ -600,20 +600,35 @@ internal class SshClient(
 internal class SshConnectionLostException : SshProtocolException("connection lost")
 
 /**
- * ML-KEM-768 (FIPS 203) through the JDK's own KEM API, present from Java 24 (after JSch's
- * jce.MLKEM). Kept in its own class: on Android, which has no javax.crypto.KEM, nothing here is
- * loaded, because [available] is false.
+ * ML-KEM-768 (FIPS 203) for the hybrid key exchange: the JDK's own implementation where it has one
+ * (Java 24+, the Windows app), otherwise ours (MlKem.kt, ported from Bouncy Castle: Android).
+ * The JDK classes are touched only after a check, so nothing breaks where javax.crypto.KEM is missing.
  */
 internal object MlKem768 {
     const val PUBLIC_KEY = 1184
     const val CIPHERTEXT = 1088
 
-    val available: Boolean by lazy { runCatching { Session().publicKey.size == PUBLIC_KEY }.getOrDefault(false) }
+    val jdk: Boolean by lazy { runCatching { JdkSession().publicKey.size == PUBLIC_KEY }.getOrDefault(false) }
+    /** Tests switch this off to run our own implementation where the JDK has one too. */
+    @Volatile internal var preferJdk = true
 
-    class Session {
+    interface Session {
+        val publicKey: ByteArray
+        fun decapsulate(ciphertext: ByteArray): ByteArray
+    }
+
+    fun Session(): Session = if (preferJdk && jdk) JdkSession() else KotlinSession()
+
+    private class KotlinSession : Session {
+        private val pair = MlKemKotlin.keyPair()
+        override val publicKey: ByteArray get() = pair.first
+        override fun decapsulate(ciphertext: ByteArray) = MlKemKotlin.decapsulate(pair.second, ciphertext)
+    }
+
+    private class JdkSession : Session {
         private val decapsulator: javax.crypto.KEM.Decapsulator
         /** The raw encapsulation key: the end of its X.509 SubjectPublicKeyInfo. */
-        val publicKey: ByteArray
+        override val publicKey: ByteArray
 
         init {
             val kp = KeyPairGenerator.getInstance("ML-KEM").apply { initialize(java.security.spec.NamedParameterSpec("ML-KEM-768")) }.generateKeyPair()
@@ -622,6 +637,6 @@ internal object MlKem768 {
             publicKey = spki.copyOfRange(spki.size - PUBLIC_KEY, spki.size)
         }
 
-        fun decapsulate(ciphertext: ByteArray): ByteArray = decapsulator.decapsulate(ciphertext).encoded
+        override fun decapsulate(ciphertext: ByteArray): ByteArray = decapsulator.decapsulate(ciphertext).encoded
     }
 }

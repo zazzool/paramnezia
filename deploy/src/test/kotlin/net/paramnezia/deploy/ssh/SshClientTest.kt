@@ -325,9 +325,8 @@ class SshClientTest {
         try { SshReader(hex("0000ffff00")).string(); fail() } catch (e: SshProtocolException) {}
     }
 
-    /** mlkem768x25519-sha256 against MINA sshd (BouncyCastle's ML-KEM against the JDK's). Needs Java 24+. */
+    /** mlkem768x25519-sha256 against MINA sshd (BouncyCastle's ML-KEM), with the JDK's ML-KEM and with ours. */
     @Test fun postQuantumKeyExchange() {
-        assumeTrue("ML-KEM needs Java 24+ (running ${System.getProperty("java.version")})", MlKem768.available)
         assertEquals("mlkem768x25519-sha256", SshClient.kexAlgorithms.first())
         val server = SshServer.setUpDefaultServer().apply {
             port = 0
@@ -340,9 +339,13 @@ class SshClientTest {
         }
         try {
             assertEquals(listOf("mlkem768x25519-sha256"), server.keyExchangeFactories.map { it.name })
-            SshConnection.open(SshCredentials("127.0.0.1", server.port, "root", "pw"), MemoryHostKeyStore()).use {
-                assertEquals("pq\n", it.run("echo pq").stdout)
+            for (jdk in listOf(true, false)) {
+                if (jdk && !MlKem768.jdk) continue // the JDK has ML-KEM from Java 24
+                MlKem768.preferJdk = jdk
+                SshConnection.open(SshCredentials("127.0.0.1", server.port, "root", "pw"), MemoryHostKeyStore()).use {
+                    assertEquals("jdk=$jdk", "pq\n", it.run("echo pq").stdout)
+                }
             }
-        } finally { server.stop(true) }
+        } finally { MlKem768.preferJdk = true; server.stop(true) }
     }
 }
