@@ -5,6 +5,11 @@ import net.paramnezia.app.data.Repo
 import net.paramnezia.app.data.Settings
 import net.paramnezia.app.data.StoredFleet
 import net.paramnezia.app.data.PooledDevice
+import net.paramnezia.app.data.CoAdminRecord
+import net.paramnezia.core.fleet.AdminGrant
+import net.paramnezia.core.fleet.FleetCoAdmin
+import net.paramnezia.core.fleet.GrantBox
+import net.paramnezia.deploy.cloud.SshKeyPair
 import net.paramnezia.core.fleet.FleetDevice
 import kotlinx.coroutines.sync.withLock
 import net.paramnezia.core.fleet.FleetPolicy
@@ -64,7 +69,10 @@ class FleetManager(
     fun member(): FleetMember? {
         val f = stored ?: return null
         val signed = FleetCrypto.decode(f.manifest) ?: return null
-        return FleetMember(f.trust, WgKey.fromBase64(f.deviceKey), ed, FleetCrypto.open(signed, f.trust, ed))
+        // The stored manifest was checked when it was accepted: open it with whoever signed it.
+        val manifest = FleetCrypto.open(signed, f.trust, ed, listOfNotNull(signed.signer))
+        val ownerVersion = if (f.ownerVersion == 0L && signed.signer == null) signed.version else f.ownerVersion
+        return FleetMember(f.trust, WgKey.fromBase64(f.deviceKey), ed, manifest, ownerVersion, signed.signer)
     }
 
     fun manifest(): FleetManifest? = member()?.manifest
@@ -72,10 +80,36 @@ class FleetManager(
     private fun admin(): FleetAdmin? {
         val f = stored ?: return null
         val seed = f.adminSeed ?: return null
-        return FleetAdmin(f.trust, Base64.getDecoder().decode(seed), ed)
+        return FleetAdmin(f.trust, Base64.getDecoder().decode(seed), ed, signer = if (f.coAdmin) f.signerKey else null)
     }
 
+    /** The owner or a co-admin: may manage people and servers. */
     val isAdmin: Boolean get() = stored?.adminSeed != null
+    /** The owner: also appoints co-admins, adds and removes servers, shares settings. */
+    val isOwner: Boolean get() = stored?.let { it.adminSeed != null && !it.coAdmin } == true
+
+    private fun owner(): FleetAdmin = admin()?.takeIf { it.isOwner } ?: error("Это может только владелец семьи")
+
+    /** The next version; on the owner it also carries the co-admins and their freshly sealed grants. */
+    private fun FleetAdmin.nextFor(current: FleetManifest, change: (FleetManifest) -> FleetManifest): FleetManifest =
+        next(current) { m -> change(m).let { if (isOwner) withAdmins(it) else it } }
+
+    /** Owner: the co-admin list and grants, built from what the owner holds (server access follows the owner's own). */
+    private fun withAdmins(m: FleetManifest): FleetManifest {
+        val f = stored ?: return m
+        val records = f.coAdmins.filter { r -> m.devices.any { it.publicKey == r.device } }
+        val pins = repo.current.hostKeys.filterKeys { k -> f.serverAccess.values.any { k == "${it.host}:${it.port}" } }
+        val now = System.currentTimeMillis()
+        return m.copy(
+            ownerDevice = WgKey.fromBase64(f.deviceKey).publicKey().toBase64(),
+            admins = records.map { FleetCoAdmin(it.name, it.device, it.verifyKey, it.sshPublic, it.since) },
+            grants = records.map { r ->
+                val access = f.serverAccess.filterKeys { id -> m.servers.any { it.id == id } }
+                    .mapValues { (_, c) -> c.copy(password = "", privateKey = r.sshPrivate, passphrase = "") }
+                GrantBox.seal(AdminGrant(r.signingSeed, r.verifyKey, access, pins, f.gistId, f.gistToken, now), WgKey.fromBase64(r.device))
+            },
+        )
+    }
 
     // --- receiving ----------------------------------------------------------------------------
 
@@ -86,11 +120,45 @@ class FleetManager(
         if (!m.offer(wire)) return false
         val policy = m.manifest?.policy
         repo.update { s ->
-            val applied = if (policy != null && s.fleet?.adminSeed == null) s.settings.applying(policy) else s.settings
-            s.copy(fleet = s.fleet?.copy(manifest = wire), settings = applied)
+            val follows = s.fleet?.let { it.adminSeed == null || it.coAdmin } == true
+            val applied = if (policy != null && follows) s.settings.applying(policy) else s.settings
+            s.copy(fleet = s.fleet?.copy(manifest = wire, ownerVersion = m.ownerVersion), settings = applied)
+        }
+        applyGrant(m)
+        // A co-admin's change, seen by the owner: signed again with the owner's key, so devices with an
+        // app older than 2.16 (which trust only the owner's key) get it too.
+        if (m.signer != null && isOwner) scope.launch(Dispatchers.IO) {
+            runCatching { val a = owner(); manifest()?.let { cur -> accept(FleetCrypto.encode(a.seal(a.nextFor(cur) { it }))) } }
         }
         onManifestChanged()
         return true
+    }
+
+    /**
+     * The owner made this device a co-admin (its grant is in the manifest), or took the rights back:
+     * the device's own admin key, SSH access and reserve channel follow. Nothing changes on the owner.
+     */
+    private fun applyGrant(m: FleetMember) {
+        val f = stored ?: return
+        if (f.adminSeed != null && !f.coAdmin) return
+        val grant = m.grant()
+        if (grant != null) {
+            if (f.coAdmin && f.adminSeed == grant.signingSeed && f.serverAccess == grant.servers && f.gistToken == grant.gistToken) return
+            repo.update { s ->
+                s.copy(
+                    fleet = s.fleet?.copy(adminSeed = grant.signingSeed, coAdmin = true, signerKey = grant.verifyKey,
+                        serverAccess = grant.servers, gistId = grant.gistId, gistToken = grant.gistToken),
+                    hostKeys = s.hostKeys + grant.hostKeys,
+                )
+            }
+            Log.i(TAG, "this device is a co-admin now (${grant.servers.size} servers)")
+        } else if (f.coAdmin) {
+            repo.update { s ->
+                s.copy(fleet = s.fleet?.copy(adminSeed = null, coAdmin = false, signerKey = null, serverAccess = emptyMap(),
+                    gistId = null, gistToken = null, gistError = null, pool = emptyList()))
+            }
+            Log.i(TAG, "administrator rights were taken back")
+        }
     }
 
     /** Joins a fleet from an invite. Returns false for an ordinary key (not an invite). */
@@ -189,7 +257,7 @@ class FleetManager(
         val config = servers.addClient(ssh, key, deviceName, clientIp = device.address.substringBefore('/'),
             dns = serverTunnel.iface.dns.ifEmpty { listOf("1.1.1.1", "1.0.0.1") })
         val server = fleetServerOf(serverId, serverName, config)
-        val manifest = admin.next(empty) {
+        val manifest = admin.nextFor(empty) {
             it.copy(servers = listOf(server), devices = listOf(device), mirrors = listOf(publisher.tunnelUrl), policy = repo.current.settings.toPolicy())
         }
         val signed = FleetCrypto.encode(admin.seal(manifest))
@@ -217,7 +285,7 @@ class FleetManager(
         val current = manifest() ?: error("no manifest")
         takeSlot(current)?.let { (slot, key) ->
             val device = FleetDevice(name, key.publicKey().toBase64(), slot.address)
-            val next = admin.next(current) { it.copy(devices = it.devices + device) }
+            val next = admin.nextFor(current) { it.copy(devices = it.devices + device) }
             accept(FleetCrypto.encode(admin.seal(next)))
             // A server the slot missed (added since, or down when the slot was made) and the next slot.
             scope.launch {
@@ -237,7 +305,7 @@ class FleetManager(
         current.servers.firstOrNull()?.let { master ->
             if (access(master) != null && master.id in failed) throw failed.getValue(master.id)
         }
-        val next = admin.next(current) { it.copy(devices = it.devices + device) }
+        val next = admin.nextFor(current) { it.copy(devices = it.devices + device) }
         val signed = FleetCrypto.encode(admin.seal(next))
         accept(signed)
         scope.launch { runCatching { fillPool() } }
@@ -313,7 +381,14 @@ class FleetManager(
      */
     suspend fun removeDevice(publicKey: String) = withContext(Dispatchers.IO) {
         val admin = admin() ?: error("not admin")
-        val current = manifest() ?: return@withContext
+        var current = manifest() ?: return@withContext
+        if (!admin.isOwner && (publicKey == current.ownerDevice || current.admins.any { it.device == publicKey }))
+            error("Устройство владельца и администраторов может отключить только владелец")
+        // An administrator's device: its rights and its SSH key go too.
+        if (admin.isOwner && stored?.coAdmins?.any { it.device == publicKey } == true) {
+            revokeAdmin(publicKey)
+            current = manifest() ?: return@withContext
+        }
         repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(revoked = it.revoked + publicKey) }) }
         var everywhere = true
         for (s in current.servers) {
@@ -321,7 +396,7 @@ class FleetManager(
             runCatching { servers.removeClient(a, WgKey.fromBase64(publicKey)) }.onFailure { everywhere = false }
         }
         if (everywhere) repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(revoked = it.revoked - publicKey) }) }
-        accept(FleetCrypto.encode(admin.seal(admin.next(current) { m -> m.copy(devices = m.devices.filter { it.publicKey != publicKey }) })))
+        accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) { m -> m.copy(devices = m.devices.filter { it.publicKey != publicKey }) })))
     }
 
     /**
@@ -341,12 +416,19 @@ class FleetManager(
         val peers = m.devices.map { ServerManager.PeerSpec(WgKey.fromBase64(it.publicKey), it.name, it.address.substringBefore('/')) }
         var ok = 0
         val stillRevoked = HashSet<String>()
+        val stillRevokedKeys = HashSet<String>()
         for (s in m.servers) {
             val a = access(s) ?: continue
             val steps = listOf(
                 "peers" to { servers.ensurePeers(a, peers).forEach { (k, why) -> Log.w(TAG, "${s.name}: peer $k: $why") } },
                 "revoked" to {
                     runCatching { servers.removeClients(a, f.revoked.map(WgKey::fromBase64)) }.onFailure { stillRevoked += f.revoked }.getOrThrow()
+                },
+                "admins" to {
+                    if (!f.coAdmin && (f.coAdmins.isNotEmpty() || f.revokedAdminKeys.isNotEmpty())) {
+                        runCatching { servers.updateAdminKeys(a, f.coAdmins.map { it.sshPublic }, f.revokedAdminKeys) }
+                            .onFailure { stillRevokedKeys += f.revokedAdminKeys }.getOrThrow()
+                    }
                 },
                 "manifest" to { if (!publisher.publishToServer(a, f.manifest)) Log.w(TAG, "${s.name}: in-tunnel web server is not answering") },
                 "release" to { release?.let { (r, wire) -> publisher.mirrorRelease(a, r.sha256, r.publicApkUrls(), wire, forInvites = false) } },
@@ -355,7 +437,13 @@ class FleetManager(
             for ((name, step) in steps) runCatching { step() }.onFailure { serverOk = false; Log.w(TAG, "heal ${s.name}/$name: ${it.message}") }
             if (serverOk) ok++
         }
-        repo.update { st -> st.copy(fleet = st.fleet?.let { it.copy(revoked = it.revoked.filter { k -> k in stillRevoked }.toSet(), lastHeal = System.currentTimeMillis()) }) }
+        repo.update { st ->
+            st.copy(fleet = st.fleet?.let {
+                it.copy(revoked = it.revoked.filter { k -> k in stillRevoked }.toSet(),
+                    revokedAdminKeys = it.revokedAdminKeys.filter { k -> k in stillRevokedKeys }.toSet(),
+                    lastHeal = System.currentTimeMillis())
+            })
+        }
         ok
     }
 
@@ -364,7 +452,7 @@ class FleetManager(
      * fixed address. Devices switch to it automatically when they need to.
      */
     suspend fun addServer(name: String, ssh: SshCredentials, makeMaster: Boolean, onStep: (ServerManager.Step) -> Unit) = withContext(Dispatchers.IO) {
-        val admin = admin() ?: error("not admin")
+        val admin = owner()
         val current = manifest() ?: error("no manifest")
         val f = stored!!
         val inspection = servers.inspect(ssh)
@@ -377,7 +465,9 @@ class FleetManager(
             servers.registerPeer(ssh, WgKey.fromBase64(d.publicKey), d.name, clientIp = d.address.substringBefore('/'))
         }
         repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(serverAccess = it.serverAccess + (server.id to ssh)) }) }
-        accept(FleetCrypto.encode(admin.seal(admin.next(current) {
+        // The co-admins reach the new server with their own keys too.
+        f.coAdmins.takeIf { it.isNotEmpty() }?.let { list -> runCatching { servers.updateAdminKeys(ssh, list.map { it.sshPublic }) } }
+        accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) {
             it.copy(servers = if (makeMaster) listOf(server) + it.servers else it.servers + server)
         })))
         onServerReady(ssh)
@@ -389,15 +479,15 @@ class FleetManager(
         val current = manifest() ?: return@withContext
         val target = current.servers.firstOrNull { it.id == serverId } ?: return@withContext
         if (current.servers.first().id == serverId) return@withContext
-        accept(FleetCrypto.encode(admin.seal(admin.next(current) { m -> m.copy(servers = listOf(target) + m.servers.filter { it.id != serverId }) })))
+        accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) { m -> m.copy(servers = listOf(target) + m.servers.filter { it.id != serverId }) })))
     }
 
     /** Admin: drops a server (for example one banned for good). */
     suspend fun removeServer(serverId: String) = withContext(Dispatchers.IO) {
-        val admin = admin() ?: return@withContext
+        val admin = owner()
         val current = manifest() ?: return@withContext
         if (current.servers.size <= 1) return@withContext
-        accept(FleetCrypto.encode(admin.seal(admin.next(current) { m -> m.copy(servers = m.servers.filter { it.id != serverId }) })))
+        accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) { m -> m.copy(servers = m.servers.filter { it.id != serverId }) })))
         repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(serverAccess = it.serverAccess - serverId) }) }
     }
 
@@ -407,22 +497,22 @@ class FleetManager(
      * it when no fleet server is reachable. The gist holds only the encrypted, signed manifest.
      */
     suspend fun setReserveChannel(token: String) = withContext(Dispatchers.IO) {
-        val admin = admin() ?: error("not admin")
+        val admin = owner()
         val f = stored ?: return@withContext
         val gist = publisher.publishToGist(token.trim(), f.gistId, f.manifest)
         repo.update { s -> s.copy(fleet = s.fleet?.copy(gistId = gist.id, gistToken = token.trim(), gistError = null)) }
         val current = manifest() ?: return@withContext
         val mirrors = current.mirrors.filter { "github" !in it } + gist.mirrors
-        if (mirrors != current.mirrors) accept(FleetCrypto.encode(admin.seal(admin.next(current) { it.copy(mirrors = mirrors) })))
+        if (mirrors != current.mirrors) accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) { it.copy(mirrors = mirrors) })))
     }
 
     /** Admin: turns the reserve channel off (devices stop looking there; the gist itself stays). */
     suspend fun clearReserveChannel() = withContext(Dispatchers.IO) {
-        val admin = admin() ?: return@withContext
+        val admin = owner()
         repo.update { s -> s.copy(fleet = s.fleet?.copy(gistId = null, gistToken = null, gistError = null)) }
         val current = manifest() ?: return@withContext
         val mirrors = current.mirrors.filter { "github" !in it }
-        if (mirrors != current.mirrors) accept(FleetCrypto.encode(admin.seal(admin.next(current) { it.copy(mirrors = mirrors) })))
+        if (mirrors != current.mirrors) accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) { it.copy(mirrors = mirrors) })))
     }
 
     /**
@@ -430,11 +520,55 @@ class FleetManager(
      * when the admin changes settings; a no-op when nothing changed, so no new version is made.
      */
     suspend fun sharePolicy(settings: Settings, share: Boolean = stored?.sharePolicy ?: true) = withContext(Dispatchers.IO) {
-        val admin = admin() ?: return@withContext
+        val admin = admin()?.takeIf { it.isOwner } ?: return@withContext
         if (stored?.sharePolicy != share) repo.update { s -> s.copy(fleet = s.fleet?.copy(sharePolicy = share)) }
         val current = manifest() ?: return@withContext
         val policy = if (share) settings.toPolicy() else null
-        if (policy != current.policy) accept(FleetCrypto.encode(admin.seal(admin.next(current) { it.copy(policy = policy) })))
+        if (policy != current.policy) accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) { it.copy(policy = policy) })))
+    }
+
+    /**
+     * Owner: makes a family device a co-admin. It gets its own signing key and its own SSH key (put on
+     * every server now; a server that is down gets it at the next self-check), sealed to that device
+     * alone inside the next manifest. The device picks it up at its next manifest read, within the
+     * hour or at once when the app opens; nothing has to be sent to it by hand. Returns the servers
+     * that could not take the key right now.
+     */
+    suspend fun grantAdmin(devicePublicKey: String): Int = withContext(Dispatchers.IO) {
+        val admin = owner()
+        val f = stored ?: error("no fleet")
+        val current = manifest() ?: error("no manifest")
+        val device = current.devices.firstOrNull { it.publicKey == devicePublicKey } ?: error("Устройство не найдено")
+        if (device.publicKey == WgKey.fromBase64(f.deviceKey).publicKey().toBase64()) error("Это устройство и так владелец")
+        if (f.coAdmins.any { it.device == devicePublicKey }) return@withContext 0
+        val (seed, pub) = ed.generate()
+        val ssh = SshKeyPair.generate("paramnezia-admin:" + device.name.filter { it.isLetterOrDigit() }.take(24).ifEmpty { "device" })
+        val missed = coroutineScope {
+            current.servers.mapNotNull(::access).map { a -> async { runCatching { servers.updateAdminKeys(a, listOf(ssh.publicLine)) }.isFailure } }.awaitAll().count { it }
+        }
+        val b64 = Base64.getEncoder()
+        val record = CoAdminRecord(devicePublicKey, device.name, b64.encodeToString(seed), b64.encodeToString(pub), ssh.privatePem, ssh.publicLine, System.currentTimeMillis())
+        repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(coAdmins = it.coAdmins + record, revokedAdminKeys = it.revokedAdminKeys - ssh.publicLine) }) }
+        accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) { it })))
+        Log.i(TAG, "${device.name} is a co-admin (key on ${current.servers.size - missed} of ${current.servers.size} servers)")
+        missed
+    }
+
+    /**
+     * Owner: takes a co-admin's rights back. Its key is dropped from the manifest at once (devices stop
+     * trusting it with the next version they read) and its SSH key from every server; a server that
+     * is down is cleaned up at the next self-check.
+     */
+    suspend fun revokeAdmin(devicePublicKey: String) = withContext(Dispatchers.IO) {
+        val admin = owner()
+        val record = stored?.coAdmins?.firstOrNull { it.device == devicePublicKey } ?: return@withContext
+        repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(coAdmins = it.coAdmins - record, revokedAdminKeys = it.revokedAdminKeys + record.sshPublic) }) }
+        manifest()?.let { current -> accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) { it }))) }
+        val current = manifest() ?: return@withContext
+        val everywhere = coroutineScope {
+            current.servers.mapNotNull(::access).map { a -> async { runCatching { servers.updateAdminKeys(a, emptyList(), listOf(record.sshPublic)) }.isSuccess } }.awaitAll().all { it }
+        }
+        if (everywhere) repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(revokedAdminKeys = it.revokedAdminKeys - record.sshPublic) }) }
     }
 
     private fun accept(signed: String) {

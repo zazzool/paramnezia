@@ -151,6 +151,10 @@ class FleetMember(
             val allowed = current.admins.map { it.verifyKey }
             next = FleetCrypto.open(signed, trust, ed, allowed) ?: return false
             if (next.admins != current.admins || GrantBox.digest(next.grants) != GrantBox.digest(current.grants)) return false
+            // Nor take the owner's device or another administrator's off the family.
+            if (next.ownerDevice != current.ownerDevice) return false
+            val protected = current.admins.map { it.device } + listOfNotNull(current.ownerDevice)
+            if (protected.any { d -> current.devices.any { it.publicKey == d } && next.devices.none { it.publicKey == d } }) return false
         }
         manifest = next
         signer = signed.signer

@@ -32,6 +32,8 @@ data class FleetManifest(
     val admins: List<FleetCoAdmin> = emptyList(),
     /** Their credentials, each sealed to its device's key (see [GrantBox]). */
     val grants: List<SealedGrant> = emptyList(),
+    /** The owner's own device (WireGuard public key), so co-admins cannot remove it. */
+    val ownerDevice: String? = null,
 ) {
     fun deviceFor(publicKey: WgKey): FleetDevice? = devices.firstOrNull { it.publicKey == publicKey.toBase64() }
 }

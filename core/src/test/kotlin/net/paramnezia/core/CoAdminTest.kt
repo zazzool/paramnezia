@@ -40,7 +40,7 @@ class CoAdminTest {
             hostKeys = mapOf("198.51.100.1:22" to "SHA256:x"))
         val momPub = f.momKey.publicKey()
         val v = f.owner.next(f.v) {
-            it.copy(admins = listOf(FleetCoAdmin("Мама", momPub.toBase64(), b64(pub), "ssh-ed25519 AAAA mom", 1)),
+            it.copy(ownerDevice = f.kidKey.publicKey().toBase64(), admins = listOf(FleetCoAdmin("Мама", momPub.toBase64(), b64(pub), "ssh-ed25519 AAAA mom", 1)),
                 grants = listOf(GrantBox.seal(grant, momPub)))
         }
         return Triple(v, FleetAdmin(f.owner.trust, seed, ed, signer = b64(pub)), grant)
@@ -83,6 +83,12 @@ class CoAdminTest {
         assertFalse(kid.offer(FleetCrypto.encode(stranger.seal(stranger.next(v2) { it }))))
         val forged = momAdmin.seal(momAdmin.next(v2) { it }).copy(signer = null)
         assertFalse(kid.offer(FleetCrypto.encode(forged)))
+        // Nor remove the owner's device (here: the son's) or her own.
+        assertFalse(kid.offer(FleetCrypto.encode(momAdmin.seal(momAdmin.next(v2) { m -> m.copy(devices = m.devices.filter { it.publicKey != f.kidKey.publicKey().toBase64() }) }))))
+        assertFalse(kid.offer(FleetCrypto.encode(momAdmin.seal(momAdmin.next(v2) { m -> m.copy(devices = m.devices.filter { it.publicKey != f.momKey.publicKey().toBase64() }) }))))
+        assertFalse(kid.offer(FleetCrypto.encode(momAdmin.seal(momAdmin.next(v2) { m -> m.copy(ownerDevice = null) }))))
+        // But she can remove someone she added.
+        assertTrue(kid.offer(FleetCrypto.encode(momAdmin.seal(momAdmin.next(v2) { m -> m.copy(devices = m.devices.filter { it.publicKey != grandpa.publicKey }) }))))
         // Replays of older versions go nowhere.
         assertFalse(kid.offer(FleetCrypto.encode(momAdmin.seal(v2))))
     }

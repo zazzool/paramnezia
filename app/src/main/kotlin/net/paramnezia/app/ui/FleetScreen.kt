@@ -64,6 +64,7 @@ import net.paramnezia.core.config.WgQuick
 import net.paramnezia.core.crypto.WgKey
 import net.paramnezia.deploy.cloud.CloudProviders
 import kotlinx.coroutines.launch
+import net.paramnezia.core.profile.SshCredentials
 
 /**
  * The fleet: this owner's servers and trusted devices, and everything for handing out access.
@@ -94,6 +95,11 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
     var accountOn by remember { mutableStateOf<List<StoredProfile>?>(null) }
     /** «Раздать по Wi-Fi» is open (the share runs while it is). */
     var lanShare by remember { mutableStateOf(false) }
+    /** A server to reboot (asked to confirm, then the progress). */
+    var rebootOf by remember { mutableStateOf<RebootTarget?>(null) }
+    /** Owner: a device to make a co-admin, or (with [revoking]) to take the rights back from. */
+    var adminOf by remember { mutableStateOf<net.paramnezia.core.fleet.FleetDevice?>(null) }
+    var revoking by remember { mutableStateOf(false) }
 
     // Which links have been used: asked only while some are still open.
     LaunchedEffect(Unit) {
@@ -137,6 +143,16 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                     trailing = { Chevron() },
                 )
             }
+            SectionTitle("Серверы") { Pill(managed.size.toString()) }
+            Group {
+                for (p in managed) {
+                    val ssh = p.ssh!!
+                    GroupRow(
+                        p.name, subtitle = ssh.host, icon = Glyph.Server,
+                        trailing = { Overflow(busy, "Перезагрузить сервер" to { rebootOf = RebootTarget(p.name, ssh.host, ssh) }) },
+                    )
+                }
+            }
             SectionTitle("Раздача")
             Group { LanShareRow("Телевизору и компьютеру рядом: приложение и ключ") { if (!busy) lanShare = true } }
             FamilyPage(state.pages[managed.first().ssh!!.host], busy, onCreate = { work { app.links.familyPage() } }, onShare = shareFamily, onOpen = openUrl)
@@ -147,13 +163,15 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
 
         val manifest = remember(fleet.manifest) { app.fleet.manifest() }
         val isAdmin = fleet.adminSeed != null
+        val isOwner = isAdmin && !fleet.coAdmin
         val me = WgKey.fromBase64(fleet.deviceKey).publicKey().toBase64()
+        val adminDevices = manifest?.admins.orEmpty().map { it.device }.toSet()
         val servers = manifest?.servers.orEmpty()
         val devices = manifest?.devices.orEmpty()
 
         ScreenTitle(
             "Семья",
-            if (isAdmin) "Вы администратор · ${plural(devices.size, "устройство", "устройства", "устройств")}, ${plural(servers.size, "сервер", "сервера", "серверов")}"
+            if (isAdmin) (if (isOwner) "Вы владелец" else "Вы администратор") + " · ${plural(devices.size, "устройство", "устройства", "устройств")}, ${plural(servers.size, "сервер", "сервера", "серверов")}"
             else "Серверы и настройки приходят от администратора",
         ) {
             IconButton(enabled = !busy, onClick = sync) { Icon(PnIcons.Refresh, "Проверить обновления конфигурации") }
@@ -172,13 +190,23 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
         Group {
             for (d in devices) {
                 val self = d.publicKey == me
+                val ownerDevice = d.publicKey == manifest?.ownerDevice
+                val coAdmin = d.publicKey in adminDevices
+                val role = when { ownerDevice -> "владелец"; coAdmin -> "администратор"; else -> null }
+                val actions = buildList<Pair<String, () -> Unit>> {
+                    if (isOwner && !self) {
+                        if (coAdmin) add("Забрать права администратора" to { revoking = true; adminOf = d })
+                        else add("Сделать администратором" to { revoking = false; adminOf = d })
+                    }
+                    // A co-admin cannot take the owner's or another administrator's device off the family.
+                    if (isAdmin && !self && (isOwner || (!ownerDevice && !coAdmin))) add("Отключить" to { work("Устройство отключено") { app.fleet.removeDevice(d.publicKey) } })
+                }
                 GroupRow(
-                    d.name, subtitle = d.address.substringBefore('/'), monogram = d.name.trim().take(1).uppercase().ifEmpty { "?" },
-                    accent = if (self) Brand.Violet else MaterialTheme.colorScheme.primary,
+                    d.name, subtitle = listOfNotNull(d.address.substringBefore('/'), role).joinToString(" · "),
+                    monogram = d.name.trim().take(1).uppercase().ifEmpty { "?" },
+                    accent = if (self) Brand.Violet else if (role != null) Brand.Mint else MaterialTheme.colorScheme.primary,
                     badge = if (self) "это устройство" else null,
-                    trailing = {
-                        if (isAdmin && !self) Overflow(busy, "Отключить" to { work("Устройство отключено") { app.fleet.removeDevice(d.publicKey) } })
-                    },
+                    trailing = { if (actions.isNotEmpty()) Overflow(busy, *actions.toTypedArray()) },
                 )
             }
         }
@@ -190,8 +218,9 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
         Group {
             servers.forEachIndexed { i, s ->
                 val actions = buildList<Pair<String, () -> Unit>> {
+                    if (isAdmin) add("Перезагрузить сервер" to { rebootOf = RebootTarget(s.name, s.host, app.fleet.accessTo(s.id)) })
                     if (isAdmin && i > 0) add("Сделать основным" to { work("${s.name} теперь основной") { app.fleet.promote(s.id) } })
-                    if (isAdmin && servers.size > 1) add("Убрать сервер" to {
+                    if (isOwner && servers.size > 1) add("Убрать сервер" to {
                         val bought = app.cloud.serverAt(s.host)
                         work("Сервер убран из семьи") { app.fleet.removeServer(s.id); boughtRemoved = bought }
                     })
@@ -203,7 +232,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                     trailing = { if (actions.isNotEmpty()) Overflow(busy, *actions.toTypedArray()) },
                 )
             }
-            if (isAdmin) Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
+            if (isOwner) Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
                 Row(Modifier.fillMaxWidth().padding(Space.M), horizontalArrangement = Arrangement.spacedBy(Space.S)) {
                     FilledTonalButton(enabled = !busy, onClick = { buying = true }, modifier = Modifier.weight(1f).height(48.dp)) {
                         Icon(Glyph.Cloud, null, Modifier.size(18.dp)); Spacer(Modifier.width(Space.S)); Text("У хостера", maxLines = 1)
@@ -221,8 +250,10 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
             if (host != null) FamilyPage(state.pages[host], busy, onCreate = { work { app.links.familyPage() } }, onShare = shareFamily, onOpen = openUrl)
             LinkList(state.links, busy, onOpen = { link = it }) { l -> work("Ссылка отозвана") { app.links.revoke(l) } }
 
-            SectionTitle("Доставка настроек")
-            Group {
+            if (!isOwner) Hint("Права администратора выдал владелец семьи: вы приглашаете и отключаете людей и перезагружаете серверы. " +
+                "Серверы, общие настройки и других администраторов меняет только он.", PnIcons.Info)
+            if (isOwner) SectionTitle("Доставка настроек")
+            if (isOwner) Group {
                 GroupRow(
                     "Мои настройки на всех устройствах", subtitle = "Обход российского, блокировка рекламы, списки «через VPN» и «напрямую»",
                     icon = PnIcons.Settings,
@@ -251,6 +282,35 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
     }
 
     if (lanShare) LanShareDialog(app, onDismiss = { lanShare = false }, toast = toast)
+
+    rebootOf?.let { t -> RebootDialog(app, t, onDismiss = { rebootOf = null }) }
+
+    adminOf?.let { d ->
+        AlertDialog(
+            onDismissRequest = { adminOf = null },
+            icon = { Icon(PnIcons.Settings, null) },
+            title = { Text(if (revoking) "Забрать права у «${d.name}»?" else "Сделать «${d.name}» администратором?") },
+            text = {
+                Text(
+                    if (revoking) "Устройство останется в семье и в VPN, но больше не сможет управлять семьёй и серверами: " +
+                        "его ключ уберётся с серверов, а подписи перестанут приниматься."
+                    else "Устройство сможет приглашать и отключать людей и перезагружать серверы. Серверы, общие настройки и " +
+                        "других администраторов по-прежнему меняете только вы. У него будут свои ключи (а не ваши) — их можно " +
+                        "забрать в любой момент. Права придут на устройство сами, при следующей проверке семьи (обычно сразу при открытии приложения).",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    adminOf = null
+                    if (revoking) work("Права администратора забраны") { app.fleet.revokeAdmin(d.publicKey) }
+                    else work { val missed = app.fleet.grantAdmin(d.publicKey)
+                        toast(if (missed == 0) "${d.name}: права администратора выданы" else "${d.name}: права выданы; на $missed сервер(ах) ключ добавится при следующей самопроверке") }
+                }) { Text(if (revoking) "Забрать" else "Сделать администратором") }
+            },
+            dismissButton = { TextButton(onClick = { adminOf = null }) { Text("Отмена") } },
+        )
+    }
 
     if (newDevice) {
         PeopleDialog(
@@ -696,4 +756,65 @@ private fun LinkList(links: List<StoredLink>, busy: Boolean, onOpen: (StoredLink
 private fun expiresIn(ms: Long): String {
     val h = ms / 3_600_000
     return if (h >= 24) "ещё ${plural((h / 24).toInt(), "день", "дня", "дней")}" else "ещё ${plural(h.toInt().coerceAtLeast(1), "час", "часа", "часов")}"
+}
+
+/** A server to reboot: its name, address and SSH access (null: only the hoster's reset is possible). */
+private data class RebootTarget(val name: String, val host: String, val ssh: SshCredentials?)
+
+/**
+ * "Reboot the server": confirmation, then each stage as it happens (over SSH, or through the hoster
+ * when SSH is dead; going down; booting; the VPN container back), and the outcome. Works with our own
+ * VPN down or broken: everything goes over the physical network.
+ */
+@Composable
+private fun RebootDialog(app: App, t: RebootTarget, onDismiss: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var started by remember { mutableStateOf(false) }
+    var stage by remember { mutableStateOf<net.paramnezia.app.data.ServerReboot.Stage?>(null) }
+    var result by remember { mutableStateOf<String?>(null) }
+    var failed by remember { mutableStateOf(false) }
+    val running = started && result == null
+    AlertDialog(
+        onDismissRequest = { if (!running) onDismiss() },
+        icon = { Icon(if (failed) PnIcons.Warning else PnIcons.Refresh, null, tint = if (failed) Brand.Coral else MaterialTheme.colorScheme.primary) },
+        title = { Text(if (!started) "Перезагрузить «${t.name}»?" else if (result == null) "Перезагрузка…" else if (failed) "Не получилось" else "Сервер снова в сети") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                when {
+                    !started -> Text(
+                        "Сервер перезагрузится целиком, принудительно: это помогает, когда VPN не работает или сервер завис. " +
+                            "Минуту-две VPN через него будет недоступен, устройства семьи на это время переключатся на резервный сервер, если он есть." +
+                            if (t.ssh == null) "\n\nДоступа по SSH к этому серверу у приложения нет: перезагрузка пойдёт через хостера (нужен его токен в приложении)." else "",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    result == null -> {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                        Text(stage?.label ?: "Начинаю…", style = MaterialTheme.typography.bodyMedium)
+                        Text("Не закрывайте это окно до результата: обычно 1–3 минуты.", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    else -> Text(result!!, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        },
+        confirmButton = {
+            when {
+                !started -> TextButton(onClick = {
+                    started = true
+                    scope.launch {
+                        runCatching { app.reboots.reboot(t.host, t.ssh) { stage = it } }
+                            .onSuccess { o ->
+                                result = (if (o.viaHoster) "Перезагружен через хостера" else "Перезагружен") + " за ${o.seconds} с." +
+                                    when (o.vpnRunning) { true -> " VPN на сервере работает."; false -> " VPN на сервере пока не запустился: откройте «Семья» чуть позже, приложение проверит и починит его само."; null -> "" }
+                                if (app.fleet.isAdmin) launch { runCatching { app.fleet.heal(null) } }
+                            }
+                            .onFailure { failed = true; result = it.message ?: "Ошибка" }
+                    }
+                }) { Text("Перезагрузить") }
+                result != null -> TextButton(onClick = onDismiss) { Text("Готово") }
+                else -> {}
+            }
+        },
+        dismissButton = { if (!started) TextButton(onClick = onDismiss) { Text("Отмена") } },
+    )
 }

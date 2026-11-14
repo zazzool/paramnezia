@@ -66,6 +66,8 @@ class App : Application(), TunnelHost {
     val links: Links by lazy { Links(repo, fleet, { updater }, scope) }
     /** Buying servers from hosting providers (admin). */
     val cloud: Cloud by lazy { Cloud(repo, scope, cacheDir) }
+    /** Reboots a server over SSH, or through its hosting provider when SSH is dead. */
+    val reboots: net.paramnezia.app.data.ServerReboot by lazy { net.paramnezia.app.data.ServerReboot(repo) }
     /** Sharing the app and settings with devices in the same Wi-Fi, and finding such shares. */
     val lan: LanHub by lazy { LanHub(AndroidLan(this), repo, fleet, { links }, { updater }, android.os.Build.MODEL, scope) }
     private val visibilityCheck by lazy { VisibilityCheck(net, loadGeo = { repo.current.geo }, saveGeo = { m -> repo.update { it.copy(geo = m) } }) }
