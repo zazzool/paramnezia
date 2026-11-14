@@ -96,4 +96,52 @@ class MdnsTest {
         assertTrue("goodbye not seen", lost.await(5, TimeUnit.SECONDS))
         browser.close()
     }
+
+    /** Names are compressed on the way out, and read back the same. */
+    @Test
+    fun writesCompressedNamesAndReadsThemBack() {
+        val inst = "Мама телефон._paramnezia._tcp.local"
+        val out = listOf(
+            Mdns.Out("_paramnezia._tcp.local", 12, 120, target = inst),
+            Mdns.Out(inst, 33, 120, cacheFlush = true, target = "phone.local", port = 8080),
+            Mdns.Out("phone.local", 1, 120, cacheFlush = true, raw = byteArrayOf(192.toByte(), 168.toByte(), 1, 20)),
+        )
+        val b = Mdns.Message.write(response = true, answers = out)
+        val plainSize = 12 + out.sumOf { 10 + it.name.length + 2 + (it.target?.length?.plus(2) ?: 4) + 20 }
+        assertTrue("compressed: ${b.size} bytes", b.size < plainSize - 40)
+        val m = Mdns.Message.parse(b, b.size)!!
+        assertEquals(inst, m.records[0].target)
+        assertEquals("phone.local", m.records[1].target)
+        assertEquals(8080, m.records[1].port)
+        assertTrue(m.records[1].cacheFlush)
+        assertTrue(out.indices.all { out[it].sameAs(m.records[it]) })
+        val lan = LanNet.Lan("wlan0", InetAddress.getByName("192.168.1.5") as Inet4Address, 24)
+        val cache = Mdns("_paramnezia._tcp") { listOf(lan) }.Cache(listOf(lan))
+        cache.add(m.records, 0)
+        assertEquals(mapOf(inst to ("192.168.1.20" to 8080)), cache.instances(0))
+        // Known answers: listed while more than half the TTL is left.
+        assertEquals(listOf(inst to 120), cache.knownPointers(0))
+        assertTrue(cache.knownPointers(61_000).isEmpty())
+    }
+
+    /** Two devices with the same name: the second becomes "Name (2)" (probing, RFC 6762 §8). */
+    @Test
+    fun aTakenNameIsRenamed() {
+        val lo = NetworkInterface.networkInterfaces().toList().firstOrNull { it.isLoopback && it.isUp && it.supportsMulticast() }
+        assumeTrue("no multicast on loopback here", lo != null)
+        val addr = lo!!.inetAddresses.toList().filterIsInstance<Inet4Address>().firstOrNull()
+        assumeTrue(addr != null)
+        val lans = { listOf(LanNet.Lan(lo.name, addr!!, 8)) }
+        val a = Mdns("_pntest2._tcp", lans).advertise("Телефон", 18081)
+        Thread.sleep(1_500)
+        // Another device (here: another port) wants the same name.
+        val b = Mdns("_pntest2._tcp", lans).advertise("Телефон", 18082)
+        val names = java.util.Collections.synchronizedSet(HashSet<String>())
+        val browser = Mdns("_pntest2._tcp", lans).browse({ n, _, _ -> names += n }, {})
+        val deadline = System.currentTimeMillis() + 8_000
+        while (names.size < 2 && System.currentTimeMillis() < deadline) Thread.sleep(100)
+        assumeTrue("multicast did not loop back here: $names", names.isNotEmpty())
+        assertEquals(setOf("Телефон", "Телефон (2)"), names.toSet())
+        browser.close(); a.close(); b.close()
+    }
 }
