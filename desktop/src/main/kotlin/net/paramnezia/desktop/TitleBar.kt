@@ -1,12 +1,8 @@
 package net.paramnezia.desktop
 
+import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import com.sun.jna.Library
-import com.sun.jna.Native
-import com.sun.jna.platform.win32.User32
-import com.sun.jna.platform.win32.WinDef
-import com.sun.jna.ptr.IntByReference
 
 /**
  * The window's title bar in the app's theme: dark at night (Windows 10 20H1+), and on Windows 11
@@ -14,34 +10,23 @@ import com.sun.jna.ptr.IntByReference
  * Anything older simply keeps the system frame.
  */
 object TitleBar {
-    @Suppress("FunctionName")
-    private interface Dwm : Library {
-        fun DwmSetWindowAttribute(hwnd: WinDef.HWND, attribute: Int, value: IntByReference, size: Int): Int
-    }
-
-    private val dwm: Dwm? by lazy {
-        if (!System.getProperty("os.name", "").startsWith("Windows")) null
-        else runCatching { Native.load("dwmapi", Dwm::class.java) }.getOrNull()
-    }
-
     private const val USE_IMMERSIVE_DARK_MODE = 20
     private const val USE_IMMERSIVE_DARK_MODE_OLD = 19
     private const val CAPTION_COLOR = 35
     private const val TEXT_COLOR = 36
 
-    fun apply(window: java.awt.Window, dark: Boolean, background: Color, text: Color) {
-        val dwm = dwm ?: return
+    fun apply(window: ComposeWindow, dark: Boolean, background: Color, text: Color) {
+        if (!Win32.isWindows) return
         runCatching {
-            val hwnd = WinDef.HWND(Native.getWindowPointer(window))
-            val on = IntByReference(if (dark) 1 else 0)
-            if (dwm.DwmSetWindowAttribute(hwnd, USE_IMMERSIVE_DARK_MODE, on, 4) != 0) {
-                dwm.DwmSetWindowAttribute(hwnd, USE_IMMERSIVE_DARK_MODE_OLD, on, 4)
-            }
-            dwm.DwmSetWindowAttribute(hwnd, CAPTION_COLOR, IntByReference(colorRef(background)), 4)
-            dwm.DwmSetWindowAttribute(hwnd, TEXT_COLOR, IntByReference(colorRef(text)), 4)
+            val hwnd = window.windowHandle
+            if (hwnd == 0L) return
+            val on = if (dark) 1 else 0
+            if (Win32.dwmSetInt(hwnd, USE_IMMERSIVE_DARK_MODE, on) != 0) Win32.dwmSetInt(hwnd, USE_IMMERSIVE_DARK_MODE_OLD, on)
+            Win32.dwmSetInt(hwnd, CAPTION_COLOR, colorRef(background))
+            Win32.dwmSetInt(hwnd, TEXT_COLOR, colorRef(text))
             // Repaint the frame now, not at the next activation.
-            User32.INSTANCE.SetWindowPos(hwnd, null, 0, 0, 0, 0, 0x0001 or 0x0002 or 0x0004 or 0x0020)
-        }
+            Win32.refreshFrame(hwnd)
+        }.onFailure { net.paramnezia.app.platform.Log.w("titlebar", "frame colours: $it") }
     }
 
     /** COLORREF is 0x00BBGGRR. */

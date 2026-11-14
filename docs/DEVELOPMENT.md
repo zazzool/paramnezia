@@ -9,6 +9,7 @@
 | Что | Версия | Зачем |
 |---|---|---|
 | JDK | 21 (Temurin) | Gradle, Kotlin, тесты |
+| JDK | 25 | только Windows-приложение (`desktop/`, `java.lang.foreign`); Gradle находит его сам |
 | Android SDK | compileSdk 36, build-tools 36+ | приложение |
 | Android NDK | любой свежий (CI берёт `ANDROID_NDK_LATEST_HOME`) | сборка Go-библиотеки |
 | Go | версия из `tunnel/src/main/go/go.mod` (1.25) | amneziawg-go и DNS-фильтр |

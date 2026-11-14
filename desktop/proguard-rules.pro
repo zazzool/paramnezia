@@ -1,11 +1,9 @@
 # ProGuard for the Windows app (compose.desktop release build). The goal is size and start-up: drop
 # the unused parts of Compose, Material and the Kotlin libraries. Everything that is reached by
-# reflection or native code is kept whole: our own code (small), JNA (DPAPI state file, registry,
-# title bar) and kotlinx.serialization. CI starts the packaged release app (.github/scripts/windows-service-check.ps1),
+# reflection is kept whole: our own code (small) and kotlinx.serialization. Windows calls go through
+# java.lang.foreign (Win32.kt), which needs no rules. CI starts the packaged release app (.github/scripts/windows-service-check.ps1),
 # so a class removed by mistake fails the build, not a user.
 -keep class net.paramnezia.** { *; }
--keep class com.sun.jna.** { *; }
--keep class * implements com.sun.jna.** { *; }
 # Enum.valueOf / values() work through reflection on the enum's own members: keep them for every enum.
 -keepclassmembers enum * {
     public static **[] values();
@@ -29,8 +27,6 @@
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory
 -keepnames class kotlinx.coroutines.CoroutineExceptionHandler
 
-# Optional dependencies of JNA that are not shipped.
--dontwarn com.sun.jna.**
 -dontwarn kotlinx.coroutines.debug.**
 -dontnote **
 # Shrink only: obfuscation and optimisation save little here and make field reports unreadable.

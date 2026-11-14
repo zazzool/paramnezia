@@ -43,7 +43,13 @@ if ($p.ExitCode -ne 0 -or $pngs.Count -lt 3) {
     throw "the packaged app rendered $($pngs.Count) screens (exit code $($p.ExitCode))"
 }
 Write-Host "rendered $($pngs.Count) screens"
-# A real start: state file (DPAPI through JNA), tray, service pipe. It must still run after 20 s.
+# The Windows calls (java.lang.foreign, Win32.kt) in the packaged runtime: DPAPI and the registry.
+$st = "$env:RUNNER_TEMP\pn-selftest.txt"
+$p = Start-Process "$app\Paramnezia.exe" -ArgumentList '--selftest', $st -PassThru
+if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "the self-test hung" }
+if ($p.ExitCode -ne 0) { Get-Content $st -ErrorAction SilentlyContinue; throw "Windows self-test failed (code $($p.ExitCode))" }
+Write-Host "self-test: $(Get-Content $st)"
+# A real start: state file (DPAPI), tray, service pipe. It must still run after 20 s.
 $p = Start-Process "$app\Paramnezia.exe" -ArgumentList '--minimized' -PassThru
 Start-Sleep 20
 $log = "$env:LOCALAPPDATA\Paramnezia\paramnezia.log"

@@ -42,6 +42,11 @@ import java.time.LocalDateTime
  */
 fun main(args: Array<String>) {
     if (args.firstOrNull() == "--screenshots") screenshotsAndExit(File(args.getOrElse(1) { "screenshots" }))
+    if (args.firstOrNull() == "--selftest") {
+        val problem = Win32.selfTest()
+        File(args.getOrElse(1) { "selftest.txt" }).writeText(problem ?: "ok")
+        kotlin.system.exitProcess(if (problem == null) 0 else 1)
+    }
     val opened = args.firstOrNull { it.endsWith(".vpn", true) || it.endsWith(".conf", true) }
         ?.let { f -> runCatching { File(f).readText().take(256 * 1024) }.getOrNull() }
         ?: args.firstOrNull { it.startsWith("vpn://") }
@@ -59,6 +64,7 @@ fun main(args: Array<String>) {
     ThemePrefs.mode.value = ThemePrefs.parse(runCatching { themeFile.readText().trim() }.getOrNull())
     ThemePrefs.save = { m -> themeFile.writeText(m.name) }
     app.start()
+    Autostart.repair()
 
     application {
         var visible by remember { mutableStateOf("--minimized" !in args) }

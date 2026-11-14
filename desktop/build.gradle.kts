@@ -14,14 +14,19 @@ fun prop(name: String, env: String): String? = providers.gradleProperty(name).or
 val versionName = prop("paramnezia.versionName", "PN_VERSION_NAME")?.removePrefix("v") ?: "0.1.0"
 val versionCode = prop("paramnezia.versionCode", "PN_VERSION_CODE") ?: "1"
 
+// Built with and shipped on JDK 25: the Windows calls (DPAPI, registry, window frame) go through the
+// JDK's foreign function API (java.lang.foreign, final since 22) instead of JNA. Bytecode stays 21.
 java {
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
+    toolchain { languageVersion.set(JavaLanguageVersion.of(25)) }
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
 }
 
 kotlin {
-    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
+    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21) }
 }
+
+val jdk25: Provider<JavaLauncher> = javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(25)) }
 
 // The Android app's screens, compiled here unchanged (they reach the system only through UiPlatform).
 val sharedUiFiles = listOf(
@@ -73,7 +78,6 @@ dependencies {
     implementation(compose.desktop.currentOs)
     implementation(compose.desktop.windows_x64)
     implementation(compose.material3)
-    implementation(libs.jna.platform)
     implementation(libs.kotlinx.coroutines.core)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:${libs.versions.coroutines.get()}")
     testImplementation(libs.junit)
@@ -88,11 +92,18 @@ compose.desktop {
         jvmArgs += listOf(
             "-Xmx256m", "-XX:+UseSerialGC", "-XX:MinHeapFreeRatio=10", "-XX:MaxHeapFreeRatio=30",
             "-XX:TieredStopAtLevel=1", "-XX:ReservedCodeCacheSize=48m", "-Xss512k", "-Dfile.encoding=UTF-8",
+            // Win32.kt calls Windows directly; without this JDK 24+ prints a warning on the first call.
+            "--enable-native-access=ALL-UNNAMED",
         )
+        // The bundled runtime is JDK 25 too. Resolved only where one is installed, so that builds which
+        // never package the app (Android, release tool) configure without it.
+        runCatching { jdk25.get().metadata.installationPath.asFile.absolutePath }.getOrNull()?.let { javaHome = it }
         // Release build (createReleaseDistributable, used by the installer): unused Compose/Material
         // and library classes removed, nothing renamed (desktop/proguard-rules.pro).
         buildTypes.release.proguard {
             isEnabled.set(true)
+            // 7.7 (the plugin's default) cannot read JDK 25 class files.
+            version.set("7.8.2")
             obfuscate.set(false)
             optimize.set(false)
             configurationFiles.from(project.file("proguard-rules.pro"))
@@ -105,10 +116,10 @@ compose.desktop {
             description = "Paramnezia VPN"
             vendor = "Paramnezia"
             copyright = "Paramnezia"
-            // jdk.crypto.ec: ECDSA/ECDH in SSH (EC is in java.base from JDK 22 on); java.net.http: address checks on fresh
+            // EC for SSH is in java.base since JDK 22 (no jdk.crypto.ec any more); java.net.http: address checks on fresh
             // connections (DesktopHttp.freshGet). No jdk.localedata (12 MB): country names come from
             // CountryNames, and nothing else formats in Russian through the JDK.
-            modules("jdk.crypto.ec", "jdk.unsupported", "jdk.charsets", "java.management", "java.net.http")
+            modules("jdk.unsupported", "jdk.charsets", "java.management", "java.net.http")
             windows {
                 iconFile.set(project.file("icons/paramnezia.ico"))
                 menuGroup = "Paramnezia"
@@ -122,6 +133,7 @@ tasks.register<JavaExec>("screenshots") {
     description = "Renders the screens with sample data into build/screenshots (no window, no service)."
     classpath = sourceSets.main.get().runtimeClasspath
     mainClass.set("net.paramnezia.desktop.MainKt")
+    javaLauncher.set(jdk25)
     args("--screenshots", layout.buildDirectory.dir("screenshots").get().asFile.absolutePath)
     jvmArgs("-Djava.awt.headless=true", "-Dfile.encoding=UTF-8")
 }
