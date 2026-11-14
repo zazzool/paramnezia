@@ -65,6 +65,8 @@ import net.paramnezia.core.crypto.WgKey
 import net.paramnezia.deploy.cloud.CloudProviders
 import kotlinx.coroutines.launch
 import net.paramnezia.core.profile.SshCredentials
+import net.paramnezia.core.fleet.FleetDevice
+import net.paramnezia.app.data.ServerReboot
 
 /**
  * The fleet: this owner's servers and trusted devices, and everything for handing out access.
@@ -98,7 +100,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
     /** A server to reboot (asked to confirm, then the progress). */
     var rebootOf by remember { mutableStateOf<RebootTarget?>(null) }
     /** Owner: a device to make a co-admin, or (with [revoking]) to take the rights back from. */
-    var adminOf by remember { mutableStateOf<net.paramnezia.core.fleet.FleetDevice?>(null) }
+    var adminOf by remember { mutableStateOf<FleetDevice?>(null) }
     var revoking by remember { mutableStateOf(false) }
 
     // Which links have been used: asked only while some are still open.
@@ -770,7 +772,7 @@ private data class RebootTarget(val name: String, val host: String, val ssh: Ssh
 private fun RebootDialog(app: App, t: RebootTarget, onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
     var started by remember { mutableStateOf(false) }
-    var stage by remember { mutableStateOf<net.paramnezia.app.data.ServerReboot.Stage?>(null) }
+    var stage by remember { mutableStateOf<ServerReboot.Stage?>(null) }
     var result by remember { mutableStateOf<String?>(null) }
     var failed by remember { mutableStateOf(false) }
     val running = started && result == null

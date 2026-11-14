@@ -1,5 +1,6 @@
 package net.paramnezia.app
 
+import net.paramnezia.app.data.ServerReboot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -69,7 +70,7 @@ class App(
     val links: Links by lazy { Links(repo, fleet, { updater.android }, scope) }
     val cloud: Cloud by lazy { Cloud(repo, scope, cacheDir) }
     /** Reboots a server over SSH, or through its hosting provider when SSH is dead. */
-    val reboots: net.paramnezia.app.data.ServerReboot by lazy { net.paramnezia.app.data.ServerReboot(repo) }
+    val reboots: ServerReboot by lazy { ServerReboot(repo) }
     /** Sharing the app and settings with devices in the same network, and finding such shares. */
     val lan: LanHub by lazy { LanHub(DesktopLan(cacheDir), repo, fleet, { links }, { updater.android }, deviceModel, scope) }
     val servers: Servers
