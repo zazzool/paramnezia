@@ -202,7 +202,7 @@ class Cloud(private val repo: Repo, private val scope: CoroutineScope, private v
             is SshException -> when (e.code) {
                 "host_key_changed" -> "Сервер ответил чужим ключом SSH: возможна подмена. Удалите сервер и попробуйте снова"
                 "auth_failed" -> "Сервер не принял ключ SSH (cloud-init не сработал)"
-                "unreachable", "connect_failed" -> "Сервер не отвечает по SSH"
+                "unreachable", "connect_failed", "connection_lost" -> "Сервер не отвечает по SSH"
                 else -> e.message ?: "Ошибка установки"
             }
             else -> e.message ?: e.javaClass.simpleName

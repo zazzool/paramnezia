@@ -110,6 +110,8 @@ class Links(
         val text = when (code) {
             "unreachable", "connect_failed" -> "Не удалось подключиться к серверу по SSH (порт 22). Проверьте, что сервер включён и SSH доступен."
             "auth_failed" -> "Сервер не принял логин или пароль SSH."
+            "bad_passphrase", "bad_key" -> "Не удалось открыть ключ SSH: ${e.message}"
+            "connection_lost" -> "Связь с сервером прервалась. Попробуйте ещё раз."
             "host_key_changed" -> "Ключ сервера изменился с первого подключения. Если сервер переустанавливали, удалите и добавьте его заново."
             "invite_failed" -> "Сервер не смог сохранить ссылку: ${e.message}"
             else -> e.message ?: e.toString()

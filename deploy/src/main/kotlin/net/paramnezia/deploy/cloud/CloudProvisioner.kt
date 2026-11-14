@@ -1,31 +1,25 @@
 package net.paramnezia.deploy.cloud
 
-import com.jcraft.jsch.JSch
-import com.jcraft.jsch.KeyPair
 import net.paramnezia.core.profile.SshCredentials
 import net.paramnezia.deploy.HostKeyStore
 import net.paramnezia.deploy.SshConnection
 import net.paramnezia.deploy.SshException
-import java.io.ByteArrayOutputStream
-import java.security.MessageDigest
+import net.paramnezia.deploy.ssh.SshKeys
 import java.security.SecureRandom
 import java.util.Base64
 
-/** An SSH key pair: OpenSSH public line and PEM private key. */
+/** An SSH key pair: OpenSSH private key text and public line. */
 data class SshKeyPair(val privatePem: String, val publicLine: String) {
     /** `SHA256:…` over the public key blob, the form [net.paramnezia.deploy.HostKeyStore] keeps. */
-    val fingerprint: String get() {
-        val blob = Base64.getDecoder().decode(publicLine.trim().split(' ')[1])
-        return "SHA256:" + Base64.getEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(blob))
-    }
+    val fingerprint: String get() = SshKeys.fingerprint(Base64.getDecoder().decode(publicLine.trim().split(' ')[1]))
 
     companion object {
-        /** RSA-3072: the one type every sshd, cloud-init and JSch on every Android version all accept. */
+        /**
+         * Ed25519: generated in well under a millisecond (RSA-3072 took seconds on a phone), the
+         * strongest key type sshd has, and accepted by cloud-init and every OpenSSH since 6.5.
+         */
         fun generate(comment: String): SshKeyPair {
-            val kp = KeyPair.genKeyPair(JSch(), KeyPair.RSA, 3072)
-            val priv = ByteArrayOutputStream().also { kp.writePrivateKey(it) }.toString(Charsets.US_ASCII.name())
-            val pub = ByteArrayOutputStream().also { kp.writePublicKey(it, comment) }.toString(Charsets.US_ASCII.name()).trim()
-            kp.dispose()
+            val (priv, pub) = SshKeys.generateEd25519(comment)
             return SshKeyPair(priv, pub)
         }
     }
@@ -120,11 +114,11 @@ class CloudProvisioner(
         fun cloudInit(hostKey: SshKeyPair, adminPublic: String): String = buildString {
             append("#cloud-config\n")
             append("ssh_deletekeys: true\n")
-            append("ssh_genkeytypes: [rsa]\n")
+            append("ssh_genkeytypes: [ed25519]\n")
             append("ssh_keys:\n")
-            append("  rsa_private: |\n")
+            append("  ed25519_private: |\n")
             for (line in hostKey.privatePem.trim().lines()) append("    ").append(line).append('\n')
-            append("  rsa_public: ").append(hostKey.publicLine).append('\n')
+            append("  ed25519_public: ").append(hostKey.publicLine).append('\n')
             append("disable_root: false\n")
             append("ssh_authorized_keys:\n  - ").append(adminPublic).append('\n')
             append("write_files:\n")
@@ -135,7 +129,7 @@ class CloudProvisioner(
         }
 
         /** SSH codes that mean "not up yet" on a server that is still booting. */
-        private val BOOTING = setOf("unreachable", "connect_failed", "auth_failed", "host_key_changed")
+        private val BOOTING = setOf("unreachable", "connect_failed", "connection_lost", "auth_failed", "host_key_changed")
 
         /**
          * Retries SSH until the server lets root in with the pinned host key, then waits for

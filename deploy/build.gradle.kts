@@ -16,7 +16,6 @@ kotlin {
 
 dependencies {
     api(project(":core"))
-    implementation(libs.jsch)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)

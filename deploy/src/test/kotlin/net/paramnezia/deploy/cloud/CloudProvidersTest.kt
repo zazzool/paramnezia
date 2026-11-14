@@ -1,7 +1,5 @@
 package net.paramnezia.deploy.cloud
 
-import com.jcraft.jsch.JSch
-import com.jcraft.jsch.KeyPair
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -133,10 +131,10 @@ class CloudProvidersTest {
 
     @Test fun hostKeyFingerprintMatchesWhatSshSees() {
         val k = SshKeyPair.generate("test")
-        assertTrue(k.privatePem.startsWith("-----BEGIN RSA PRIVATE KEY-----"))
-        assertTrue(k.publicLine.startsWith("ssh-rsa "))
-        // JSch hands the host key blob to HostKeyRepository.check, which Ssh.kt fingerprints.
-        val blob = KeyPair.load(JSch(), k.privatePem.toByteArray(), k.publicLine.toByteArray()).publicKeyBlob
+        assertTrue(k.privatePem.startsWith("-----BEGIN OPENSSH PRIVATE KEY-----"))
+        assertTrue(k.publicLine.startsWith("ssh-ed25519 "))
+        // The client fingerprints the host key blob the server sends: the same bytes as in the public line.
+        val blob = net.paramnezia.deploy.ssh.SshKeys.parse(k.privatePem, "").publicBlob
         val expected = "SHA256:" + Base64.getEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(blob))
         assertEquals(expected, k.fingerprint)
     }
@@ -145,9 +143,9 @@ class CloudProvidersTest {
         val host = SshKeyPair.generate("h")
         val text = CloudProvisioner.cloudInit(host, "ssh-rsa AAAA admin")
         assertTrue(text.startsWith("#cloud-config\n"))
-        assertTrue("ssh_genkeytypes: [rsa]" in text)
-        assertTrue("    -----BEGIN RSA PRIVATE KEY-----" in text)
-        assertTrue("  rsa_public: ${host.publicLine}" in text)
+        assertTrue("ssh_genkeytypes: [ed25519]" in text)
+        assertTrue("    -----BEGIN OPENSSH PRIVATE KEY-----" in text)
+        assertTrue("  ed25519_public: ${host.publicLine}" in text)
         assertTrue(text.lines().count { it.trim() == "ssh-rsa AAAA admin" || it.trim() == "- ssh-rsa AAAA admin" } == 2)
         assertTrue(text.lines().none { it.contains('\t') })
     }
