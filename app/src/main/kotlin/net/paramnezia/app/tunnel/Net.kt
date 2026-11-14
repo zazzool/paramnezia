@@ -17,8 +17,26 @@ import javax.net.SocketFactory
 class Net(private val context: Context) : Http {
     fun direct(): Network? = TunnelRuntime.directNetwork(context)
 
-    private fun defaultNetwork(): Network? =
-        runCatching { context.getSystemService(android.net.ConnectivityManager::class.java).activeNetwork }.getOrNull()
+    /** Our VPN network; Android connects it a moment after the tunnel is built, so wait a little. */
+    private fun vpnNetwork(waitMs: Long = 3_000): Network? {
+        val until = System.currentTimeMillis() + waitMs
+        while (true) {
+            TunnelRuntime.vpnNetwork(context)?.let { return it }
+            if (System.currentTimeMillis() >= until) return null
+            Thread.sleep(150)
+        }
+    }
+
+    override fun getThroughTunnel(url: String, maxBytes: Int, timeoutMs: Int): String? {
+        // Bound to the VPN network (a new Network object, so its own empty connection pool too): the
+        // answer is what foreign sites see through the tunnel, never the physical network's address.
+        val vpn = vpnNetwork() ?: return null
+        return runCatching {
+            val c = open(url, vpn, timeoutMs)
+            c.setRequestProperty("Connection", "close"); c.useCaches = false
+            try { if (c.responseCode == 200) c.inputStream.use { it.readUpTo(maxBytes) }.decodeToString() else null } finally { c.disconnect() }
+        }.getOrNull()
+    }
 
     fun directSockets(): SocketFactory = direct()?.socketFactory ?: SocketFactory.getDefault()
 
@@ -31,12 +49,10 @@ class Net(private val context: Context) : Http {
     override fun get(url: String, maxBytes: Int, fallbackDirect: Boolean, fresh: Boolean, timeoutMs: Int): String? {
         for (network in if (fallbackDirect) listOf(null, direct()) else listOf(null)) {
             runCatching {
-                // A pooled keep-alive socket remembers the route it was opened on: a connection made
-                // before the tunnel came up would still go direct, and "Connection: close" does not stop
-                // the pool from handing one out. A fresh Network object has a pool of its own (empty), and
-                // the default network is the VPN while it is up: checks of "how sites see me" go the way
-                // all foreign traffic goes, on new connections only.
-                val c = open(url, network ?: if (fresh) defaultNetwork() else null, timeoutMs)
+                // A pooled keep-alive socket remembers the route it was opened on: "fresh" requests never
+                // reuse one ("Connection: close", no cache). Checks that must go through the tunnel use
+                // getThroughTunnel, bound to the VPN network.
+                val c = open(url, network, timeoutMs)
                 if (fresh) { c.setRequestProperty("Connection", "close"); c.useCaches = false }
                 try {
                     if (c.responseCode == 200) {

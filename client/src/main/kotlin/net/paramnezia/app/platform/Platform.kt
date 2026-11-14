@@ -52,6 +52,15 @@ interface Http {
      */
     fun get(url: String, maxBytes: Int = 1 shl 20, fallbackDirect: Boolean = true, fresh: Boolean = false, timeoutMs: Int = 20_000): String?
 
+    /**
+     * GET on a fresh connection that goes through our tunnel and nowhere else: on Android bound to
+     * the VPN network itself (right after a connect the app's default network is still the physical
+     * one for a moment). Null when the tunnel is not there or did not answer. "How foreign sites see
+     * me" must never be answered by the physical network.
+     */
+    fun getThroughTunnel(url: String, maxBytes: Int = 1 shl 20, timeoutMs: Int = 8_000): String? =
+        get(url, maxBytes, fallbackDirect = false, fresh = true, timeoutMs = timeoutMs)
+
     /** One GET on a fresh connection, the normal way or [direct]ly; reports why it failed. */
     fun fetch(url: String, direct: Boolean = false, maxBytes: Int = 4096, timeoutMs: Int = 8_000, userAgent: String = "paramnezia"): Fetched
 

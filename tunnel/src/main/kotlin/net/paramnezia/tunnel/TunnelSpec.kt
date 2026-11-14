@@ -154,6 +154,23 @@ object TunnelRuntime {
         }
     }
 
+    /**
+     * Our own VPN network, once Android has it connected (up to a second or two after the tunnel is
+     * built), or null. Sockets bound to it ([Network.bindSocket], [Network.openConnection]) go through
+     * the tunnel whatever the app's default network is at that moment; right after a (first) connect
+     * the default network is still the physical one, and unbound traffic would leave past the tunnel.
+     */
+    @Suppress("DEPRECATION")
+    fun vpnNetwork(context: Context): Network? {
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+        val me = android.os.Process.myUid()
+        return cm.allNetworks.firstOrNull { n ->
+            val c = cm.getNetworkCapabilities(n) ?: return@firstOrNull false
+            c.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                (android.os.Build.VERSION.SDK_INT < 29 || c.ownerUid == me || c.ownerUid == android.os.Process.INVALID_UID)
+        }
+    }
+
     /** The current [LocalNetwork]; reads link properties only, no network traffic. */
     @Suppress("DEPRECATION")
     fun localNetwork(context: Context): LocalNetwork = runCatching {

@@ -92,6 +92,9 @@ class DesktopHttp(private val client: ServiceClient) : Http {
         } catch (e: Exception) { Http.Fetched(null, e.javaClass.simpleName) }
     }
 
+    /** Windows routes foreign addresses into the tunnel as soon as the service reports it up. */
+    override fun getThroughTunnel(url: String, maxBytes: Int, timeoutMs: Int): String? = freshGet(url, maxBytes, timeoutMs)
+
     /**
      * GET on a connection opened just now. Java keeps idle keep-alive connections in a process-wide
      * cache and hands them out regardless of "Connection: close", and on Windows a TCP connection
