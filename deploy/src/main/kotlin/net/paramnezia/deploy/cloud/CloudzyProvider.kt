@@ -90,8 +90,13 @@ class CloudzyProvider(token: String, transport: CloudHttp.Transport = CloudHttp.
         if (e.code == "not_found") CloudServer(id, CloudServer.State.GONE, null) else throw e
     }
 
+    override fun list(): List<CloudServer> = http.get("/services").arr().mapNotNull { it.obj() }.map(::parse)
+
     override fun find(name: String): CloudServer? =
         http.get("/services").arr().mapNotNull { it.obj() }.firstOrNull { it.str("hostname") == name }?.let(::parse)
+
+    // POST /services/{id}/power {"action":"reboot"} (CloudzyVPS/cli `power`: start | stop | reboot | force-stop).
+    override fun reboot(id: String) { http.post("/services/${seg(id)}/power", buildJsonObject { put("action", "reboot") }) }
 
     override fun delete(id: String) {
         try { http.delete("/services/${seg(id)}") } catch (e: CloudException) { if (e.code != "not_found") throw e }

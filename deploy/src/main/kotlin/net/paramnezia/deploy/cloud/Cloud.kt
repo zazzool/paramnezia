@@ -62,6 +62,18 @@ interface CloudProvider {
 
     /** Destroys the server and stops billing. */
     fun delete(id: String)
+
+    /**
+     * Hard reset, like the reset button in the provider's panel: works when the system itself hangs
+     * and SSH no longer answers. Unsaved data in memory is lost; the disk stays.
+     */
+    fun reboot(id: String)
+
+    /** Every server on the account (also those bought outside the app), with their addresses. */
+    fun list(): List<CloudServer>
+
+    /** The server at [ip] on this account, if any: lets the app reset a server it did not buy itself. */
+    fun findByAddress(ip: String): CloudServer? = list().firstOrNull { it.ipv4 == ip }
 }
 
 /** What the catalog says about a provider (see `providers/README.md`). */

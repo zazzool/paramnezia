@@ -74,8 +74,13 @@ class TimewebProvider(token: String, transport: CloudHttp.Transport = CloudHttp.
         if (e.code == "not_found") CloudServer(id, CloudServer.State.GONE, null) else throw e
     }
 
+    override fun list(): List<CloudServer> = http.get("/servers?limit=100").obj()?.get("servers").arr().mapNotNull { it.obj() }.map(::parse)
+
     override fun find(name: String): CloudServer? =
         http.get("/servers?limit=100").obj()?.get("servers").arr().mapNotNull { it.obj() }.firstOrNull { it.str("name") == name }?.let(::parse)
+
+    // POST /servers/{id}/action {"action":"hard_reboot"} (twc `server reboot --hard`).
+    override fun reboot(id: String) { http.post("/servers/${id.toLong()}/action", buildJsonObject { put("action", "hard_reboot") }) }
 
     override fun delete(id: String) {
         try { http.delete("/servers/${id.toLong()}") } catch (e: CloudException) { if (e.code != "not_found") throw e }

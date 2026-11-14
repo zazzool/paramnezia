@@ -121,6 +121,36 @@ class CloudProvidersTest {
         assertTrue(api.calls.none { it.first == "POST" && it.second == "/ssh-keys" })
     }
 
+    /** Hard reset through every provider's API: the documented call of each official client. */
+    @Test fun hardResetCalls() {
+        class Recorder : CloudHttp.Transport {
+            val calls = ArrayList<Triple<String, String, String?>>()
+            override fun send(method: String, url: String, headers: Map<String, String>, body: String?): Pair<Int, String> {
+                calls += Triple(method, url, body); return 204 to ""
+            }
+        }
+        fun check(make: (Recorder) -> CloudProvider, id: String, url: String, body: String?) {
+            val r = Recorder(); make(r).reboot(id)
+            val (m, u, b) = r.calls.single()
+            assertEquals("POST", m); assertEquals(url, u)
+            if (body == null) assertTrue(b == null || b == "{}") else assertEquals(Json.parseToJsonElement(body), Json.parseToJsonElement(b!!))
+        }
+        check({ HetznerProvider("t", it) }, "42", "https://api.hetzner.cloud/v1/servers/42/actions/reset", null)
+        check({ DigitalOceanProvider("t", it) }, "42", "https://api.digitalocean.com/v2/droplets/42/actions", """{"type":"power_cycle"}""")
+        check({ VultrProvider("t", it) }, "ab-1", "https://api.vultr.com/v2/instances/ab-1/reboot", null)
+        check({ TimewebProvider("t", it) }, "42", "https://api.timeweb.cloud/api/v1/servers/42/action", """{"action":"hard_reboot"}""")
+        check({ CloudzyProvider("t", it) }, "s1", "https://dash.cloudzy.com/api/v1/services/s1/power", """{"action":"reboot"}""")
+    }
+
+    /** A server bought outside the app is found by its address when its provider's token is saved. */
+    @Test fun findsServerByAddress() {
+        val api = FakeApi(mapOf("GET /servers?limit=100" to (200 to """{"servers":[
+            {"id":11,"name":"other","status":"on","networks":[{"type":"public","ips":[{"type":"ipv4","ip":"198.51.100.2"}]}]},
+            {"id":12,"name":"mine","status":"on","networks":[{"type":"public","ips":[{"type":"ipv4","ip":"198.51.100.7"}]}]}]}""")))
+        assertEquals("12", TimewebProvider("tw", api).findByAddress("198.51.100.7")?.id)
+        assertEquals(null, TimewebProvider("tw", api).findByAddress("203.0.113.1"))
+    }
+
     @Test fun errorsAreTyped() {
         val api = FakeApi(mapOf("GET /auth/me" to (401 to """{"message":"Invalid token"}""")))
         try { CloudzyProvider("bad", api).verify(); fail() } catch (e: CloudException) {
@@ -164,6 +194,8 @@ class CloudProvidersTest {
         override fun get(id: String) = states.removeAt(0)
         override fun find(name: String): CloudServer? { finds++; return if (lostAnswer) CloudServer("s9", CloudServer.State.PENDING, null) else null }
         override fun delete(id: String) {}
+        override fun reboot(id: String) {}
+        override fun list() = emptyList<CloudServer>()
     }
 
     private val plan = CloudPlan("p1", "ams", "1GB", 1, 1024, 25, 4.95, "USD")

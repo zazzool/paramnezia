@@ -72,9 +72,14 @@ class DigitalOceanProvider(token: String, transport: CloudHttp.Transport = Cloud
         if (e.code == "not_found") CloudServer(id, CloudServer.State.GONE, null) else throw e
     }
 
+    override fun list(): List<CloudServer> = http.get("/droplets?per_page=200").obj()?.get("droplets").arr().mapNotNull { it.obj() }.map(::parse)
+
     override fun find(name: String): CloudServer? =
         http.get("/droplets?tag_name=paramnezia&per_page=200").obj()?.get("droplets").arr().mapNotNull { it.obj() }
             .firstOrNull { it.str("name") == name }?.let(::parse)
+
+    // power_cycle: off and on again, without asking the OS (godo DropletActions.PowerCycle).
+    override fun reboot(id: String) { http.post("/droplets/${id.toLong()}/actions", buildJsonObject { put("type", "power_cycle") }) }
 
     override fun delete(id: String) {
         try { http.delete("/droplets/${id.toLong()}") } catch (e: CloudException) { if (e.code != "not_found") throw e }

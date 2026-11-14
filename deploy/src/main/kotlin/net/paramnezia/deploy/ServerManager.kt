@@ -171,6 +171,31 @@ class ServerManager(private val hostKeys: HostKeyStore) {
         }
     }
 
+    /**
+     * Co-administrators' SSH keys: [add] (OpenSSH public lines) are authorized for the login of
+     * [creds], [remove] (public lines or bare base64 blobs) are taken out. One connection, idempotent.
+     */
+    fun updateAdminKeys(creds: SshCredentials, add: Collection<String>, remove: Collection<String> = emptyList()) {
+        if (add.isEmpty() && remove.isEmpty()) return
+        val blobs = remove.map { l -> l.trim().split(Regex("\\s+")).let { if (it.size >= 2) it[1] else it[0] } }.filter { it.length > 40 }
+        SshConnection.open(creds, hostKeys).use { ssh ->
+            val r = ssh.run(script("admin-keys.sh"), env = mapOf("PN_ADD" to add.joinToString("\n") { it.trim() }, "PN_DEL" to blobs.joinToString("\n")), timeoutMs = 60_000)
+            if (r.exitCode != 0) throw SshException("admin_keys_failed", "Could not update administrator keys: ${r.stderr.takeLast(500)}")
+        }
+    }
+
+    /**
+     * Reboots the whole server (forced, after syncing the disks). Returns as soon as the server has
+     * taken the order; the reboot follows two seconds later, so the connection then drops.
+     */
+    fun reboot(creds: SshCredentials) {
+        SshConnection.open(creds, hostKeys).use { ssh ->
+            val r = ssh.run(script("reboot.sh"), timeoutMs = 30_000)
+            r.error?.let { throw SshException(it, "Reboot refused: $it") }
+            if (r.results["rebooting"] != "1") throw SshException("reboot_failed", "Reboot failed (${r.exitCode}): ${r.stderr.takeLast(500)}")
+        }
+    }
+
     companion object {
         private val random = SecureRandom()
 
