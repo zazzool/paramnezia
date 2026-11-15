@@ -2,6 +2,7 @@ package net.paramnezia.deploy
 
 import net.paramnezia.core.amnezia.AmneziaFormat
 import net.paramnezia.core.config.AwgParam
+import net.paramnezia.core.config.Camouflage
 import net.paramnezia.core.config.WgQuick
 import net.paramnezia.core.crypto.WgKey
 import net.paramnezia.core.net.IpPrefix
@@ -107,6 +108,36 @@ class DeployE2ETest {
             assertEquals("{\"release\":1}", sh("docker exec amnezia-awg2 cat /opt/amnezia/paramnezia/www/release.json"))
 
             handshake(tunnel, port)
+
+            // Spare ports: the same listener behind other host ports, from the install on.
+            val ports = manager.ports(creds)
+            assertEquals(port, ports.main)
+            assertTrue("spare ports: ${ports.alt}", ports.alt.isNotEmpty())
+            // A client with its own preshared key, dialled on a spare port the way Camouflage does.
+            val own = WgKey.generatePreshared()
+            val ownKey = WgKey.generatePrivate()
+            val ownTunnel = manager.addClient(creds, ownKey, "own-psk", psk = own)
+            assertEquals(own, ownTunnel.peers.single().presharedKey)
+            assertTrue(own.toBase64() in sh("docker exec amnezia-awg2 awg show awg0 preshared-keys"))
+            val alt = ports.alt.first()
+            val dressed = Camouflage.apply(ownTunnel, Camouflage.Variant("127.0.0.1", alt, Camouflage.Mimic.WEBRTC))
+            handshake(dressed, alt)
+            // An existing peer asked for with another key gets that key (devices converge on their own).
+            val other = WgKey.generatePreshared()
+            assertEquals(emptyMap<String, String>(), manager.ensurePeers(creds, listOf(ServerManager.PeerSpec(ownKey.publicKey(), "own-psk", null, other))))
+            val keys = sh("docker exec amnezia-awg2 awg show awg0 preshared-keys")
+            assertTrue(other.toBase64() in keys && own.toBase64() !in keys)
+            assertEquals(1, sh("docker exec amnezia-awg2 grep -c '${other.toBase64()}' /opt/amnezia/awg/awg0.conf").trim().toInt())
+
+            // A server that has to get another port is re-created around its config: clients stay, the new port works.
+            val before = manager.usedAddresses(creds)
+            val extra = 42000 + profile.ordinal
+            val grown = manager.ports(creds, listOf(extra))
+            assertTrue(extra in grown.alt && ports.alt.all { it in grown.alt })
+            assertEquals(before, manager.usedAddresses(creds))
+            assertEquals(grown, manager.ports(creds, listOf(extra)))
+            handshake(tunnel, extra)
+            handshake(tunnel, port)
             println("e2e ok for $profile")
         }
     }
@@ -139,9 +170,18 @@ class DeployE2ETest {
         val win = InviteLinks.AppDownload("v9.9.9", exeSha, listOf("https://github.com/zazzool/paramnezia/releases/download/v9/Paramnezia-Setup-9.9.9.exe"))
         val app = InviteLinks.AppDownload("v9.9.9", sha, listOf("https://github.com/zazzool/paramnezia/releases/download/v9/paramnezia-v9.9.9.apk", "http://plain.example/x.apk"), win)
 
+        // A page from before 2.16 (at the server's root) is moved away from there.
+        sh("S=\$( [ \"\$(id -u)\" -eq 0 ] || echo sudo -n ); \$S mkdir -p /opt/amnezia/paramnezia/invite/www && echo old | \$S tee /opt/amnezia/paramnezia/invite/www/index.html >/dev/null")
         val link = links.create(creds, invite, "Мама", app, preferredPort = 18080)
-        assertTrue(link.url, link.url.startsWith("http://127.0.0.1:18080/#"))
-        val base = "http://127.0.0.1:18080"
+        val secret = Regex("^http://127\\.0\\.0\\.1:18080/([A-Za-z0-9_-]{16,})/#").find(link.url)?.groupValues?.get(1)
+        assertTrue(link.url, secret != null)
+        val root = "http://127.0.0.1:18080"
+        val base = "$root/$secret"
+        val cgi = "$root/cgi-bin/$secret"
+        // The address itself shows nothing: no page, no app, no download info for scanners.
+        for (path in listOf("/", "/index.html", "/app.json", "/paramnezia.apk", "/cgi-bin/get?x&key"))
+            assertEquals(path, 404, http("$root$path").first)
+        assertTrue(http("$root/httpd.conf").first >= 400)
         val page = http("$base/").second
         assertTrue("Вас пригласили" in page)
         // Nothing downloads by itself, and the APK is never personalised.
@@ -155,13 +195,13 @@ class DeployE2ETest {
         assertTrue("Скачать для Windows" in page && "Выполнить в любом случае" in page)
         assertEquals(setOf<String>(), links.claimed(creds, listOf(link.token)))
 
-        val (code, key) = http("$base/cgi-bin/get?${link.token}&key")
+        val (code, key) = http("$cgi?${link.token}&key")
         assertEquals(200, code)
         assertEquals(plain, key.trim())
         assertEquals(setOf(link.token), links.claimed(creds, listOf(link.token)))
-        assertEquals(invite, http("$base/cgi-bin/get?${link.token}&app").second.trim())
-        assertEquals(400, http("$base/cgi-bin/get?${link.token}&apk").first)
-        assertTrue("[Interface]" in http("$base/cgi-bin/get?${link.token}&conf").second)
+        assertEquals(invite, http("$cgi?${link.token}&app").second.trim())
+        assertEquals(400, http("$cgi?${link.token}&apk").first)
+        assertTrue("[Interface]" in http("$cgi?${link.token}&conf").second)
 
         // The server keeps a copy of the same public APK for people who cannot reach the mirrors.
         assertEquals(404, http("$base/paramnezia.apk").first)
@@ -182,22 +222,25 @@ class DeployE2ETest {
             .exceptionOrNull() is SshException)
 
         // Unknown, expired and revoked links are gone.
-        assertEquals(410, http("$base/cgi-bin/get?AAAAAAAAAAAAAAAAAAAAAA&key").first)
+        assertEquals(410, http("$cgi?AAAAAAAAAAAAAAAAAAAAAA&key").first)
         val old = links.create(creds, invite, "old", app, ttlMs = -1000)
-        assertEquals(410, http("$base/cgi-bin/get?${old.token}&key").first)
+        assertEquals(410, http("$cgi?${old.token}&key").first)
         val revoked = links.create(creds, invite, "r", app)
         links.revoke(creds, revoked.token)
-        assertEquals(410, http("$base/cgi-bin/get?${revoked.token}&app").first)
+        assertEquals(410, http("$cgi?${revoked.token}&app").first)
         // The page keeps its port, and survives a stop.
         sh("docker stop paramnezia-invite >/dev/null")
-        assertEquals(18080, java.net.URI(links.create(creds, invite, "again", null, preferredPort = 80).url).port)
+        val again = links.create(creds, invite, "again", null, preferredPort = 80).url
+        assertEquals(18080, java.net.URI(again).port)
+        assertTrue("same secret path", again.startsWith("$base/#"))
         assertEquals(200, http("$base/").first)
         // The quick path (page prepared earlier): only the token is written; a stopped page is started
         // again, and the link works exactly like one made the long way.
         sh("docker stop paramnezia-invite >/dev/null")
         val quick = links.create(creds, invite, "quick", app, fast = true)
         assertEquals(18080, java.net.URI(quick.url).port)
-        assertEquals(plain, http("$base/cgi-bin/get?${quick.token}&key").second.trim())
+        assertTrue(quick.url.startsWith("$base/#"))
+        assertEquals(plain, http("$cgi?${quick.token}&key").second.trim())
     }
 
     /** Puts [bytes] where release-mirror.sh keeps verified releases, as if downloaded earlier. */

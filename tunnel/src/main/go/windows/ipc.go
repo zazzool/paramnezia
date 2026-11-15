@@ -55,6 +55,10 @@ type upSpec struct {
 	MTU        int      `json:"mtu,omitempty"`
 	// ExcludedApps go past the VPN: program file names ("telegram.exe") or full paths.
 	ExcludedApps []string `json:"excludedApps,omitempty"`
+	// PaddingSteady replaces the heavy content padding the UAPI starts with (Camouflage: heavy only
+	// at the start of a flow) PaddingAfterMs after the tunnel is up.
+	PaddingSteady  string `json:"paddingSteady,omitempty"`
+	PaddingAfterMs int64  `json:"paddingAfterMs,omitempty"`
 }
 
 type response struct {

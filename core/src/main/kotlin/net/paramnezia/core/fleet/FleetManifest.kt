@@ -28,7 +28,7 @@ data class FleetManifest(
      * keep their own. Older apps ignore the field.
      */
     val policy: FleetPolicy? = null,
-    /** Co-administrators the owner appointed (since 2.16). Older apps ignore the field. */
+    /** Co-administrators the owner appointed (since 2.15). Older apps ignore the field. */
     val admins: List<FleetCoAdmin> = emptyList(),
     /** Their credentials, each sealed to its device's key (see [GrantBox]). */
     val grants: List<SealedGrant> = emptyList(),
@@ -64,6 +64,13 @@ data class FleetServer(
     val dns: List<String> = listOf("1.1.1.1", "1.0.0.1"),
     val mtu: Int = 1280,
     val keepalive: String = "25",
+    /**
+     * More ports the server answers on, besides [port] (since 2.16; older apps ignore them). Devices
+     * move to them when [port] is blocked; AmneziaVPN keeps using [port].
+     */
+    val altPorts: List<Int> = emptyList(),
+    /** Other addresses of the same server, typically its IPv6 address (since 2.16). */
+    val altHosts: List<String> = emptyList(),
 )
 
 @Serializable
@@ -72,10 +79,18 @@ data class FleetDevice(
     val publicKey: String,
     /** Tunnel address of this device, the same on every server of the fleet. */
     val address: String,
+    /**
+     * The device has a preshared key of its own on every server ([DevicePsk]), not the server's
+     * shared one (since 2.16). Its key came in its invite; administrators derive it.
+     */
+    val ownPsk: Boolean = false,
 )
 
-/** The client config a trusted device should use for [server]. */
-fun FleetServer.tunnelFor(device: FleetDevice, privateKey: WgKey): TunnelConfig {
+/**
+ * The client config a trusted device should use for [server]. [psk] is the device's own preshared
+ * key when it has one ([FleetDevice.ownPsk]); otherwise the server's shared key is used.
+ */
+fun FleetServer.tunnelFor(device: FleetDevice, privateKey: WgKey, psk: WgKey? = null): TunnelConfig {
     require(privateKey.publicKey().toBase64() == device.publicKey) { "Key does not belong to ${device.name}" }
     val awgParams = LinkedHashMap<AwgParam, String>()
     for ((k, v) in awg) AwgParam.fromConfKey(k)?.let { awgParams[it] = v }
@@ -90,7 +105,7 @@ fun FleetServer.tunnelFor(device: FleetDevice, privateKey: WgKey): TunnelConfig 
         listOf(
             TunnelConfig.Peer(
                 publicKey = WgKey.fromBase64(publicKey),
-                presharedKey = presharedKey?.let(WgKey::fromBase64),
+                presharedKey = (if (device.ownPsk) psk else null) ?: presharedKey?.let(WgKey::fromBase64),
                 allowedIps = listOf(IpPrefix.ANY_V4, IpPrefix.ANY_V6),
                 endpoint = if (host.contains(':')) "[$host]:$port" else "$host:$port",
                 persistentKeepalive = keepalive,

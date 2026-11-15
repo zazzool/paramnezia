@@ -1,6 +1,7 @@
 package net.paramnezia.deploy
 
 import net.paramnezia.core.config.AwgParam
+import net.paramnezia.core.config.Camouflage
 import net.paramnezia.core.crypto.WgKey
 import java.security.SecureRandom
 
@@ -27,7 +28,7 @@ enum class ObfuscationProfile(val title: String) {
                 // Same values AmneziaVPN's AwgInstaller writes, which its clients are tested against.
                 for (s in listOf(AwgParam.S1, AwgParam.S2, AwgParam.S3, AwgParam.S4)) p[s] = "12"
                 p[AwgParam.H1] = "1"; p[AwgParam.H2] = "2"; p[AwgParam.H3] = "3"; p[AwgParam.H4] = "4"
-                p[AwgParam.I1] = DNS_LIKE_I1
+                p.putAll(signatures(random))
                 p[AwgParam.HEADER_PROTECTION_KEY] = WgKey.generatePrivate().toBase64()
                 p[AwgParam.REKEY_AFTER_TIME] = "100-120"
                 p[AwgParam.REKEY_TIMEOUT] = "3-7"
@@ -36,6 +37,9 @@ enum class ObfuscationProfile(val title: String) {
                 p[AwgParam.MAX_HANDSHAKE_ATTEMPTS] = "15-20"
                 p[AwgParam.RANDOM_TRAILERS] = "on"
                 p[AwgParam.DISABLE_COOKIES] = "on"
+                // The server's own data packets: a little padding instead of random trailers, which
+                // pad every small packet by half the free room. Clients choose their own (Camouflage).
+                p[AwgParam.CONTENT_PADDING_ADDITION] = "0-31"
             }
             AWG_2 -> {
                 val sizes = distinctPaddings(random, withCookieAndTransport = true)
@@ -43,7 +47,7 @@ enum class ObfuscationProfile(val title: String) {
                 p[AwgParam.S3] = sizes[2].toString(); p[AwgParam.S4] = sizes[3].toString()
                 val ranges = headerRanges(random)
                 p[AwgParam.H1] = ranges[0]; p[AwgParam.H2] = ranges[1]; p[AwgParam.H3] = ranges[2]; p[AwgParam.H4] = ranges[3]
-                p[AwgParam.I1] = DNS_LIKE_I1
+                p.putAll(signatures(random))
             }
             AWG_1 -> {
                 val sizes = distinctPaddings(random, withCookieAndTransport = false)
@@ -58,8 +62,16 @@ enum class ObfuscationProfile(val title: String) {
 
     companion object {
         /**
-         * The I1 "signature" packet AmneziaVPN ships by default: a DNS response for icloud.com, so the
-         * first datagram of every handshake looks like ordinary DNS to DPI.
+         * Signature packets for the server's config, which AmneziaVPN clients use as they are (ours
+         * choose per network, see [Camouflage]): a STUN request, or STUN and a DTLS ClientHello, so
+         * servers no longer share one fixed packet.
+         */
+        internal fun signatures(random: SecureRandom): Map<AwgParam, String> =
+            Camouflage.signatures(if (random.nextBoolean()) Camouflage.Mimic.STUN else Camouflage.Mimic.WEBRTC)
+
+        /**
+         * The I1 "signature" packet AmneziaVPN ships by default: a DNS response for icloud.com. The same
+         * bytes from every server in the world, sent by a client to a random port, so no longer used.
          */
         const val DNS_LIKE_I1 =
             "<r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>"

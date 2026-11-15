@@ -27,6 +27,10 @@ import net.paramnezia.app.ota.Updater
 import net.paramnezia.app.platform.Log
 import net.paramnezia.app.platform.StateStore
 import net.paramnezia.core.config.Uapi
+import net.paramnezia.core.config.Camouflage
+import net.paramnezia.core.config.TunnelConfig
+import net.paramnezia.app.tunnel.CamouflagePlanner
+import net.paramnezia.desktop.DesktopNetwork
 import net.paramnezia.core.config.WgQuick
 import net.paramnezia.core.fleet.Ed25519
 import net.paramnezia.core.fleet.FailoverPolicy
@@ -178,6 +182,7 @@ class App(
     // --- TunnelHost ---------------------------------------------------------------------------
 
     override suspend fun currentSpec(): TunnelSpec? {
+        noteNetwork()
         val state = repo.current
         val member = fleet.member()
         if (member != null) {
@@ -185,7 +190,7 @@ class App(
             if (tunnels.isNotEmpty()) {
                 val chosen = failover.choose(tunnels.map { it.first }, System.currentTimeMillis()) ?: return null
                 val config = tunnels.first { it.first.id == chosen.id }.second
-                return specs.build(chosen.id, chosen.name, config, state.settings)
+                return dressed(chosen.id, chosen.name, camo.dress(chosen.id, config, reachOf(chosen.id)))
             }
         }
         val profile = state.profiles.firstOrNull { it.id == state.activeProfile } ?: state.profiles.firstOrNull() ?: return null
@@ -193,21 +198,46 @@ class App(
     }
 
     /**
-     * The other fleet servers to fall back on, healthy ones first, in manifest order; the service
-     * switches to them by itself when the current one stays dead (also while the app is closed).
+     * What the service falls back on by itself when the current server stops answering (also while
+     * the app is closed), in order: a round of other ways into the same server (signature, ports,
+     * IPv6; see Camouflage), the other fleet servers (healthy ones first, in manifest order), then
+     * the remaining ways into the first server.
      */
     override suspend fun alternateSpecs(primary: TunnelSpec): List<TunnelSpec> {
-        val member = fleet.member() ?: return emptyList()
         val now = System.currentTimeMillis()
-        val others = member.tunnels().filter { it.first.id != primary.serverId }
-        val ordered = others.sortedBy { if (failover.isBlocked(it.first.id, now)) 1 else 0 }
-        val settings = repo.current.settings
-        return ordered.mapNotNull { (server, config) -> runCatching { specs.build(server.id, server.name, config, settings) }.getOrNull() }
+        val raw = rawConfig(primary.serverId)
+        // A handful is enough between two looks of the app (each one is a full tunnel spec for the service).
+        val variants = raw?.let { camo.rest(primary.serverId, it, reachOf(primary.serverId), primary.variant, max = 6) }.orEmpty()
+            .map { dressed(primary.serverId, primary.serverName, it) }
+        val member = fleet.member()
+        val others = member?.tunnels().orEmpty().filter { it.first.id != primary.serverId }
+            .sortedBy { if (failover.isBlocked(it.first.id, now)) 1 else 0 }
+            .mapNotNull { (server, config) -> runCatching { dressed(server.id, server.name, camo.dress(server.id, config, reachOf(server.id))) }.getOrNull() }
+        val first = Camouflage.ROUND - 1
+        return variants.take(first) + others + variants.drop(first)
     }
 
     private fun profileSpec(p: StoredProfile): TunnelSpec? = runCatching {
-        specs.build(p.id, p.name, WgQuick.parse(p.conf), repo.current.settings)
+        val config = WgQuick.parse(p.conf)
+        dressed(p.id, p.name, camo.dress(p.id, config, reachOf(p.id)))
     }.getOrNull()
+
+    /** How each server is dialled on this network (signatures, ports, addresses; see Camouflage). */
+    private val camo by lazy { CamouflagePlanner(repo) }
+
+    private fun noteNetwork() = DesktopNetwork.identity().let { (key, v6) -> camo.onNetwork(key, v6) }
+
+    private fun reachOf(serverId: String): CamouflagePlanner.Reach =
+        runCatching { fleet.manifest()?.servers?.firstOrNull { it.id == serverId } }.getOrNull()?.let { CamouflagePlanner.Reach(it.altPorts, it.altHosts) }
+            ?: repo.current.profiles.firstOrNull { it.id == serverId }?.let { CamouflagePlanner.Reach(it.altPorts, it.altHosts) }
+            ?: CamouflagePlanner.Reach()
+
+    private fun dressed(id: String, name: String, d: CamouflagePlanner.Dressed): TunnelSpec =
+        specs.build(id, name, d.config, repo.current.settings).copy(variant = d.variant, paddingSteady = d.padding?.steady, paddingAfterMs = d.padding?.afterMs ?: 0)
+
+    private fun rawConfig(serverId: String): TunnelConfig? =
+        runCatching { fleet.member()?.tunnels()?.firstOrNull { it.first.id == serverId }?.second }.getOrNull()
+            ?: repo.current.profiles.firstOrNull { it.id == serverId }?.let { runCatching { WgQuick.parse(it.conf) }.getOrNull() }
 
     override suspend fun onServerUnreachable(spec: TunnelSpec): TunnelSpec? {
         failover.markBlocked(spec.serverId, System.currentTimeMillis())
@@ -223,6 +253,7 @@ class App(
 
     override fun onServerHealthy(spec: TunnelSpec) {
         failover.markHealthy(spec.serverId)
+        camo.worked(spec.serverId, spec.variant)
         val fresh = healthyServer != spec.serverId
         healthyServer = spec.serverId
         fleet.syncIfDue(if (fresh) 0 else 3600_000L)
@@ -230,10 +261,13 @@ class App(
 
     /** Admin only, while the window is open: daily check and repair of the fleet's servers. */
     suspend fun healServers(force: Boolean = false) {
+        // Own standalone servers: a one-off upgrade (spare ports) after an app update.
+        runCatching { servers.upgradePorts() }.onFailure { Log.w(TAG, "upgrade", it) }
         val f = repo.current.fleet ?: return
         if (f.adminSeed == null) return
         if (f.sharePolicy) runCatching { fleet.sharePolicy(repo.current.settings) }
-        if (!force && System.currentTimeMillis() - f.lastHeal < HEAL_EVERY_MS) return
+        // A pending server upgrade is retried hourly (a server may be down), the rest daily.
+        if (!force && System.currentTimeMillis() - f.lastHeal < (if (fleet.needsUpgrade) 3600_000L else HEAL_EVERY_MS)) return
         runCatching { fleet.heal(updater.android.shareable()) }.onFailure { Log.w(TAG, "heal", it) }
     }
 

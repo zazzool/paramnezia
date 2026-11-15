@@ -24,6 +24,9 @@ class ServiceClient(private val pipe: String = PIPE) {
         val mtu: Int = 1280,
         /** Programs past the VPN, by file name; the service matches them per connection. */
         val excludedApps: List<String> = emptyList(),
+        /** Content padding after the start of the flow (UAPI range), set [paddingAfterMs] after the tunnel is up. */
+        val paddingSteady: String? = null,
+        val paddingAfterMs: Long = 0,
     )
 
     @Serializable

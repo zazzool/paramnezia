@@ -7,6 +7,7 @@ import net.paramnezia.app.data.StoredFleet
 import net.paramnezia.app.data.PooledDevice
 import net.paramnezia.app.data.CoAdminRecord
 import net.paramnezia.core.fleet.AdminGrant
+import net.paramnezia.core.fleet.DevicePsk
 import net.paramnezia.core.fleet.FleetCoAdmin
 import net.paramnezia.core.fleet.GrantBox
 import net.paramnezia.deploy.cloud.SshKeyPair
@@ -72,21 +73,32 @@ class FleetManager(
         // The stored manifest was checked when it was accepted: open it with whoever signed it.
         val manifest = FleetCrypto.open(signed, f.trust, ed, listOfNotNull(signed.signer))
         val ownerVersion = if (f.ownerVersion == 0L && signed.signer == null) signed.version else f.ownerVersion
-        return FleetMember(f.trust, WgKey.fromBase64(f.deviceKey), ed, manifest, ownerVersion, signed.signer)
+        val key = WgKey.fromBase64(f.deviceKey)
+        return FleetMember(f.trust, key, ed, manifest, ownerVersion, signed.signer, devicePsk(f, key))
     }
+
+    /** This device's own preshared key: from its invite, or (the owner) derived like every other device's. */
+    private fun devicePsk(f: StoredFleet, key: WgKey): WgKey? =
+        f.devicePsk?.let(WgKey::fromBase64)
+            ?: f.adminSeed?.takeIf { !f.coAdmin }?.let { DevicePsk.of(DevicePsk.seed(Base64.getDecoder().decode(it)), key.publicKey().toBase64()) }
 
     fun manifest(): FleetManifest? = member()?.manifest
 
     private fun admin(): FleetAdmin? {
         val f = stored ?: return null
         val seed = f.adminSeed ?: return null
-        return FleetAdmin(f.trust, Base64.getDecoder().decode(seed), ed, signer = if (f.coAdmin) f.signerKey else null)
+        val raw = Base64.getDecoder().decode(seed)
+        return if (f.coAdmin) FleetAdmin(f.trust, raw, ed, signer = f.signerKey, pskSeed = f.pskSeed?.let(Base64.getDecoder()::decode))
+        else FleetAdmin(f.trust, raw, ed)
     }
 
     /** The owner or a co-admin: may manage people and servers. */
     val isAdmin: Boolean get() = stored?.adminSeed != null
     /** The owner: also appoints co-admins, adds and removes servers, shares settings. */
     val isOwner: Boolean get() = stored?.let { it.adminSeed != null && !it.coAdmin } == true
+
+    /** Admin: the servers are due a one-off upgrade at the next self-check (see [heal]). */
+    val needsUpgrade: Boolean get() = stored?.let { it.adminSeed != null && it.portsChecked < SERVER_UPGRADE } == true
 
     private fun owner(): FleetAdmin = admin()?.takeIf { it.isOwner } ?: error("Это может только владелец семьи")
 
@@ -100,13 +112,14 @@ class FleetManager(
         val records = f.coAdmins.filter { r -> m.devices.any { it.publicKey == r.device } }
         val pins = repo.current.hostKeys.filterKeys { k -> f.serverAccess.values.any { k == "${it.host}:${it.port}" } }
         val now = System.currentTimeMillis()
+        val pskSeed = f.adminSeed?.let { Base64.getEncoder().encodeToString(DevicePsk.seed(Base64.getDecoder().decode(it))) }
         return m.copy(
             ownerDevice = WgKey.fromBase64(f.deviceKey).publicKey().toBase64(),
             admins = records.map { FleetCoAdmin(it.name, it.device, it.verifyKey, it.sshPublic, it.since) },
             grants = records.map { r ->
                 val access = f.serverAccess.filterKeys { id -> m.servers.any { it.id == id } }
                     .mapValues { (_, c) -> c.copy(password = "", privateKey = r.sshPrivate, passphrase = "") }
-                GrantBox.seal(AdminGrant(r.signingSeed, r.verifyKey, access, pins, f.gistId, f.gistToken, now), WgKey.fromBase64(r.device))
+                GrantBox.seal(AdminGrant(r.signingSeed, r.verifyKey, access, pins, f.gistId, f.gistToken, now, pskSeed), WgKey.fromBase64(r.device))
             },
         )
     }
@@ -143,11 +156,12 @@ class FleetManager(
         if (f.adminSeed != null && !f.coAdmin) return
         val grant = m.grant()
         if (grant != null) {
-            if (f.coAdmin && f.adminSeed == grant.signingSeed && f.serverAccess == grant.servers && f.gistToken == grant.gistToken) return
+            if (f.coAdmin && f.adminSeed == grant.signingSeed && f.serverAccess == grant.servers && f.gistToken == grant.gistToken &&
+                f.pskSeed == grant.pskSeed) return
             repo.update { s ->
                 s.copy(
                     fleet = s.fleet?.copy(adminSeed = grant.signingSeed, coAdmin = true, signerKey = grant.verifyKey,
-                        serverAccess = grant.servers, gistId = grant.gistId, gistToken = grant.gistToken),
+                        serverAccess = grant.servers, gistId = grant.gistId, gistToken = grant.gistToken, pskSeed = grant.pskSeed),
                     hostKeys = s.hostKeys + grant.hostKeys,
                 )
             }
@@ -155,7 +169,7 @@ class FleetManager(
         } else if (f.coAdmin) {
             repo.update { s ->
                 s.copy(fleet = s.fleet?.copy(adminSeed = null, coAdmin = false, signerKey = null, serverAccess = emptyMap(),
-                    gistId = null, gistToken = null, gistError = null, pool = emptyList()))
+                    gistId = null, gistToken = null, gistError = null, pool = emptyList(), pskSeed = null))
             }
             Log.i(TAG, "administrator rights were taken back")
         }
@@ -168,7 +182,7 @@ class FleetManager(
         val policy = m.manifest?.policy
         repo.update { s ->
             s.copy(
-                fleet = StoredFleet(m.trust, m.deviceKey.toBase64(), deviceName.ifBlank { inv.deviceName }, inv.manifest),
+                fleet = StoredFleet(m.trust, m.deviceKey.toBase64(), deviceName.ifBlank { inv.deviceName }, inv.manifest, devicePsk = inv.psk),
                 activeProfile = null,
                 settings = policy?.let(s.settings::applying) ?: s.settings,
             )
@@ -254,9 +268,10 @@ class FleetManager(
         val (admin, empty) = FleetAdmin.create(serverName, ed)
         val serverId = UUID.randomUUID().toString()
         val (device, key) = admin.newDevice(empty, deviceName, reserved = servers.usedAddresses(ssh))
+        val psk = admin.pskFor(device)
         val config = servers.addClient(ssh, key, deviceName, clientIp = device.address.substringBefore('/'),
-            dns = serverTunnel.iface.dns.ifEmpty { listOf("1.1.1.1", "1.0.0.1") })
-        val server = fleetServerOf(serverId, serverName, config)
+            dns = serverTunnel.iface.dns.ifEmpty { listOf("1.1.1.1", "1.0.0.1") }, psk = psk)
+        val server = withPorts(fleetServerOf(serverId, serverName, config), ssh)
         val manifest = admin.nextFor(empty) {
             it.copy(servers = listOf(server), devices = listOf(device), mirrors = listOf(publisher.tunnelUrl), policy = repo.current.settings.toPolicy())
         }
@@ -264,7 +279,8 @@ class FleetManager(
         repo.update { s ->
             s.copy(
                 fleet = StoredFleet(admin.trust, key.toBase64(), deviceName, signed,
-                    adminSeed = Base64.getEncoder().encodeToString(admin.signingSeed), serverAccess = mapOf(serverId to ssh)),
+                    adminSeed = Base64.getEncoder().encodeToString(admin.signingSeed), serverAccess = mapOf(serverId to ssh),
+                    devicePsk = psk?.toBase64(), portsChecked = SERVER_UPGRADE),
                 activeProfile = null,
             )
         }
@@ -284,13 +300,13 @@ class FleetManager(
         val admin = admin() ?: error("not admin")
         val current = manifest() ?: error("no manifest")
         takeSlot(current)?.let { (slot, key) ->
-            val device = FleetDevice(name, key.publicKey().toBase64(), slot.address)
+            val device = FleetDevice(name, key.publicKey().toBase64(), slot.address, ownPsk = slot.ownPsk && admin.pskSeed != null)
             val next = admin.nextFor(current) { it.copy(devices = it.devices + device) }
             accept(FleetCrypto.encode(admin.seal(next)))
             // A server the slot missed (added since, or down when the slot was made) and the next slot.
             scope.launch {
                 val missing = current.servers.filter { it.id !in slot.servers }
-                if (missing.isNotEmpty()) registerEverywhere(missing, key.publicKey(), name, slot.address)
+                if (missing.isNotEmpty()) registerEverywhere(missing, key.publicKey(), name, slot.address, admin.pskFor(device))
                 runCatching { fillPool() }
             }
             Log.i(TAG, "device $name from a prepared slot")
@@ -300,7 +316,7 @@ class FleetManager(
             current.servers.mapNotNull(::access).map { a -> async { runCatching { servers.usedAddresses(a) }.getOrDefault(emptySet()) } }.awaitAll().flatten()
         } + (stored?.pool?.map { it.address } ?: emptyList())
         val (device, key) = admin.newDevice(current, name, reserved = reserved)
-        val failed = registerEverywhere(current.servers, key.publicKey(), name, device.address)
+        val failed = registerEverywhere(current.servers, key.publicKey(), name, device.address, admin.pskFor(device))
         // The master must take the device now; a standby that is down gets it at the next self-check.
         current.servers.firstOrNull()?.let { master ->
             if (access(master) != null && master.id in failed) throw failed.getValue(master.id)
@@ -353,14 +369,17 @@ class FleetManager(
                 repeat(target - pool.size) {
                     val (d, key) = admin.newDevice(current, "", reserved = reserved)
                     reserved += d.address
-                    pool = pool + PooledDevice(key.toBase64(), d.address, createdAt = System.currentTimeMillis())
+                    pool = pool + PooledDevice(key.toBase64(), d.address, createdAt = System.currentTimeMillis(), ownPsk = d.ownPsk)
                 }
             }
             val registered = coroutineScope {
                 reachable.map { (s, a) ->
                     async {
                         val todo = pool.filter { s.id !in it.servers }
-                        val specs = todo.map { ServerManager.PeerSpec(WgKey.fromBase64(it.privateKey).publicKey(), POOL_PEER_NAME, it.address.substringBefore('/')) }
+                        val specs = todo.map { slot ->
+                            val pub = WgKey.fromBase64(slot.privateKey).publicKey()
+                            ServerManager.PeerSpec(pub, POOL_PEER_NAME, slot.address.substringBefore('/'), if (slot.ownPsk) admin.pskFor(pub) else null)
+                        }
                         val failed = runCatching { servers.ensurePeers(a, specs) }.getOrElse { e -> specs.associate { it.publicKey.toBase64() to (e.message ?: "error") } }
                         s.id to todo.filter { WgKey.fromBase64(it.privateKey).publicKey().toBase64() !in failed }.map { it.privateKey }.toSet()
                     }
@@ -413,7 +432,14 @@ class FleetManager(
         val f = stored ?: return@withContext 0
         if (f.adminSeed == null) return@withContext 0
         val m = manifest() ?: return@withContext 0
-        val peers = m.devices.map { ServerManager.PeerSpec(WgKey.fromBase64(it.publicKey), it.name, it.address.substringBefore('/')) }
+        val admin = admin() ?: return@withContext 0
+        // A device with its own key that this admin cannot derive (a co-admin with a grant from before
+        // 2.16) is left to the owner: adding it with the shared key would lock it out of that server.
+        val peers = m.devices.filter { !it.ownPsk || admin.pskSeed != null }
+            .map { ServerManager.PeerSpec(WgKey.fromBase64(it.publicKey), it.name, it.address.substringBefore('/'), admin.pskFor(it)) }
+        val upgrade = f.portsChecked < SERVER_UPGRADE
+        val updated = HashMap<String, FleetServer>()
+        var upgradeFailed = false
         var ok = 0
         val stillRevoked = HashSet<String>()
         val stillRevokedKeys = HashSet<String>()
@@ -432,6 +458,20 @@ class FleetManager(
                 },
                 "manifest" to { if (!publisher.publishToServer(a, f.manifest)) Log.w(TAG, "${s.name}: in-tunnel web server is not answering") },
                 "release" to { release?.let { (r, wire) -> publisher.mirrorRelease(a, r.sha256, r.publicApkUrls(), wire, forInvites = false) } },
+                // Spare ports (once per server upgrade): a server without any gets them, and the
+                // manifest learns what each server answers on.
+                "ports" to {
+                    if (upgrade || s.altPorts.isEmpty()) {
+                        runCatching {
+                            val p = servers.ports(a, if (s.altPorts.isEmpty()) ServerManager.altPortsFor(s.port) else emptyList())
+                            val next = s.copy(altPorts = p.alt, altHosts = listOfNotNull(p.ipv6))
+                            if (next != s && p.main == s.port) updated[s.id] = next
+                        }.onFailure { e ->
+                            // Not an AmneziaWG 2 container (an older AmneziaVPN protocol): nothing to upgrade there.
+                            if ((e as? net.paramnezia.deploy.SshException)?.code != "no_container") upgradeFailed = true
+                        }.getOrThrow()
+                    }
+                },
             )
             var serverOk = true
             for ((name, step) in steps) runCatching { step() }.onFailure { serverOk = false; Log.w(TAG, "heal ${s.name}/$name: ${it.message}") }
@@ -441,8 +481,15 @@ class FleetManager(
             st.copy(fleet = st.fleet?.let {
                 it.copy(revoked = it.revoked.filter { k -> k in stillRevoked }.toSet(),
                     revokedAdminKeys = it.revokedAdminKeys.filter { k -> k in stillRevokedKeys }.toSet(),
-                    lastHeal = System.currentTimeMillis())
+                    lastHeal = System.currentTimeMillis(),
+                    portsChecked = if (upgrade && !upgradeFailed) SERVER_UPGRADE else it.portsChecked)
             })
+        }
+        if (updated.isNotEmpty()) {
+            Log.i(TAG, "spare ports on ${updated.values.joinToString { "${it.name}: ${it.altPorts}" }}")
+            manifest()?.let { cur ->
+                accept(FleetCrypto.encode(admin.seal(admin.nextFor(cur) { mm -> mm.copy(servers = mm.servers.map { updated[it.id] ?: it }) })))
+            }
         }
         ok
     }
@@ -459,10 +506,10 @@ class FleetManager(
         if (inspection.awgContainer == null) servers.install(ssh, ServerManager.InstallOptions(), onStep)
         val myKey = WgKey.fromBase64(f.deviceKey)
         val me = current.deviceFor(myKey.publicKey()) ?: error("admin is not a fleet member")
-        val config = servers.addClient(ssh, myKey, me.name, clientIp = me.address.substringBefore('/'))
-        val server = fleetServerOf(UUID.randomUUID().toString(), name, config)
+        val config = servers.addClient(ssh, myKey, me.name, clientIp = me.address.substringBefore('/'), psk = admin.pskFor(me))
+        val server = withPorts(fleetServerOf(UUID.randomUUID().toString(), name, config), ssh)
         for (d in current.devices) if (d.publicKey != me.publicKey) {
-            servers.registerPeer(ssh, WgKey.fromBase64(d.publicKey), d.name, clientIp = d.address.substringBefore('/'))
+            servers.registerPeer(ssh, WgKey.fromBase64(d.publicKey), d.name, clientIp = d.address.substringBefore('/'), psk = admin.pskFor(d))
         }
         repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(serverAccess = it.serverAccess + (server.id to ssh)) }) }
         // The co-admins reach the new server with their own keys too.
@@ -598,13 +645,22 @@ class FleetManager(
         }
     }
 
+    /**
+     * The ports [server] answers on, asked from the server itself (spare ones are added if it has
+     * none yet). Best effort: without an answer the server is used with its main port only.
+     */
+    private fun withPorts(server: FleetServer, ssh: SshCredentials): FleetServer = runCatching {
+        val p = servers.ports(ssh, ServerManager.altPortsFor(server.port))
+        if (p.main == server.port) server.copy(altPorts = p.alt, altHosts = listOfNotNull(p.ipv6)) else server
+    }.onFailure { Log.w(TAG, "ports of ${server.name}: ${it.message}") }.getOrDefault(server)
+
     /** Registers a device on every server, all at once; returns the failures by server id. */
-    private suspend fun registerEverywhere(list: List<FleetServer>, publicKey: WgKey, name: String, address: String): Map<String, Exception> =
+    private suspend fun registerEverywhere(list: List<FleetServer>, publicKey: WgKey, name: String, address: String, psk: WgKey? = null): Map<String, Exception> =
         coroutineScope {
             list.mapNotNull { s -> access(s)?.let { a -> s to a } }.map { (s, a) ->
                 async(Dispatchers.IO) {
                     try {
-                        servers.registerPeer(a, publicKey, name, clientIp = address.substringBefore('/'))
+                        servers.registerPeer(a, publicKey, name, clientIp = address.substringBefore('/'), psk = psk)
                         null
                     } catch (e: Exception) {
                         Log.w(TAG, "could not register $name on ${s.name}: ${e.message}")
@@ -630,6 +686,8 @@ class FleetManager(
         /** How a prepared slot is called on the server until someone gets it. */
         const val POOL_PEER_NAME = "Paramnezia"
         const val DAY_MS = 24 * 3600_000L
+        /** Bumped when every server needs a one-off upgrade at the next self-check (2.16: spare ports). */
+        const val SERVER_UPGRADE = 1
         /** While the tunnel works, look for a newer manifest at most this often. */
         const val SYNC_EVERY_MS = 3600_000L
     }

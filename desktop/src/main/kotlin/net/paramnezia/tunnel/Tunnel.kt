@@ -27,6 +27,11 @@ data class TunnelSpec(
     val dns: DnsPolicy? = null,
     /** Programs past the VPN, by file name ("telegram.exe"). */
     val excludedApps: List<String> = emptyList(),
+    /** How the server is dialled (Camouflage variant id), as on Android. */
+    val variant: String = "",
+    /** Content padding after the start of the flow, set by the service [paddingAfterMs] after it is up. */
+    val paddingSteady: String? = null,
+    val paddingAfterMs: Long = 0,
 )
 
 /** Same meaning as on Android: blocked names, Russian names outside, the rest through the tunnel. */

@@ -34,8 +34,10 @@ JSON — раскладка AmneziaVPN: `containers[]` с `container: "amnezia-a
 
 ```kotlin
 FleetManifest(fleetId, version, issuedAt, servers: [FleetServer], devices: [FleetDevice], mirrors: [url])
-FleetServer(id, name, host, port, publicKey, presharedKey?, awg: {Jc, S1, H1, I1…}, dns, mtu, keepalive)
-FleetDevice(name, publicKey /* WireGuard */, address /* 10.8.1.N/32, одинаковый на всех серверах */)
+FleetServer(id, name, host, port, publicKey, presharedKey?, awg: {Jc, S1, H1, I1…}, dns, mtu, keepalive,
+            altPorts /* запасные порты, с 2.16 */, altHosts /* напр. IPv6-адрес, с 2.16 */)
+FleetDevice(name, publicKey /* WireGuard */, address /* 10.8.1.N/32, одинаковый на всех серверах */,
+            ownPsk /* свой PSK устройства, с 2.16 */)
 ```
 
 Первый сервер в списке — основной (мастер), остальные — резервные. `version` только растёт
@@ -57,8 +59,16 @@ SignedManifest = { fleetId, version, body, sig }   // JSON, это и есть �
 Обычный ключ `vpn://` к основному серверу с дополнительным полем:
 
 ```json
-"paramnezia_fleet": { "trust": FleetTrust, "deviceName": "...", "privateKey": "<WireGuard>", "manifest": "<SignedManifest>" }
+"paramnezia_fleet": { "trust": FleetTrust, "deviceName": "...", "privateKey": "<WireGuard>", "manifest": "<SignedManifest>",
+                      "psk": "<свой PSK устройства, с 2.16>" }
 ```
+
+Свой PSK устройства (`FleetDevice.ownPsk`, `core/fleet/DevicePsk.kt`): `HMAC-SHA256(seed, "paramnezia-device-psk-v1|" +
+publicKey)`, где `seed = HMAC-SHA256(подписывающий ключ владельца, "paramnezia-device-psk-seed-v1")`. Владелец
+выводит его сам, со-администраторы получают `seed` в своём `AdminGrant.pskSeed`, устройство — один раз, в
+приглашении. Поэтому любой администратор может добавить устройство на новый сервер с правильным ключом, а
+`add-peer.sh` (`CLIENT_PSK`) при самопроверке исправляет ключ у пира, если он другой. Устройства до 2.16 и
+приглашения от со-администратора со старым грантом остаются на общем PSK сервера.
 
 AmneziaVPN видит обычный ключ; Paramnezia вступает в семейную группу. Для оригинального AmneziaVPN это поле
 вырезается (`Invite.plainKey`).
@@ -87,6 +97,12 @@ AmneziaVPN видит обычный ключ; Paramnezia вступает в с
 если мастер недоступен для самого админа, админ переставляет резервный сервер первым и публикует новый
 манифест на серверы и зеркала. Фоновая задача раз в 12 часов читает манифест (`SyncWorker`).
 
+До перехода на другой сервер устройство пробует другие пути к тому же (`Camouflage`, см.
+[CAMOUFLAGE.md](CAMOUFLAGE.md)): другую подпись первых пакетов, запасные порты (`altPorts`), IPv6-адрес
+(`altHosts`). Первые 4 варианта — один «раунд»; если в семье есть другой незаблокированный сервер, после раунда
+очередь переходит к нему, иначе перебор продолжается. Что сработало, запоминается для каждой сети
+(`AppState.camouflage`: `<сеть>|<сервер>` → вариант).
+
 ## 3. Обновления
 
 `core/ota/Release.kt`, `app/ota/Updater.kt`, `releasetool`
@@ -114,7 +130,8 @@ SHA-256) и положить его в `apk/<sha256>` и `release.json` внут
 
 `deploy/InviteLinks.kt`, `deploy/…/invite/*`, `deploy/…/release-mirror.sh`, `app/fleet/Links.kt`
 
-**Ссылка:** `http://<сервер>[:порт]/#<токен>`; токен — 16 случайных байт в base64url. Фрагмент `#…` не
+**Ссылка:** `http://<сервер>[:порт]/<secret>/#<токен>`; токен — 16 случайных байт в base64url, `<secret>` —
+секретный путь страницы на этом сервере (см. SERVER.md: корень адреса отвечает 404). Фрагмент `#…` не
 уходит на сервер при открытии страницы и не попадает в превью мессенджеров.
 
 **Страница** (`index.html`) определяет платформу по User-Agent. Android: кнопка «Скачать Paramnezia» (адрес из
@@ -129,7 +146,7 @@ SHA-256) и положить его в `apk/<sha256>` и `release.json` внут
 `PN_WIN_URLS`; неудача не мешает APK). Без копий кнопки ведут на `releases/latest/download/paramnezia.apk` и
 `…/Paramnezia-Setup.exe` (постоянные имена в каждом релизе).
 
-**CGI** `GET /cgi-bin/get?<токен>&<что>`, `что` = `app` (приглашение для Paramnezia) | `key` (ключ без семейной группы,
+**CGI** `GET /cgi-bin/<secret>?<токен>&<что>`, `что` = `app` (приглашение для Paramnezia) | `key` (ключ без семейной группы,
 для AmneziaVPN) | `conf`. Первый запрос атомарно (`mv t/T c/T`) гасит ссылку и запоминает `время адрес`;
 повтор разрешён только с того же адреса в течение 30 минут. Ответы: 200, 400 (неверный запрос),
 410 (использована/истекла).

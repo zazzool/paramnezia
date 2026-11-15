@@ -237,6 +237,9 @@ func (s *supervisor) rebuild(gen, index int) {
 	}
 	spec := s.specs[index]
 	switched := index != s.active
+	// Another way into the same server (the app lists a server's variants under its name) keeps
+	// counting failed builds, so each further failure moves on at once instead of after two builds.
+	sameServer := !switched || (s.active < len(s.specs) && s.specs[s.active].Name == spec.Name)
 	ctx := s.ctx
 	s.mu.Unlock()
 	s.op.Lock()
@@ -261,7 +264,7 @@ func (s *supervisor) rebuild(gen, index int) {
 		s.scheduleLocked(10 * time.Second)
 		return
 	}
-	s.w.Started(time.Now(), !switched)
+	s.w.Started(time.Now(), sameServer)
 	s.scheduleLocked(150 * time.Millisecond)
 }
 

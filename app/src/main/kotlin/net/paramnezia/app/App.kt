@@ -14,6 +14,8 @@ import net.paramnezia.app.fleet.FleetManager
 import net.paramnezia.app.ota.Updater
 import net.paramnezia.app.tunnel.Net
 import net.paramnezia.app.tunnel.SpecBuilder
+import net.paramnezia.app.tunnel.CamouflagePlanner
+import net.paramnezia.core.config.TunnelConfig
 import net.paramnezia.app.ui.WidgetProvider
 import net.paramnezia.app.work.SyncJob
 import net.paramnezia.core.config.Uapi
@@ -203,6 +205,7 @@ class App : Application(), TunnelHost {
     // --- TunnelHost ---------------------------------------------------------------------------
 
     override suspend fun currentSpec(): TunnelSpec? {
+        noteNetwork()
         val state = repo.current
         val member = fleet.member()
         if (member != null) {
@@ -210,7 +213,7 @@ class App : Application(), TunnelHost {
             if (tunnels.isNotEmpty()) {
                 val chosen = failover.choose(tunnels.map { it.first }, System.currentTimeMillis()) ?: return null
                 val config = tunnels.first { it.first.id == chosen.id }.second
-                return specs.build(chosen.id, chosen.name, config, state.settings)
+                return dressed(chosen.id, chosen.name, config, camo.dress(chosen.id, config, reachOf(chosen.id)))
             }
         }
         val profile = state.profiles.firstOrNull { it.id == state.activeProfile } ?: state.profiles.firstOrNull() ?: return null
@@ -218,11 +221,43 @@ class App : Application(), TunnelHost {
     }
 
     private fun profileSpec(p: StoredProfile): TunnelSpec? = runCatching {
-        specs.build(p.id, p.name, WgQuick.parse(p.conf), repo.current.settings)
+        val config = WgQuick.parse(p.conf)
+        dressed(p.id, p.name, config, camo.dress(p.id, config, reachOf(p.id)))
     }.getOrNull()
+
+    /** How each server is dialled on this network (signatures, ports, addresses; see Camouflage). */
+    private val camo by lazy { CamouflagePlanner(repo) }
+
+    private fun noteNetwork() = TunnelRuntime.networkIdentity(this).let { camo.onNetwork(it.key, it.ipv6) }
+
+    /** Spare ports and addresses of a fleet server or an own standalone server. */
+    private fun reachOf(serverId: String): CamouflagePlanner.Reach =
+        runCatching { fleet.manifest()?.servers?.firstOrNull { it.id == serverId } }.getOrNull()?.let { CamouflagePlanner.Reach(it.altPorts, it.altHosts) }
+            ?: repo.current.profiles.firstOrNull { it.id == serverId }?.let { CamouflagePlanner.Reach(it.altPorts, it.altHosts) }
+            ?: CamouflagePlanner.Reach()
+
+    private fun dressed(id: String, name: String, raw: TunnelConfig, d: CamouflagePlanner.Dressed): TunnelSpec =
+        specs.build(id, name, d.config, repo.current.settings).copy(variant = d.variant, paddingSteady = d.padding?.steady, paddingAfterMs = d.padding?.afterMs ?: 0)
+
+    /** The server's config as the fleet or the profile has it, before Camouflage dressed it. */
+    private fun rawConfig(serverId: String): TunnelConfig? =
+        runCatching { fleet.member()?.tunnels()?.firstOrNull { it.first.id == serverId }?.second }.getOrNull()
+            ?: repo.current.profiles.firstOrNull { it.id == serverId }?.let { runCatching { WgQuick.parse(it.conf) }.getOrNull() }
 
     override suspend fun onServerUnreachable(spec: TunnelSpec): TunnelSpec? {
         val now = System.currentTimeMillis()
+        noteNetwork()
+        // First another way into the same server (signature, port, address): a blocked port or
+        // fingerprint is far more common than a dead server. After a round of those, another server
+        // gets its turn if there is one that is not known to be blocked.
+        val raw = rawConfig(spec.serverId)
+        if (raw != null) {
+            val others = runCatching { fleet.member()?.tunnels() }.getOrNull().orEmpty()
+                .count { it.first.id != spec.serverId && !failover.isBlocked(it.first.id, now) }
+            camo.next(spec.serverId, raw, reachOf(spec.serverId), spec.variant, mayStay = others == 0)?.let { d ->
+                return dressed(spec.serverId, spec.serverName, raw, d)
+            }
+        }
         failover.markBlocked(spec.serverId, now)
         // The admin may already have moved the fleet elsewhere: look before guessing.
         withTimeoutOrNull(25_000) { runCatching { fleet.sync() } }
@@ -237,6 +272,7 @@ class App : Application(), TunnelHost {
 
     override fun onServerHealthy(spec: TunnelSpec) {
         failover.markHealthy(spec.serverId)
+        camo.worked(spec.serverId, spec.variant)
         // Fleet devices pick up the admin's changes within the hour while the tunnel works, and at
         // once on a fresh connection or a switch to another server.
         val fresh = healthyServer != spec.serverId
@@ -250,11 +286,14 @@ class App : Application(), TunnelHost {
      * background work. Cheap for everyone else: returns at once.
      */
     suspend fun healServers(force: Boolean = false) {
+        // Own standalone servers: a one-off upgrade (spare ports) after an app update.
+        runCatching { servers.upgradePorts() }.onFailure { Log.w(TAG, "upgrade", it) }
         val f = repo.current.fleet ?: return
         if (f.adminSeed == null) return
         // Cheap and local when nothing changed; brings a manifest from before 2.2 up to date.
         if (f.sharePolicy) runCatching { fleet.sharePolicy(repo.current.settings) }
-        if (!force && System.currentTimeMillis() - f.lastHeal < HEAL_EVERY_MS) return
+        // A pending server upgrade is retried hourly (a server may be down), the rest daily.
+        if (!force && System.currentTimeMillis() - f.lastHeal < (if (fleet.needsUpgrade) 3600_000L else HEAL_EVERY_MS)) return
         runCatching { fleet.heal(updater.shareable()) }.onFailure { Log.w(TAG, "heal", it) }
     }
 

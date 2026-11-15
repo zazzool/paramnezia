@@ -14,7 +14,8 @@ import java.security.SecureRandom
 import java.util.Base64
 
 /**
- * One-time invite links served by the VPS itself: `http://<server>/#<token>`.
+ * One-time invite links served by the VPS itself: `http://<server>/<secret>/#<token>`. The page sits
+ * under a secret path, so the address's root shows nothing to scanners (see invite-server.sh).
  *
  * The page looks at the device that opened it:
  *  - Android: step 1 downloads the official, unmodified release APK (the same bytes for everyone,
@@ -77,7 +78,7 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
             // The page is usually ready already (prepare() ran in the background): then only the
             // container's port is read and the container started if a reboot stopped it, instead of
             // sending the whole page and its pictures again. Anything missing: the full setup.
-            val port = (if (fast) quickPort(ssh) else null) ?: ensurePage(ssh, preferredPort, app)
+            val (port, path) = (if (fast) quickPage(ssh) else null) ?: ensurePage(ssh, preferredPort, app)
             val r = ssh.run(
                 """
                 set -eu
@@ -97,16 +98,16 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
                 timeoutMs = 60_000,
             )
             if (r.results["ok"] != "1") throw SshException("invite_failed", "Could not store invite: ${r.stderr.takeLast(1000)}")
-            return Link(url(creds.host, port, token), token, expiresAt)
+            return Link(url(creds.host, port, path, token), token, expiresAt)
         }
     }
 
     /** Gets a server ready for links ahead of time (page container, image pull, download info). */
     fun prepare(creds: SshCredentials, app: AppDownload?, preferredPort: Int = 80): String =
-        SshConnection.open(creds, hostKeys).use { ssh -> pageUrl(creds.host, ensurePage(ssh, preferredPort, app)) }
+        SshConnection.open(creds, hostKeys).use { ssh -> ensurePage(ssh, preferredPort, app).let { (port, path) -> pageUrl(creds.host, port, path) } }
 
-    /** Port of the running page container (started if it was stopped), or null if there is none. */
-    private fun quickPort(ssh: SshConnection): Int? {
+    /** Port and secret path of the running page (started if it was stopped), or null if there is none. */
+    private fun quickPage(ssh: SshConnection): Pair<Int, String>? {
         val r = runCatching {
             ssh.run(
                 """
@@ -114,15 +115,18 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
                 N=paramnezia-invite
                 [ "${'$'}(${'$'}S docker inspect -f '{{.State.Running}}' ${'$'}N 2>/dev/null)" = true ] || ${'$'}S docker start ${'$'}N >/dev/null 2>&1 || exit 0
                 p=${'$'}(${'$'}S docker inspect -f '{{range ${'$'}p, ${'$'}b := .HostConfig.PortBindings}}{{(index ${'$'}b 0).HostPort}}{{end}}' ${'$'}N 2>/dev/null)
-                [ -d $DATA/t ] && [ -n "${'$'}p" ] && echo "::result::port=${'$'}p"
+                s=${'$'}(${'$'}S cat $DATA/../secret 2>/dev/null)
+                [ -d $DATA/t ] && [ -n "${'$'}p" ] && [ -n "${'$'}s" ] && ${'$'}S test -f "$DATA/../www/${'$'}s/index.html" && echo "::result::port=${'$'}p" && echo "::result::path=${'$'}s"
                 """.trimIndent(),
                 timeoutMs = 30_000,
             )
         }.getOrNull() ?: return null
-        return r.results["port"]?.toIntOrNull()
+        val port = r.results["port"]?.toIntOrNull() ?: return null
+        val path = r.results["path"]?.takeIf { it.matches(TOKEN) } ?: return null
+        return port to path
     }
 
-    private fun ensurePage(ssh: SshConnection, preferredPort: Int, app: AppDownload?): Int {
+    private fun ensurePage(ssh: SshConnection, preferredPort: Int, app: AppDownload?): Pair<Int, String> {
         val page = ssh.run(
             ServerManager.script("invite-server.sh"),
             env = mapOf(
@@ -134,8 +138,10 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
             ),
             timeoutMs = 5 * 60_000,
         )
-        return page.results["port"]?.toIntOrNull()
-            ?: throw SshException("invite_failed", "Could not start the invite page: ${page.error ?: ""} ${page.stderr.takeLast(1000)}")
+        val port = page.results["port"]?.toIntOrNull()
+        val path = page.results["path"]?.takeIf { it.matches(TOKEN) }
+        if (port == null || path == null) throw SshException("invite_failed", "Could not start the invite page: ${page.error ?: ""} ${page.stderr.takeLast(1000)}")
+        return port to path
     }
 
     /** Which of [tokens] have been used already. */
@@ -170,16 +176,13 @@ class InviteLinks(private val hostKeys: HostKeyStore) {
         )
 
         /** The page to share with family and friends: download, screenshots, how to connect. */
-        fun pageUrl(host: String, port: Int): String {
+        fun pageUrl(host: String, port: Int, path: String): String {
             val h = if (':' in host && !host.startsWith("[")) "[$host]" else host
-            return "http://$h" + (if (port == 80) "" else ":$port") + "/"
+            return "http://$h" + (if (port == 80) "" else ":$port") + "/$path/"
         }
 
         fun newToken(): String = ByteArray(16).also(random::nextBytes).let { Base64.getUrlEncoder().withoutPadding().encodeToString(it) }
 
-        fun url(host: String, port: Int, token: String): String {
-            val h = if (':' in host && !host.startsWith("[")) "[$host]" else host
-            return "http://$h" + (if (port == 80) "" else ":$port") + "/#$token"
-        }
+        fun url(host: String, port: Int, path: String, token: String): String = pageUrl(host, port, path) + "#$token"
     }
 }

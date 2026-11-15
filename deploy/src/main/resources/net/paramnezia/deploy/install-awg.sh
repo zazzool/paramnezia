@@ -4,7 +4,8 @@
 #   config     /opt/amnezia/awg/awg0.conf, keys next to it, clientsTable for user names
 #   network    amnezia-dns-net (172.29.172.0/24), where AmneziaDNS lives if installed later
 #
-# Inputs (environment): AWG_PORT, AWG_SUBNET, AWG_CIDR, AWG_PARAMS (wg-quick lines), PN_REINSTALL (0/1)
+# Inputs (environment): AWG_PORT, AWG_SUBNET, AWG_CIDR, AWG_PARAMS (wg-quick lines), PN_REINSTALL (0/1),
+#   optional ALT_PORTS (more host ports leading to the same listener, space separated; busy ones are skipped)
 # Output: "::step::<name>" progress markers, then "::result::<key>=<value>" lines.
 set -eu
 export LC_ALL=C DEBIAN_FRONTEND=noninteractive
@@ -69,10 +70,20 @@ if ! $SUDO docker network ls --format '{{.Name}}' | grep -qx amnezia-dns-net; th
   $SUDO docker network create --driver bridge --subnet=172.29.172.0/24 \
     --opt com.docker.network.bridge.name=amn0 amnezia-dns-net >/dev/null
 fi
+# Spare ports: the same listener behind other host ports, for clients whose main port is blocked.
+busy_udp() { (ss -lunH 2>/dev/null || netstat -lun 2>/dev/null) | awk '{print $4}' | grep -qE "[:.]$1\$"; }
+extra=""
+for p in ${ALT_PORTS:-}; do
+  case "$p" in ''|*[!0-9]*) continue ;; esac
+  [ "$p" = "$AWG_PORT" ] && continue
+  busy_udp "$p" && continue
+  extra="$extra -p $p:$AWG_PORT/udp"
+done
 # --init gives the container a tiny PID 1 that reaps zombies, which dumb-init does in AmneziaVPN's image.
+# shellcheck disable=SC2086
 $SUDO docker run -d --init --log-driver none --restart always --privileged \
   --cap-add=NET_ADMIN --cap-add=SYS_MODULE \
-  -p "$AWG_PORT:$AWG_PORT/udp" -v /lib/modules:/lib/modules \
+  -p "$AWG_PORT:$AWG_PORT/udp" $extra -v /lib/modules:/lib/modules \
   --sysctl="net.ipv4.conf.all.src_valid_mark=1" \
   --name "$CONTAINER" "$CONTAINER" >/dev/null || fail "docker_run_failed"
 $SUDO docker network connect amnezia-dns-net "$CONTAINER" >/dev/null 2>&1 || true
@@ -131,10 +142,19 @@ if $SUDO modprobe tcp_bbr 2>/dev/null || grep -qw bbr /proc/sys/net/ipv4/tcp_ava
   $SUDO sysctl -qw net.core.default_qdisc=fq net.ipv4.tcp_congestion_control=bbr 2>/dev/null || true
 fi
 
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-  $SUDO docker exec "$CONTAINER" awg show awg0 >/dev/null 2>&1 && break
-  sleep 1
-done
+up() {
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    $SUDO docker exec "$CONTAINER" awg show awg0 >/dev/null 2>&1 && return 0
+    sleep 1
+  done
+  return 1
+}
+if ! up && $SUDO docker exec "$CONTAINER" grep -q '^ContentPaddingAddition' /opt/amnezia/awg/awg0.conf; then
+  # An image whose tools predate content padding: the server works without it (clients pad themselves).
+  $SUDO docker exec "$CONTAINER" sed -i '/^ContentPaddingAddition/d' /opt/amnezia/awg/awg0.conf
+  $SUDO docker exec -d "$CONTAINER" /opt/amnezia/start.sh
+  up || true
+fi
 $SUDO docker exec "$CONTAINER" awg show awg0 >/dev/null 2>&1 || fail "interface_not_up"
 
 step done

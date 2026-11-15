@@ -21,8 +21,19 @@ class FleetAdmin(
     private val ed: Ed25519,
     /** A co-admin's verify key (base64); null for the owner. */
     val signer: String? = null,
+    /**
+     * The administrators' secret for devices' own preshared keys ([DevicePsk]): the owner's is derived
+     * from its seed, a co-admin's comes in its grant (null with a grant from before 2.16).
+     */
+    val pskSeed: ByteArray? = if (signer == null) DevicePsk.seed(signingSeed) else null,
 ) {
     val isOwner: Boolean get() = signer == null
+
+    /** The preshared key of a device with its own ([FleetDevice.ownPsk]), or null when this admin cannot derive it. */
+    fun pskFor(device: FleetDevice): WgKey? = if (device.ownPsk) pskSeed?.let { DevicePsk.of(it, device.publicKey) } else null
+
+    /** The same for a key not yet in the manifest (a new device, a prepared slot). */
+    fun pskFor(publicKey: WgKey): WgKey? = pskSeed?.let { DevicePsk.of(it, publicKey.toBase64()) }
 
     fun seal(m: FleetManifest): SignedManifest = FleetCrypto.seal(m, trust.fleetKey, signingSeed, ed, signer)
 
@@ -44,7 +55,7 @@ class FleetAdmin(
         while (candidate in taken) candidate += BigInteger.ONE
         require(candidate < subnet.last) { "Fleet subnet is full" }
         val addr = IpPrefix.of(false, candidate, 32)
-        return FleetDevice(name, key.publicKey().toBase64(), addr.toString()) to key
+        return FleetDevice(name, key.publicKey().toBase64(), addr.toString(), ownPsk = pskSeed != null) to key
     }
 
     /**
@@ -53,8 +64,10 @@ class FleetAdmin(
      */
     fun invite(manifest: FleetManifest, device: FleetDevice, key: WgKey): String {
         val master = manifest.servers.firstOrNull() ?: throw ConfigException("Fleet has no servers")
-        val base = AmneziaFormat.export(master.name, master.tunnelFor(device, key))
-        val extra = Invite(trust, device.name, key.toBase64(), FleetCrypto.encode(seal(manifest)))
+        val psk = pskFor(device)
+        require(!device.ownPsk || psk != null) { "No preshared key for ${device.name}" }
+        val base = AmneziaFormat.export(master.name, master.tunnelFor(device, key, psk))
+        val extra = Invite(trust, device.name, key.toBase64(), FleetCrypto.encode(seal(manifest)), psk?.toBase64())
         return AmneziaKey.encode(JsonObject(base + (INVITE_KEY to json.encodeToJsonElement(Invite.serializer(), extra))))
     }
 
@@ -77,6 +90,8 @@ data class Invite(
     val deviceName: String,
     val privateKey: String,
     val manifest: String,
+    /** The device's own preshared key ([FleetDevice.ownPsk]), since 2.16. */
+    val psk: String? = null,
 ) {
     companion object {
         /** The fleet part of a `vpn://` invite, or null for an ordinary key. */
@@ -109,6 +124,8 @@ class FleetMember(
     ownerVersion: Long = 0,
     /** Who signed [manifest]: null for the owner, else the co-admin's verify key. */
     signer: String? = null,
+    /** This device's own preshared key, from its invite ([FleetDevice.ownPsk]). */
+    val devicePsk: WgKey? = null,
 ) {
     var manifest: FleetManifest? = manifest
         private set
@@ -173,14 +190,14 @@ class FleetMember(
     fun tunnels(): List<Pair<FleetServer, TunnelConfig>> {
         val m = manifest ?: return emptyList()
         val me = m.deviceFor(deviceKey.publicKey()) ?: return emptyList()
-        return m.servers.map { it to it.tunnelFor(me, deviceKey) }
+        return m.servers.map { it to it.tunnelFor(me, deviceKey, devicePsk) }
     }
 
     companion object {
         /** Reads an invite produced by [FleetAdmin.invite]. Returns null for an ordinary vpn:// key. */
         fun fromInvite(text: String, ed: Ed25519): FleetMember? {
             val inv = Invite.read(text) ?: return null
-            val member = FleetMember(inv.trust, WgKey.fromBase64(inv.privateKey), ed)
+            val member = FleetMember(inv.trust, WgKey.fromBase64(inv.privateKey), ed, devicePsk = inv.psk?.let(WgKey::fromBase64))
             if (!member.offer(inv.manifest, joining = true)) return null
             return member
         }

@@ -153,6 +153,17 @@ func (t *tunnel) up(ctx context.Context, s *upSpec) (err error) {
 	}
 	t.name = s.Name
 	t.since = time.Now()
+	if steady := strings.TrimSpace(s.PaddingSteady); steady != "" && !strings.ContainsAny(steady, "\n=") {
+		// Heavy padding only at the start of the flow; the same device later, if it is still there.
+		dev := t.dev
+		time.AfterFunc(time.Duration(s.PaddingAfterMs)*time.Millisecond, func() {
+			t.mu.Lock()
+			defer t.mu.Unlock()
+			if t.dev == dev {
+				_ = dev.IpcSet("content_padding_addition=" + steady + "\n")
+			}
+		})
+	}
 	return nil
 }
 

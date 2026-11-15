@@ -25,6 +25,11 @@ class Servers(
 ) {
     private val manager = ServerManager(repo.hostKeys)
 
+    companion object {
+        /** Bumped when own standalone servers need a one-off upgrade (2.16: spare ports). */
+        const val PORTS_UPGRADE = 1
+    }
+
     sealed interface Imported {
         data class Profiles(val names: List<String>) : Imported
         data object JoinedFleet : Imported
@@ -50,7 +55,7 @@ class Servers(
                     // Full-access key without a client config: make ourselves a client on the server.
                     if (p.protocol == Protocol.XRAY) null
                     else manager.addClient(ssh, WgKey.generatePrivate(), "Paramnezia ${deviceModel}", p.protocol,
-                        dns = p.dns.ifEmpty { listOf(AmneziaFormat.DEFAULT_DNS1, AmneziaFormat.DEFAULT_DNS2) })
+                        dns = p.dns.ifEmpty { listOf(AmneziaFormat.DEFAULT_DNS1, AmneziaFormat.DEFAULT_DNS2) }, psk = WgKey.generatePreshared())
                 } ?: return@mapNotNull null
                 StoredProfile(UUID.randomUUID().toString(), p.name, WgQuick.write(tunnel), p.protocol.name, p.ssh)
             }
@@ -73,9 +78,11 @@ class Servers(
             manager.install(ssh, ServerManager.InstallOptions(), onStep)
             Protocol.AWG
         }
-        val tunnel = manager.addClient(ssh, WgKey.generatePrivate(), "Paramnezia ${deviceModel}", protocol)
+        val tunnel = manager.addClient(ssh, WgKey.generatePrivate(), "Paramnezia ${deviceModel}", protocol, psk = WgKey.generatePreshared())
+        val ports = if (protocol == Protocol.AWG) runCatching { manager.ports(ssh, ServerManager.altPortsFor(portOf(tunnel))) }.getOrNull() else null
         onStep(ServerManager.Step.DONE)
-        val profile = StoredProfile(UUID.randomUUID().toString(), name.ifBlank { ssh.host }, WgQuick.write(tunnel), protocol.name, ssh)
+        val profile = StoredProfile(UUID.randomUUID().toString(), name.ifBlank { ssh.host }, WgQuick.write(tunnel), protocol.name, ssh,
+            altPorts = ports?.alt.orEmpty(), altHosts = listOfNotNull(ports?.ipv6), portsChecked = PORTS_UPGRADE)
         repo.update { s -> s.copy(profiles = s.profiles + profile, activeProfile = profile.id) }
         onServerReady(ssh)
         profile
@@ -99,6 +106,37 @@ class Servers(
         }
         return keys.distinct().joinToString("\n\n")
     }
+
+    /**
+     * Once per upgrade: own standalone servers (with SSH) get spare ports, and the app learns what each
+     * answers on. A server whose container must be re-created for it is down for a few seconds.
+     * Call from the open app, never from background work. Each server fails on its own.
+     */
+    suspend fun upgradePorts() = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        for (p in repo.current.profiles) {
+            val ssh = p.ssh ?: continue
+            if (p.portsChecked >= PORTS_UPGRADE || p.protocol != Protocol.AWG.name) continue
+            // A server that did not answer is asked again in an hour, not at every start of the app.
+            if (now - (upgradeTried[p.id] ?: 0L) < 3600_000L) continue
+            upgradeTried[p.id] = now
+            val main = runCatching { portOf(WgQuick.parse(p.conf)) }.getOrNull() ?: continue
+            runCatching { manager.ports(ssh, if (p.altPorts.isEmpty()) ServerManager.altPortsFor(main) else emptyList()) }
+                .onSuccess { r ->
+                    repo.update { s -> s.copy(profiles = s.profiles.map {
+                        if (it.id != p.id) it
+                        else if (r.main == main) it.copy(altPorts = r.alt, altHosts = listOfNotNull(r.ipv6), portsChecked = PORTS_UPGRADE)
+                        else it.copy(portsChecked = PORTS_UPGRADE)
+                    }) }
+                }
+                .onFailure { net.paramnezia.app.platform.Log.w("PnServers", "ports of ${p.name}: ${it.message}") }
+        }
+    }
+
+    private val upgradeTried = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    private fun portOf(t: net.paramnezia.core.config.TunnelConfig): Int =
+        net.paramnezia.core.config.Uapi.splitEndpoint(t.peers.first().endpoint ?: throw ConfigException("no endpoint")).second
 
     fun remove(id: String) = repo.update { s ->
         val rest = s.profiles.filter { it.id != id }

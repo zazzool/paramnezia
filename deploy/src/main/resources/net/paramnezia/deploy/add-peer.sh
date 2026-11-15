@@ -4,14 +4,16 @@
 # The client's private key never reaches the server: we only get its public key.
 #
 # Inputs (environment): CONTAINER, CLIENT_PUB, CLIENT_NAME, optional CLIENT_IP (fleet devices keep
-# the same address on every server)
-# Output: "::result::client_ip=…", "::result::server_pub=…", "::result::psk=…", then the server
+# the same address on every server), optional CLIENT_PSK (the client's own preshared key; without it
+# the server's shared wireguard_psk.key is used, as AmneziaVPN does)
+# Output: "::result::client_ip=…", "::result::server_pub=…", "::result::psk=…" (the key this peer
+#         really has, also for a peer that was there already), then the server
 #         config without private keys between ::conf-begin:: and ::conf-end::.
 set -eu
 export LC_ALL=C
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo -n"; fi
 
-$SUDO docker exec -i -e "CLIENT_PUB=$CLIENT_PUB" -e "CLIENT_NAME=$CLIENT_NAME" -e CLIENT_IP="${CLIENT_IP:-}" -e CREATED="$(date -u '+%a %b %d %H:%M:%S %Y')" "$CONTAINER" bash -s <<'PEER'
+$SUDO docker exec -i -e "CLIENT_PUB=$CLIENT_PUB" -e "CLIENT_NAME=$CLIENT_NAME" -e CLIENT_IP="${CLIENT_IP:-}" -e CLIENT_PSK="${CLIENT_PSK:-}" -e CREATED="$(date -u '+%a %b %d %H:%M:%S %Y')" "$CONTAINER" bash -s <<'PEER'
 set -eu
 cd /opt/amnezia/awg
 if [ -f awg0.conf ]; then CONF=awg0.conf; IFACE=awg0; BIN=awg; else CONF=wg0.conf; IFACE=wg0; BIN=wg; command -v wg >/dev/null || BIN=awg; fi
@@ -19,8 +21,27 @@ if [ -f awg0.conf ]; then CONF=awg0.conf; IFACE=awg0; BIN=awg; else CONF=wg0.con
 exec 9>/opt/amnezia/awg/.lock
 flock 9 2>/dev/null || true
 
+case "$CLIENT_PSK" in
+  '') ;;
+  *[!A-Za-z0-9+/=]*) echo "::error::bad_psk"; exit 1 ;;
+  *) [ "${#CLIENT_PSK}" -eq 44 ] || { echo "::error::bad_psk"; exit 1; } ;;
+esac
+
 if grep -q "^PublicKey = $CLIENT_PUB\$" "$CONF"; then
   ip=$(awk -v k="$CLIENT_PUB" '$1=="PublicKey"&&$3==k{f=1;next} f&&$1=="AllowedIPs"{split($3,a,"/");print a[1];exit}' "$CONF")
+  # A peer that has to have its own key (a family device) but still has another: give it the right one.
+  if [ -n "$CLIENT_PSK" ]; then
+    have=$(awk -v k="$CLIENT_PUB" '$1=="[Peer]"{f=0} $1=="PublicKey"&&$3==k{f=1} f&&$1=="PresharedKey"{print $3;exit}' "$CONF")
+    if [ "$have" != "$CLIENT_PSK" ]; then
+      awk -v k="$CLIENT_PUB" -v p="$CLIENT_PSK" '
+        $1=="[Peer]"{f=0; seen=0}
+        $1=="PublicKey"&&$3==k{f=1}
+        f&&$1=="PresharedKey"{if(!seen)print "PresharedKey = " p; seen=1; next}
+        f&&$1=="AllowedIPs"&&!seen{print "PresharedKey = " p; seen=1}
+        {print}' "$CONF" > "$CONF.new" && mv "$CONF.new" "$CONF"
+      "$BIN" syncconf "$IFACE" <("$BIN-quick" strip "/opt/amnezia/awg/$CONF")
+    fi
+  fi
 elif [ -n "$CLIENT_IP" ] && grep -q "^AllowedIPs = $CLIENT_IP/32" "$CONF"; then
   echo "::error::address_taken"; exit 1
 else
@@ -35,7 +56,7 @@ EOF
   case $((n & 255)) in 0) n=$((n + 1)) ;; 255) n=$((n + 2)) ;; esac
   ip="$(( (n>>24)&255 )).$(( (n>>16)&255 )).$(( (n>>8)&255 )).$(( n&255 ))"
   [ -n "$CLIENT_IP" ] && ip=$CLIENT_IP
-  psk=$(cat wireguard_psk.key)
+  psk=${CLIENT_PSK:-$(cat wireguard_psk.key)}
   printf '[Peer]\nPublicKey = %s\nPresharedKey = %s\nAllowedIPs = %s/32\n\n' "$CLIENT_PUB" "$psk" "$ip" >> "$CONF"
   "$BIN" syncconf "$IFACE" <("$BIN-quick" strip "/opt/amnezia/awg/$CONF")
 
@@ -55,7 +76,9 @@ fi
 
 echo "::result::client_ip=$ip"
 echo "::result::server_pub=$(cat wireguard_server_public_key.key)"
-echo "::result::psk=$(cat wireguard_psk.key)"
+# The key of this very peer: its own, or the shared one.
+peer_psk=$(awk -v k="$CLIENT_PUB" '$1=="[Peer]"{f=0} $1=="PublicKey"&&$3==k{f=1} f&&$1=="PresharedKey"{print $3;exit}' "$CONF")
+echo "::result::psk=${peer_psk:-$(cat wireguard_psk.key 2>/dev/null)}"
 echo "::conf-begin::"
 sed -n '1,/^\[Peer\]/p' "$CONF" | grep -v -e '^PrivateKey' -e '^\[Peer\]'
 echo "::conf-end::"
