@@ -47,6 +47,8 @@ data class AdminGrant(
     val gistId: String? = null,
     val gistToken: String? = null,
     val issuedAt: Long = 0,
+    /** The administrators' secret for devices' own preshared keys ([DevicePsk.seed]), base64 (since 2.16). */
+    val pskSeed: String? = null,
 )
 
 /** A grant sealed to one device's WireGuard key (X25519 + HKDF-SHA256 + AES-256-GCM). */

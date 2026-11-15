@@ -73,6 +73,9 @@ else
 fi
 
 INV=/opt/amnezia/paramnezia/invite/www
+# The page's own folder under its secret path (see invite-server.sh).
+SECRET=$($SUDO cat /opt/amnezia/paramnezia/invite/secret 2>/dev/null | tr -cd 'A-Za-z0-9_-' || true)
+if [ -n "$SECRET" ]; then INV=$INV/$SECRET; else INV=/nonexistent; fi
 if [ "${PN_INVITE:-0}" = "1" ] && [ -d "$INV" ]; then
   $SUDO cp "$APK" "$INV/paramnezia.apk.new" && $SUDO chmod 644 "$INV/paramnezia.apk.new" && $SUDO mv "$INV/paramnezia.apk.new" "$INV/paramnezia.apk"
   echo "::result::invite=ok"

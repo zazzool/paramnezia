@@ -248,6 +248,7 @@ class ParamneziaVpnService : VpnService() {
             protect(AwgNative.socketV4(h)); protect(AwgNative.socketV6(h))
             handle = h
             spec = next
+            schedulePadding(h, next)
             val now = System.currentTimeMillis()
             builtAt = now
             if (!(reconnecting && sameServer) || sessionSince == 0L) sessionSince = now
@@ -283,6 +284,7 @@ class ParamneziaVpnService : VpnService() {
 
     private fun down() {
         main.removeCallbacks(healthCheck); main.removeCallbacks(rebuildLater); main.removeCallbacks(retryStart)
+        paddingTask?.let { main.removeCallbacks(it) }
         startFailures = 0
         val h = handle
         handle = -1
@@ -376,13 +378,27 @@ class ParamneziaVpnService : VpnService() {
             is LinkWatch.Action.Rebuild -> rebuildAfter(current, action.delayMs)
             is LinkWatch.Action.Failover -> {
                 val replacement = host?.onServerUnreachable(current)
-                if (replacement != null && replacement.serverId != current.serverId) {
-                    Log.i(TAG, "switching to ${replacement.serverName}")
+                if (replacement != null && (replacement.serverId != current.serverId || replacement.variant != current.variant)) {
+                    Log.i(TAG, if (replacement.serverId != current.serverId) "switching to ${replacement.serverName}" else "${current.serverName}: another way in")
                     TunnelRuntime.noteReconnect()
                     connect(replacement, reconnecting = true)
                 } else rebuildAfter(current, action.delayMs)
             }
         }
+    }
+
+    private var paddingTask: Runnable? = null
+
+    /**
+     * Heavy padding only at the start of a flow, where classifiers look: after [TunnelSpec.paddingAfterMs]
+     * the running tunnel switches to the light steady padding in place (a partial UAPI set, no rebuild).
+     */
+    private fun schedulePadding(h: Int, s: TunnelSpec) {
+        paddingTask?.let { main.removeCallbacks(it) }
+        val steady = s.paddingSteady ?: return
+        val task = Runnable { work { if (handle == h) runCatching { AwgNative.setConfig(h, "content_padding_addition=$steady\n") } } }
+        paddingTask = task
+        main.postDelayed(task, s.paddingAfterMs.coerceAtLeast(0))
     }
 
     private suspend fun rebuildAfter(current: TunnelSpec, delayMs: Long) {

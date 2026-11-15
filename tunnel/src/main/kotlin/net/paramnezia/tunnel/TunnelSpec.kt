@@ -33,6 +33,17 @@ data class TunnelSpec(
      * ([LocalNetwork.prefixes] when the spec was built). The service rebuilds the tunnel when they change.
      */
     val lan: List<IpPrefix> = emptyList(),
+    /**
+     * How the server is dialled (Camouflage variant id: signature, address, port). The host may answer
+     * [TunnelHost.onServerUnreachable] with the same server in another variant.
+     */
+    val variant: String = "",
+    /**
+     * Content padding after the start of the flow (UAPI range, e.g. `0-31`), set [paddingAfterMs] after
+     * the tunnel is up; the config itself carries the heavier padding for the start. Null: unchanged.
+     */
+    val paddingSteady: String? = null,
+    val paddingAfterMs: Long = 0,
 )
 
 /**
@@ -41,6 +52,9 @@ data class TunnelSpec(
  * router), which answer local names such as nas.lan. Empty on mobile data.
  */
 data class LocalNetwork(val prefixes: List<IpPrefix>, val dns: List<String>)
+
+/** See [TunnelRuntime.networkIdentity]. */
+data class NetworkIdentity(val key: String, val ipv6: Boolean)
 
 /**
  * Apps resolve through [virtual], an address answered inside the tun device: blocked names get an
@@ -60,7 +74,10 @@ interface TunnelHost {
     /** Spec to connect with now (also used when Always-on VPN starts the service). */
     suspend fun currentSpec(): TunnelSpec?
 
-    /** The current server looks blocked or dead; return the spec to switch to, or null to stay. */
+    /**
+     * The current server looks blocked or dead; return the spec to switch to (another server, or the
+     * same one dialled another way: a different [TunnelSpec.variant]), or null to stay.
+     */
     suspend fun onServerUnreachable(spec: TunnelSpec): TunnelSpec?
 
     /** Handshakes work again on [spec]'s server. */
@@ -190,6 +207,35 @@ object TunnelRuntime {
         }
         LocalNetwork(RoutePlanner.extraLan(prefixes), dns.distinct())
     }.getOrDefault(LocalNetwork(emptyList(), emptyList()))
+
+    /**
+     * Which network the phone is on, as an opaque key that stays the same when it comes back (the
+     * mobile operator; for Wi-Fi and Ethernet a digest of its subnets, resolvers and domain), and
+     * whether that network gives the phone a global IPv6 address. Reads link properties only.
+     */
+    @Suppress("DEPRECATION")
+    fun networkIdentity(context: Context): NetworkIdentity = runCatching {
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+        val n = directNetwork(context) ?: return NetworkIdentity("offline", false)
+        val c = cm.getNetworkCapabilities(n)
+        val lp = cm.getLinkProperties(n)
+        val ipv6 = lp?.linkAddresses?.any { la ->
+            val a = la.address
+            a is java.net.Inet6Address && !a.isLinkLocalAddress && !a.isLoopbackAddress && (a.address[0].toInt() and 0xfe) != 0xfc
+        } == true
+        val key = if (c?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true) {
+            val tm = context.getSystemService(android.telephony.TelephonyManager::class.java)
+            "cell:" + (tm?.networkOperator?.takeIf { it.isNotEmpty() } ?: tm?.simOperator.orEmpty())
+        } else {
+            val parts = ArrayList<String>()
+            lp?.linkAddresses?.forEach { la -> if (la.address is Inet4Address) IpPrefix.parseOrNull("${la.address.hostAddress}/${la.prefixLength}")?.let { parts += it.toString() } }
+            lp?.dnsServers?.forEach { parts += it.hostAddress.orEmpty() }
+            parts += lp?.domains.orEmpty()
+            val d = java.security.MessageDigest.getInstance("SHA-256").digest(parts.sorted().joinToString("|").toByteArray())
+            "lan:" + d.take(8).joinToString("") { "%02x".format(it) }
+        }
+        NetworkIdentity(key, ipv6)
+    }.getOrDefault(NetworkIdentity("unknown", false))
 
     /** Tells the DNS filter which resolvers answer local names (see [LocalNetwork.dns]). */
     internal fun setLocalDns(servers: List<String>) { runCatching { AwgNative.setLocalDns(servers.joinToString(",")) } }

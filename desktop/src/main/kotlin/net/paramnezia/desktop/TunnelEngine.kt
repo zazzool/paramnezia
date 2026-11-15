@@ -208,11 +208,15 @@ class TunnelEngine(
         TunnelRuntime.lastStats = st.stats?.let(TunnelRuntime::parseStats)
         TunnelRuntime.lastBlocked = st.blocked
         val spec = servers.getOrNull(w.active) ?: servers.firstOrNull() ?: return
-        // The service switched servers: tell the app's bookkeeping (blocked list, fleet health).
+        // The service switched servers: tell the app's bookkeeping (blocked list, fleet health). A switch
+        // to another way into the same server (Camouflage) is not a dead server: what works is
+        // remembered when it is verified.
         if (w.active != lastActive) {
             servers.getOrNull(lastActive)?.let { old ->
-                Log.i(TAG, "the service switched from ${old.serverName} to ${spec.serverName}")
-                scope.launch { runCatching { host.onServerUnreachable(old) } }
+                if (old.serverId != spec.serverId) {
+                    Log.i(TAG, "the service switched from ${old.serverName} to ${spec.serverName}")
+                    scope.launch { runCatching { host.onServerUnreachable(old) } }
+                } else Log.i(TAG, "${spec.serverName}: the service tries another way in")
             }
             lastActive = w.active
         }

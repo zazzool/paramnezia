@@ -30,6 +30,12 @@ data class AppState(
     val geo: Map<String, StoredGeo> = emptyMap(),
     /** Admin without a fleet: accounts made in advance on standalone servers (Links.forProfile takes one). */
     val clientPool: List<PooledClient> = emptyList(),
+    /**
+     * Which way of reaching each server last worked on each network (`<network>|<server id>` →
+     * variant id, see [net.paramnezia.core.config.CamouflageLadder]): a blocked port or signature is
+     * not tried first again there.
+     */
+    val camouflage: Map<String, String> = emptyMap(),
 ) {
     /** Follower devices of a fleet get the one-button screen; the admin and standalone users get everything. */
     val simpleUi: Boolean get() = when (uiMode) {
@@ -50,6 +56,12 @@ data class StoredProfile(
     val conf: String,
     val protocol: String = "AWG",
     val ssh: SshCredentials? = null,
+    /** More ports the server answers on, besides the config's (since 2.16, servers we manage). */
+    val altPorts: List<Int> = emptyList(),
+    /** Other addresses of the server, typically its IPv6 address. */
+    val altHosts: List<String> = emptyList(),
+    /** The app version that last brought the server's spare ports up to date ([Servers.upgradePorts]). */
+    val portsChecked: Int = 0,
 )
 
 /** Membership in a fleet: this device's key plus the newest manifest it has seen. */
@@ -104,6 +116,12 @@ data class StoredFleet(
     val revokedAdminKeys: Set<String> = emptySet(),
     /** Newest owner-signed manifest version accepted (replay protection, see FleetMember.offer). */
     val ownerVersion: Long = 0,
+    /** This device's own preshared key, base64 (from its invite; see FleetDevice.ownPsk). */
+    val devicePsk: String? = null,
+    /** Co-admin: the administrators' secret for devices' preshared keys, from the grant (DevicePsk). */
+    val pskSeed: String? = null,
+    /** Admin: the app version whose server upgrades (spare ports) went through on every server. */
+    val portsChecked: Int = 0,
 )
 
 /** Owner: one appointed co-admin (its device, signing key and SSH key; kept to re-seal its grant). */
@@ -126,6 +144,8 @@ data class PooledDevice(
     val address: String,
     val servers: Set<String> = emptySet(),
     val createdAt: Long = 0,
+    /** Registered with the device's own preshared key (since 2.16); older slots use the shared one. */
+    val ownPsk: Boolean = false,
 )
 
 @Serializable

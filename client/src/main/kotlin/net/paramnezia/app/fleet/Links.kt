@@ -90,7 +90,7 @@ class Links(
         val pooled = takeClient(profile.id)
         val client = pooled?.let { WgKey.fromBase64(it.privateKey) } ?: WgKey.generatePrivate()
         val tunnel = pooled?.let { runCatching { WgQuick.parse(it.conf) }.getOrNull() }
-            ?: try { manager.addClient(ssh, client, name, protocol) } catch (e: Exception) { throw friendly(e) }
+            ?: try { manager.addClient(ssh, client, name, protocol, psk = WgKey.generatePreshared()) } catch (e: Exception) { throw friendly(e) }
         scope.launch { runCatching { fillClientPool(profile) } }
         val key = AmneziaFormat.export(profile.name, tunnel).let(AmneziaKey::encode)
         if (delivery == Delivery.FILE) return@withContext Created(name, storeFile(name, profile.id, client.publicKey().toBase64()), key)
@@ -138,7 +138,7 @@ class Links(
             val have = repo.current.clientPool.count { it.profileId == profile.id }
             repeat(CLIENT_POOL - have) {
                 val key = WgKey.generatePrivate()
-                val conf = runCatching { manager.addClient(ssh, key, POOL_PEER_NAME, protocol) }.getOrElse { e ->
+                val conf = runCatching { manager.addClient(ssh, key, POOL_PEER_NAME, protocol, psk = WgKey.generatePreshared()) }.getOrElse { e ->
                     Log.w(TAG, "prepare an account on ${ssh.host}: ${e.message}"); return@withLock
                 }
                 val c = PooledClient(profile.id, key.toBase64(), WgQuick.write(conf), System.currentTimeMillis())
@@ -217,7 +217,8 @@ class Links(
     suspend fun familyPage(): String = withContext(Dispatchers.IO) {
         val ssh = fleet.managedServer()?.second ?: repo.current.profiles.firstOrNull { it.ssh != null }?.ssh
             ?: error("Сначала разверните свой сервер")
-        repo.current.pages[ssh.host] ?: preparePage(ssh)
+        // An address from before 2.16 points at the server's root, which no longer has the page.
+        repo.current.pages[ssh.host]?.takeIf { java.net.URI(it).path.length > 1 } ?: preparePage(ssh)
     }
 
     /** Asks the servers which links have been used. */

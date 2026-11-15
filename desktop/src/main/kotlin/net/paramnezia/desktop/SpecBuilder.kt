@@ -99,6 +99,8 @@ class SpecBuilder(
             dnsSearch = spec.config.iface.dnsSearch,
             mtu = spec.config.iface.mtu ?: 1280,
             excludedApps = spec.excludedApps,
+            paddingSteady = spec.paddingSteady,
+            paddingAfterMs = spec.paddingAfterMs,
         )
     }
 

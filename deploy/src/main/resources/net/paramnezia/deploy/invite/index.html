@@ -151,8 +151,8 @@
   <!-- Public part: the page to share with family and friends. One story: what it is, how to get
        it, why it is convenient, what if something goes wrong. -->
   <div class="phones" aria-hidden="true">
-    <div class="phone l"><img src="/shot-off.webp" alt="" loading="lazy" width="540" height="920"></div>
-    <div class="phone r"><img src="/shot-on.webp" alt="" loading="lazy" width="540" height="920"></div>
+    <div class="phone l"><img src="shot-off.webp" alt="" loading="lazy" width="540" height="920"></div>
+    <div class="phone r"><img src="shot-on.webp" alt="" loading="lazy" width="540" height="920"></div>
   </div>
   <p class="caption">Так выглядит приложение. Нажали кнопку — защищено.</p>
 
@@ -234,8 +234,8 @@
   // releases/latest second (always the newest). The user starts the download; nothing downloads by itself.
   var GH = 'https://github.com/zazzool/paramnezia/releases/latest/download/';
   var apps = {
-    apk: { here: '/paramnezia.apk', latest: GH + 'paramnezia.apk', ver: 'android', hint: '' },
-    exe: { here: '/Paramnezia-Setup.exe', latest: GH + 'Paramnezia-Setup.exe', ver: 'windows', hint: ' · Windows 10 и 11' }
+    apk: { here: 'paramnezia.apk', latest: GH + 'paramnezia.apk', ver: 'android', hint: '' },
+    exe: { here: 'Paramnezia-Setup.exe', latest: GH + 'Paramnezia-Setup.exe', ver: 'windows', hint: ' · Windows 10 и 11' }
   };
   function get(path, done, fail) {
     var x = new XMLHttpRequest();
@@ -259,7 +259,7 @@
     };
     h.send();
   }
-  get('/app.json', function (text) {
+  get('app.json', function (text) {
     var a = null; try { a = JSON.parse(text); } catch (e) {}
     setApp('apk', a && a.version);
     setApp('exe', a && a.windows && a.windows.version);
@@ -275,7 +275,7 @@
   $('get').hidden = true; // the invite card has its own steps
   if (!/^[A-Za-z0-9_-]{16,64}$/.test(t)) { $('bad').hidden = false; return; }
   // The token lives in the fragment: it never reaches link previews, server logs or Referer headers.
-  var url = function (what) { return '/cgi-bin/get?' + t + '&' + what; };
+  var url = function (what) { return '/cgi-bin/' + location.pathname.split('/')[1] + '?' + t + '&' + what; };
   var chooser = false;
   $('conf').href = $('conf2').href = url('conf');
 

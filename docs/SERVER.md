@@ -14,7 +14,8 @@ AmneziaWG и (для ссылок) TCP-порт 80 или любой свобо�
 |---|---|
 | Контейнер VPN | `amnezia-awg2` (образ на базе `amneziavpn/amneziawg-go`, + `jq`, `busybox-extras`) |
 | Конфиг сервера | `/opt/amnezia/awg/awg0.conf` внутри контейнера |
-| Ключи | `/opt/amnezia/awg/wireguard_server_{private,public}_key.key`, `wireguard_psk.key` |
+| Ключи | `/opt/amnezia/awg/wireguard_server_{private,public}_key.key`, `wireguard_psk.key` (общий PSK, как у AmneziaVPN; клиенты Paramnezia с 2.16 получают каждый свой — `CLIENT_PSK`) |
+| Порты VPN | основной `ListenPort` и запасные (3478, случайный, 443 — если свободны): Docker публикует их все на один и тот же слушатель в контейнере |
 | Имена клиентов | `/opt/amnezia/awg/clientsTable` (JSON, как у AmneziaVPN) |
 | Сеть | `amnezia-dns-net` 172.29.172.0/24 (для AmneziaDNS, если поставить его из AmneziaVPN) |
 | Подсеть клиентов | 10.8.1.0/24, сервер — 10.8.1.1 |
@@ -30,10 +31,11 @@ AmneziaWG и (для ссылок) TCP-порт 80 или любой свобо�
 | Скрипт | Что делает | Входы |
 |---|---|---|
 | `inspect.sh` | есть ли Docker, какие контейнеры `amnezia-*` | — |
-| `install-awg.sh` | Docker, образ, контейнер, ключи, `awg0.conf`, iptables/NAT, BBR, внутритуннельный httpd | `AWG_PORT`, `AWG_SUBNET`, `AWG_CIDR`, `AWG_PARAMS`, `PN_REINSTALL` |
-| `add-peer.sh` | добавляет клиента (идемпотентно по ключу), выдаёт свободный адрес или заданный `CLIENT_IP` (`address_taken`, если занят чужим ключом) | `CONTAINER`, `CLIENT_PUB`, `CLIENT_NAME`, `CLIENT_IP` |
+| `install-awg.sh` | Docker, образ, контейнер (с запасными портами), ключи, `awg0.conf`, iptables/NAT, BBR, внутритуннельный httpd | `AWG_PORT`, `AWG_SUBNET`, `AWG_CIDR`, `AWG_PARAMS`, `PN_REINSTALL`, `ALT_PORTS` |
+| `add-peer.sh` | добавляет клиента (идемпотентно по ключу), выдаёт свободный адрес или заданный `CLIENT_IP` (`address_taken`, если занят чужим ключом); с `CLIENT_PSK` — свой PSK клиента (у уже добавленного заменяет другой) | `CONTAINER`, `CLIENT_PUB`, `CLIENT_NAME`, `CLIENT_IP`, `CLIENT_PSK` |
+| `ports.sh` | добавляет серверу запасные UDP-порты и сообщает, на каких он отвечает (и IPv6-адрес, если Docker принимает порт по IPv6). Добавить порт к работающему контейнеру Docker не умеет, поэтому контейнер пересоздаётся из своего снимка (`docker commit`) с теми же настройками и новыми портами; старый только остановлен, пока у нового не поднялся интерфейс, и при любой ошибке возвращается | `CONTAINER`, `PN_PORTS` |
 | `remove-peer.sh` | удаляет клиента | `CONTAINER`, `CLIENT_PUB` |
-| `invite-server.sh` | поднимает/обновляет страницу приглашений (и запускает остановленную на том же порту), пишет `app.json`, чистит старые ссылки и остатки версии 1.0 | `PN_INVITE_PORT`, `PN_INVITE_INDEX`, `PN_INVITE_CGI`, `PN_APP_JSON` |
+| `invite-server.sh` | поднимает/обновляет страницу приглашений под секретным путём (и запускает остановленную на том же порту), пишет `app.json`, чистит старые ссылки и остатки прежних версий | `PN_INVITE_PORT`, `PN_INVITE_INDEX`, `PN_INVITE_CGI`, `PN_APP_JSON` |
 | `fleet-www.sh` | кладёт манифест семейной группы и следит, чтобы внутритуннельный httpd отвечал (ставит `busybox-extras` и запускает httpd, если его нет, например в контейнере AmneziaVPN или после перезагрузки) | `CONTAINER`, `MANIFEST` |
 | `release-mirror.sh` | сервер сам скачивает релиз по HTTPS, сверяет SHA-256, кладёт во внутритуннельный httpd и/или на страницу приглашений | `PN_SHA256`, `PN_URLS`, `PN_RELEASE`, `CONTAINER`, `PN_INVITE` |
 
@@ -44,14 +46,22 @@ AmneziaWG и (для ссылок) TCP-порт 80 или любой свобо�
 
 ```
 /opt/amnezia/paramnezia/invite/
-  www/index.html          страница (статическая)
-  www/cgi-bin/get         CGI (sh)
-  www/app.json            где скачать приложение: версия, SHA-256, HTTPS-адреса
-  www/paramnezia.apk      копия того же релиза (сервер скачал и проверил её сам)
-  www/Paramnezia-Setup.exe  так же проверенная копия установщика для Windows
+  secret                  секретный путь страницы (16 случайных байт, base64url), создаётся один раз
+  httpd.conf              типы файлов (вне того, что отдаёт веб-сервер)
+  www/<secret>/index.html страница (статическая)
+  www/<secret>/app.json   где скачать приложение: версия, SHA-256, HTTPS-адреса
+  www/<secret>/paramnezia.apk      копия того же релиза (сервер скачал и проверил её сам)
+  www/<secret>/Paramnezia-Setup.exe  так же проверенная копия установщика для Windows
+  www/cgi-bin/<secret>    CGI (sh)
   data/t/<токен>/         ждущие ссылки: app, key, conf, name, expires
   data/c/<токен>/         использованные: то же + claim ("<unix-время> <адрес>")
 ```
+
+Корень адреса (`/`, `/index.html`, `/app.json`, `/cgi-bin/get` …) отвечает 404, как любой пустой веб-сервер:
+сканеры, которые обходят весь интернет и индексируют заголовки страниц (Shodan, Censys и им подобные, ими
+пользуются и цензоры), не находят на адресе VPN-сервера ни страницы Paramnezia, ни APK, ни `app.json`. Страница
+открывается только по ссылке, в которой есть путь: `http://<сервер>[:порт]/<secret>/`. До 2.16 страница лежала в
+корне; `invite-server.sh` убирает её оттуда при первом вызове.
 
 Контейнер: `--read-only --cap-drop ALL --security-opt no-new-privileges --user 65534:65534 --memory 32m
 --pids-limit 64`, порт `80` (если занят — случайный 20000–60000). Использованные и истёкшие папки старше

@@ -21,6 +21,7 @@ class ServerConfigTest {
             H1 = 1
             # I1 = <r 2><b 0x8580>
             HeaderProtectionKey = ${WgKey.generatePrivate().toBase64()}
+            ContentPaddingAddition = 0-31
         """.trimIndent()
         val client = WgKey.generatePrivate()
         val t = ServerManager.clientConfig(conf, mapOf("client_ip" to "10.8.1.7", "server_pub" to serverPub, "psk" to psk),
@@ -29,6 +30,23 @@ class ServerConfigTest {
         assertEquals("<r 2><b 0x8580>", t.iface.awg[AwgParam.I1])
         assertEquals("25-35", t.peers.single().persistentKeepalive)
         assertEquals(client, t.iface.privateKey)
+        // The server's own padding stays on the server (AmneziaVPN clients keep their trailers).
+        assertEquals(null, t.iface.awg[AwgParam.CONTENT_PADDING_ADDITION])
+    }
+
+    @Test
+    fun serversNoLongerShareOneSignature() {
+        val seen = (1..40).map { ObfuscationProfile.AWG_3.generate() }
+        for (p in seen) {
+            assertTrue(p[AwgParam.I1] == net.paramnezia.core.config.Camouflage.STUN_BINDING)
+            assertEquals("0-31", p[AwgParam.CONTENT_PADDING_ADDITION])
+        }
+        // Some servers add the DTLS ClientHello after STUN, some do not.
+        assertEquals(setOf(true, false), seen.map { it[AwgParam.I2] != null }.toSet())
+        assertTrue(seen.none { it[AwgParam.I1] == ObfuscationProfile.DNS_LIKE_I1 })
+        val alt = ServerManager.altPortsFor(41000)
+        assertEquals(3, alt.size)
+        assertTrue(3478 in alt && 443 in alt && 41000 !in alt)
     }
 
     @Test
