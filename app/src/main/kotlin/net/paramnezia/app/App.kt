@@ -16,6 +16,7 @@ import net.paramnezia.app.tunnel.Net
 import net.paramnezia.app.tunnel.SpecBuilder
 import net.paramnezia.app.tunnel.CamouflagePlanner
 import net.paramnezia.core.config.TunnelConfig
+import net.paramnezia.core.config.PathMtu
 import net.paramnezia.app.ui.WidgetProvider
 import net.paramnezia.app.work.SyncJob
 import net.paramnezia.core.config.Uapi
@@ -244,7 +245,7 @@ class App : Application(), TunnelHost {
 
     override fun onPathMtu(spec: TunnelSpec, best: Int): Boolean {
         val raw = rawConfig(spec.serverId) ?: return false
-        return camo.measured(spec.serverId, raw, spec.config.iface.mtu ?: net.paramnezia.core.config.PathMtu.SAFE, best)
+        return camo.measured(spec.serverId, raw, spec.config.iface.mtu ?: PathMtu.SAFE, best)
     }
 
     /** The server's config as the fleet or the profile has it, before Camouflage dressed it. */

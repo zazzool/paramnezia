@@ -29,6 +29,7 @@ import net.paramnezia.app.platform.StateStore
 import net.paramnezia.core.config.Uapi
 import net.paramnezia.core.config.Camouflage
 import net.paramnezia.core.config.TunnelConfig
+import net.paramnezia.core.config.PathMtu
 import net.paramnezia.app.tunnel.CamouflagePlanner
 import net.paramnezia.desktop.DesktopNetwork
 import net.paramnezia.core.config.WgQuick
@@ -235,7 +236,7 @@ class App(
     /** The service raises the MTU in place after a probe (Windows can), so specs start from the config's own. */
     private fun dressed(id: String, name: String, d: CamouflagePlanner.Dressed): TunnelSpec =
         specs.build(id, name, d.config, repo.current.settings).copy(variant = d.variant, paddingSteady = d.padding?.steady,
-            paddingAfterMs = d.padding?.afterMs ?: 0, mtuProbe = net.paramnezia.core.config.PathMtu.probeSpec(d.config))
+            paddingAfterMs = d.padding?.afterMs ?: 0, mtuProbe = PathMtu.probeSpec(d.config))
 
     private fun rawConfig(serverId: String): TunnelConfig? =
         runCatching { fleet.member()?.tunnels()?.firstOrNull { it.first.id == serverId }?.second }.getOrNull()
