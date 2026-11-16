@@ -243,8 +243,8 @@ class App : Application(), TunnelHost {
             .copy(variant = d.variant, paddingSteady = d.padding?.steady, paddingAfterMs = d.padding?.afterMs ?: 0, mtuProbe = probe)
     }
 
-    override fun onPathMtu(spec: TunnelSpec, best: Int): Boolean {
-        val raw = rawConfig(spec.serverId) ?: return false
+    override fun onPathMtu(spec: TunnelSpec, best: Int): Int? {
+        val raw = rawConfig(spec.serverId) ?: return null
         return camo.measured(spec.serverId, raw, spec.config.iface.mtu ?: PathMtu.SAFE, best)
     }
 

@@ -249,6 +249,7 @@ class ParamneziaVpnService : VpnService() {
             handle = h
             spec = next
             mtuChecked = false
+            mtuUpgrade = false
             schedulePadding(h, next)
             val now = System.currentTimeMillis()
             builtAt = now
@@ -391,13 +392,18 @@ class ParamneziaVpnService : VpnService() {
 
     /** The path MTU was measured for this tunnel on this network (reset by a build and a network change). */
     @Volatile private var mtuChecked = false
+    /** A larger MTU was measured: rebuilt at the next screen-off. */
+    @Volatile private var mtuUpgrade = false
     private var mtuRebuilds = 0
 
     /**
      * Once per build and network, right after the tunnel proved itself: which packet sizes the path
-     * carries (probes inside the tunnel, a second or two, in the background). If the host wants another
-     * MTU for it, the tunnel is rebuilt quietly (the screen stays "protected"); Android fixes a VPN
-     * interface's MTU when it is built. A couple of rebuilds per network at most, so a flaky path cannot loop.
+     * carries (probes inside the tunnel, a second or two, in the background). Android fixes a VPN
+     * interface's MTU when it is built, so a new one takes a quiet rebuild (the screen stays
+     * "protected"): at once when the MTU must go down (larger packets would be lost), and when it can
+     * go up only at the next screen-off (or the next connect), since registering the VPN again costs
+     * the system real work with the long route lists of Android before 13. A couple of rebuilds per
+     * network at most, so a flaky path cannot loop.
      */
     private fun probeMtu(s: TunnelSpec) {
         val probe = s.mtuProbe ?: return
@@ -411,10 +417,12 @@ class ParamneziaVpnService : VpnService() {
             Log.i(TAG, "${s.serverName}: path carries ${if (best > 0) "$best bytes" else "no more than the minimum"}")
             work {
                 if (handle != h || spec !== s) return@work
-                if (host?.onPathMtu(s, best) == true && mtuRebuilds < MAX_MTU_REBUILDS) {
+                val next = host?.onPathMtu(s, best) ?: return@work
+                if (mtuRebuilds >= MAX_MTU_REBUILDS) return@work
+                if (next < (s.config.iface.mtu ?: 1280)) {
                     mtuRebuilds++
                     connect(host?.currentSpec() ?: return@work, reconnecting = true, quiet = true)
-                }
+                } else mtuUpgrade = true
             }
         }
     }
@@ -519,6 +527,12 @@ class ParamneziaVpnService : VpnService() {
             // A repair in progress keeps its quick pace either way.
             if (TunnelRuntime.state.value is TunnelState.Up && watch.phase == LinkWatch.Phase.GOOD)
                 scheduleCheck(if (screenOn) SCREEN_ON_CHECK_MS else watch.interval(false))
+            if (!screenOn && mtuUpgrade && TunnelRuntime.state.value is TunnelState.Up) {
+                mtuUpgrade = false
+                mtuRebuilds++
+                work { if (handle == h) connect(host?.currentSpec() ?: return@work, reconnecting = true, quiet = true) }
+                return
+            }
             val ka = if (screenOn) s.keepaliveScreenOn else s.keepaliveScreenOff
             scope.launch {
                 val peer = s.config.peers.firstOrNull() ?: return@launch

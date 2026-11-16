@@ -89,10 +89,10 @@ interface TunnelHost {
     fun onServerHealthy(spec: TunnelSpec) {}
 
     /**
-     * [spec]'s path carries packets up to [best] bytes (0: no probe came back). True if the tunnel
-     * should be rebuilt now, with the MTU the next [currentSpec] has.
+     * [spec]'s path carries packets up to [best] bytes (0: no probe came back). Returns the MTU the
+     * next [currentSpec] builds with when it is worth a rebuild, else null.
      */
-    fun onPathMtu(spec: TunnelSpec, best: Int): Boolean = false
+    fun onPathMtu(spec: TunnelSpec, best: Int): Int? = null
 }
 
 /**

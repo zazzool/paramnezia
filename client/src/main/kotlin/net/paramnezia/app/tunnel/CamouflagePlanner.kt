@@ -79,10 +79,10 @@ class CamouflagePlanner(private val repo: Repo) {
 
     /**
      * A probe on [serverId] found [best] bytes (0: none came back). Remembers the MTU for this
-     * network and says whether a tunnel built with [current] should be rebuilt for it: always to go
-     * down (larger packets would be lost), to go up only for a real gain.
+     * network and returns it when a tunnel built with [current] should be rebuilt for it: always to
+     * go down (larger packets would be lost), to go up only for a real gain; else null.
      */
-    fun measured(serverId: String, raw: TunnelConfig, current: Int, best: Int): Boolean {
+    fun measured(serverId: String, raw: TunnelConfig, current: Int, best: Int): Int? {
         val mtu = PathMtu.fromProbe(raw, best)
         if (network.isNotEmpty()) {
             val key = "$network|$serverId"
@@ -92,7 +92,7 @@ class CamouflagePlanner(private val repo: Repo) {
                 s.copy(pathMtu = m)
             }
         }
-        return mtu < current || mtu >= current + MTU_STEP
+        return mtu.takeIf { it < current || it >= current + MTU_STEP }
     }
 
     /** [variant] of [serverId] carried traffic on the current network. */
