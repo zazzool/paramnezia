@@ -204,6 +204,20 @@ class ServerManager(private val hostKeys: HostKeyStore) {
         }
 
     /**
+     * Brings the server's AmneziaWG engine up to date (refresh.sh): when the latest
+     * amneziavpn/amneziawg-go image has other binaries than the running container, the container is
+     * re-created on a fresh image with everything it keeps (keys, clients, ports), rolled back on any
+     * failure. Seconds of downtime, and only when there is something to update. True if it was refreshed.
+     */
+    fun refresh(creds: SshCredentials): Boolean =
+        SshConnection.open(creds, hostKeys).use { ssh ->
+            val r = ssh.run(script("refresh.sh"), env = mapOf("CONTAINER" to Protocol.AWG.amneziaContainer), timeoutMs = 10 * 60_000)
+            r.error?.let { throw SshException(it, "Refresh: $it ${r.stderr.takeLast(500)}") }
+            if (r.exitCode != 0) throw SshException("refresh_failed", "Refresh failed (${r.exitCode}): ${r.stderr.takeLast(500)}")
+            r.results["refreshed"] == "1"
+        }
+
+    /**
      * Tunes the server for bulk traffic through the tunnel (tune.sh: TCP MSS clamping in the
      * container, socket buffers, backlog and BBR on the host, kept across reboots). Idempotent.
      * True when the clamping is in place.

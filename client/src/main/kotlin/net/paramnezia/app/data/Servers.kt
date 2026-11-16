@@ -26,8 +26,8 @@ class Servers(
     private val manager = ServerManager(repo.hostKeys)
 
     companion object {
-        /** Bumped when own standalone servers need a one-off upgrade (1: spare ports, 2: tuning). */
-        const val PORTS_UPGRADE = 2
+        /** Bumped when own standalone servers need a one-off upgrade (1: spare ports, 2: tuning, 3: engine). */
+        const val PORTS_UPGRADE = 3
     }
 
     sealed interface Imported {
@@ -122,6 +122,7 @@ class Servers(
             upgradeTried[p.id] = now
             val main = runCatching { portOf(WgQuick.parse(p.conf)) }.getOrNull() ?: continue
             runCatching {
+                manager.refresh(ssh)
                 manager.tune(ssh)
                 manager.ports(ssh, if (p.altPorts.isEmpty()) ServerManager.altPortsFor(main) else emptyList())
             }

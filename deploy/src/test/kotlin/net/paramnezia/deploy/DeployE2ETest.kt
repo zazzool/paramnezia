@@ -12,6 +12,7 @@ import org.apache.sshd.server.keyprovider.SimpleGeneratorHostKeyProvider
 import org.apache.sshd.server.shell.ProcessShellCommandFactory
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
@@ -153,6 +154,24 @@ class DeployE2ETest {
             // a large S4): packets of exactly that size pass both ways.
             val wide = net.paramnezia.core.config.PathMtu.candidates(tunnel).first()
             handshake(tunnel.copy(iface = tunnel.iface.copy(mtu = wide)), port, bigPing = wide - 28)
+
+            // The engine is current right after an install: nothing to do.
+            assertFalse(manager.refresh(creds))
+            // An older engine (other binaries) is replaced; keys, clients, ports and tuning stay, and an
+            // AmneziaWG 3 server without its own content padding gets it.
+            if (profile == ObfuscationProfile.AWG_3) sh("docker exec amnezia-awg2 sed -i '/^ContentPaddingAddition/d' /opt/amnezia/awg/awg0.conf")
+            sh("docker exec amnezia-awg2 sh -c 'printf x >> /usr/bin/awg'")
+            val usedBefore = manager.usedAddresses(creds)
+            val portsBefore = manager.ports(creds)
+            val pubBefore = sh("docker exec amnezia-awg2 cat /opt/amnezia/awg/wireguard_server_public_key.key")
+            assertTrue(manager.refresh(creds))
+            assertEquals(usedBefore, manager.usedAddresses(creds))
+            assertEquals(portsBefore, manager.ports(creds))
+            assertEquals(pubBefore, sh("docker exec amnezia-awg2 cat /opt/amnezia/awg/wireguard_server_public_key.key"))
+            if (profile == ObfuscationProfile.AWG_3) assertEquals("1", sh("docker exec amnezia-awg2 grep -c '^ContentPaddingAddition' /opt/amnezia/awg/awg0.conf").trim())
+            assertEquals(2, sh("docker exec amnezia-awg2 iptables -t mangle -S FORWARD").lines().count { "TCPMSS" in it })
+            handshake(tunnel, port)
+            assertFalse(manager.refresh(creds))
             println("e2e ok for $profile")
         }
     }
