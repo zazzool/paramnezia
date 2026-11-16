@@ -232,8 +232,10 @@ class App(
             ?: repo.current.profiles.firstOrNull { it.id == serverId }?.let { CamouflagePlanner.Reach(it.altPorts, it.altHosts) }
             ?: CamouflagePlanner.Reach()
 
+    /** The service raises the MTU in place after a probe (Windows can), so specs start from the config's own. */
     private fun dressed(id: String, name: String, d: CamouflagePlanner.Dressed): TunnelSpec =
-        specs.build(id, name, d.config, repo.current.settings).copy(variant = d.variant, paddingSteady = d.padding?.steady, paddingAfterMs = d.padding?.afterMs ?: 0)
+        specs.build(id, name, d.config, repo.current.settings).copy(variant = d.variant, paddingSteady = d.padding?.steady,
+            paddingAfterMs = d.padding?.afterMs ?: 0, mtuProbe = net.paramnezia.core.config.PathMtu.probeSpec(d.config))
 
     private fun rawConfig(serverId: String): TunnelConfig? =
         runCatching { fleet.member()?.tunnels()?.firstOrNull { it.first.id == serverId }?.second }.getOrNull()

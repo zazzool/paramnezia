@@ -20,6 +20,7 @@ extern int pnGetSocketV6(int handle);
 extern char *pnGetConfig(int handle);
 extern int pnRebind(int handle);
 extern int pnSetConfig(int handle, struct go_string settings);
+extern int pnProbeMtu(int handle, struct go_string spec);
 extern char *pnVersion(void);
 extern void pnSetVerbose(bool on);
 extern int pnEd25519Generate(void *seed_out, void *pub_out);
@@ -88,6 +89,15 @@ JNIEXPORT jint JNICALL FN(setConfig)(JNIEnv *env, jclass c, jint handle, jstring
 	struct go_string ga = gs(env, settings, &a);
 	int ret = pnSetConfig(handle, ga);
 	(*env)->ReleaseStringUTFChars(env, settings, a);
+	return ret;
+}
+
+JNIEXPORT jint JNICALL FN(probeMtu)(JNIEnv *env, jclass c, jint handle, jstring spec)
+{
+	const char *a;
+	struct go_string ga = gs(env, spec, &a);
+	int ret = pnProbeMtu(handle, ga);
+	(*env)->ReleaseStringUTFChars(env, spec, a);
 	return ret;
 }
 

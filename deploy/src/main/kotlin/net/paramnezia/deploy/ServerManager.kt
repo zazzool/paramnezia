@@ -80,6 +80,8 @@ class ServerManager(private val hostKeys: HostKeyStore) {
             }
             r.error?.let { throw SshException(it, "Install failed: $it\n${r.stderr.takeLast(2000)}") }
             if (r.exitCode != 0) throw SshException("install_failed", "Install failed (${r.exitCode}): ${r.stderr.takeLast(2000)}")
+            // Throughput tuning is a bonus: a server without it still works.
+            runCatching { ssh.run(script("tune.sh"), env = mapOf("CONTAINER" to Protocol.AWG.amneziaContainer), timeoutMs = 60_000) }
         }
         return params
     }
@@ -199,6 +201,19 @@ class ServerManager(private val hostKeys: HostKeyStore) {
             val main = r.results["port"]?.toIntOrNull() ?: throw SshException("ports_failed", "Ports: ${r.stderr.takeLast(500)}")
             val alt = r.results["alt_ports"].orEmpty().split(',').mapNotNull { it.trim().toIntOrNull() }.filter { it != main }
             Ports(main, alt, r.results["ipv6"]?.trim()?.takeIf { ':' in it })
+        }
+
+    /**
+     * Tunes the server for bulk traffic through the tunnel (tune.sh: TCP MSS clamping in the
+     * container, socket buffers, backlog and BBR on the host, kept across reboots). Idempotent.
+     * True when the clamping is in place.
+     */
+    fun tune(creds: SshCredentials, protocol: Protocol = Protocol.AWG): Boolean =
+        SshConnection.open(creds, hostKeys).use { ssh ->
+            val r = ssh.run(script("tune.sh"), env = mapOf("CONTAINER" to protocol.amneziaContainer), timeoutMs = 60_000)
+            r.error?.let { throw SshException(it, "Tune: $it") }
+            if (r.exitCode != 0) throw SshException("tune_failed", "Tune failed (${r.exitCode}): ${r.stderr.takeLast(500)}")
+            r.results["mss"] == "ok"
         }
 
     /**

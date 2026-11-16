@@ -138,6 +138,21 @@ class DeployE2ETest {
             assertEquals(grown, manager.ports(creds, listOf(extra)))
             handshake(tunnel, extra)
             handshake(tunnel, port)
+
+            // Tuned at install: MSS clamping in the container, kept by its start script (the snapshot
+            // above carried it over), and the host settings persisted.
+            val mangle = sh("docker exec amnezia-awg2 iptables -t mangle -S FORWARD")
+            assertTrue(mangle, "--clamp-mss-to-pmtu" in mangle && "--set-mss 1380" in mangle)
+            assertTrue("tune.sh" in sh("docker exec amnezia-awg2 cat /opt/amnezia/start.sh"))
+            assertTrue(manager.tune(creds)) // idempotent
+            assertEquals(2, sh("docker exec amnezia-awg2 iptables -t mangle -S FORWARD").lines().count { "TCPMSS" in it })
+            sh("docker restart amnezia-awg2 >/dev/null; sleep 4")
+            assertEquals(2, sh("docker exec amnezia-awg2 iptables -t mangle -S FORWARD").lines().count { "TCPMSS" in it })
+            assertTrue("16777216" in sh("cat /etc/sysctl.d/90-paramnezia.conf"))
+            // A client that measured a wide path uses the largest candidate (1420 for AmneziaWG 3, less with
+            // a large S4): packets of exactly that size pass both ways.
+            val wide = net.paramnezia.core.config.PathMtu.candidates(tunnel).first()
+            handshake(tunnel.copy(iface = tunnel.iface.copy(mtu = wide)), port, bigPing = wide - 28)
             println("e2e ok for $profile")
         }
     }
@@ -170,7 +185,8 @@ class DeployE2ETest {
         val win = InviteLinks.AppDownload("v9.9.9", exeSha, listOf("https://github.com/zazzool/paramnezia/releases/download/v9/Paramnezia-Setup-9.9.9.exe"))
         val app = InviteLinks.AppDownload("v9.9.9", sha, listOf("https://github.com/zazzool/paramnezia/releases/download/v9/paramnezia-v9.9.9.apk", "http://plain.example/x.apk"), win)
 
-        // A page from before 2.16 (at the server's root) is moved away from there.
+        // A clean server, then a page from before 2.16 (at the server's root), which is moved away from there.
+        sh("S=\$( [ \"\$(id -u)\" -eq 0 ] || echo sudo -n ); \$S rm -rf /opt/amnezia/paramnezia/invite")
         sh("S=\$( [ \"\$(id -u)\" -eq 0 ] || echo sudo -n ); \$S mkdir -p /opt/amnezia/paramnezia/invite/www && echo old | \$S tee /opt/amnezia/paramnezia/invite/www/index.html >/dev/null")
         val link = links.create(creds, invite, "Мама", app, preferredPort = 18080)
         val secret = Regex("^http://127\\.0\\.0\\.1:18080/([A-Za-z0-9_-]{16,})/#").find(link.url)?.groupValues?.get(1)
@@ -258,7 +274,7 @@ class DeployE2ETest {
         return code to body
     }
 
-    private fun handshake(tunnel: TunnelConfig, port: Int) {
+    private fun handshake(tunnel: TunnelConfig, port: Int, bigPing: Int? = null) {
         val gateway = sh("docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'").trim()
         val clientConf = tunnel.copy(
             iface = tunnel.iface.copy(dns = emptyList()),
@@ -270,7 +286,8 @@ class DeployE2ETest {
             "docker run -d --name pn-e2e-client --cap-add NET_ADMIN --device /dev/net/tun -v ${dir.absolutePath}:/cfg " +
                 "--entrypoint sh amneziavpn/amneziawg-go:latest -c 'awg-quick up /cfg/awg0.conf && tail -f /dev/null'",
         )
-        val ping = sh("sleep 2; docker exec pn-e2e-client ping -c 2 -W 2 10.8.1.1 >/dev/null; docker exec pn-e2e-client ping -c 3 -W 2 10.8.1.1; docker exec pn-e2e-client awg show awg0", check = false)
+        val size = bigPing?.let { "-s $it " } ?: ""
+        val ping = sh("sleep 2; docker exec pn-e2e-client ping -c 2 -W 2 10.8.1.1 >/dev/null; docker exec pn-e2e-client ping $size-c 3 -W 2 10.8.1.1; docker exec pn-e2e-client awg show awg0", check = false)
         sh("docker rm -f pn-e2e-client >/dev/null 2>&1 || true")
         assertTrue("ping through tunnel failed:\n$ping", " 0% packet loss" in ping)
         assertTrue("no handshake:\n$ping", "latest handshake" in ping)

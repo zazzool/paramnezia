@@ -4,6 +4,7 @@ import net.paramnezia.app.data.Repo
 import net.paramnezia.app.platform.Log
 import net.paramnezia.core.config.Camouflage
 import net.paramnezia.core.config.CamouflageLadder
+import net.paramnezia.core.config.PathMtu
 import net.paramnezia.core.config.TunnelConfig
 
 /**
@@ -65,6 +66,35 @@ class CamouflagePlanner(private val repo: Repo) {
             .map { v -> Dressed(Camouflage.apply(config, v), v.id, Camouflage.padding(config)) }.toList()
     }
 
+    /**
+     * [config] (as the server gave it) with the MTU to build with on this network, and the probe to
+     * run once it works (see PathMtu).
+     */
+    fun sized(serverId: String, raw: TunnelConfig, dressed: TunnelConfig): Pair<TunnelConfig, String?> {
+        val mtu = PathMtu.choose(raw, mtuFor(serverId))
+        return dressed.copy(iface = dressed.iface.copy(mtu = mtu)) to PathMtu.probeSpec(raw)
+    }
+
+    private fun mtuFor(serverId: String): Int? = if (network.isEmpty()) null else repo.current.pathMtu["$network|$serverId"]
+
+    /**
+     * A probe on [serverId] found [best] bytes (0: none came back). Remembers the MTU for this
+     * network and says whether a tunnel built with [current] should be rebuilt for it: always to go
+     * down (larger packets would be lost), to go up only for a real gain.
+     */
+    fun measured(serverId: String, raw: TunnelConfig, current: Int, best: Int): Boolean {
+        val mtu = PathMtu.fromProbe(raw, best)
+        if (network.isNotEmpty()) {
+            val key = "$network|$serverId"
+            if (repo.current.pathMtu[key] != mtu) repo.update { s ->
+                val m = LinkedHashMap(s.pathMtu); m.remove(key); m[key] = mtu
+                while (m.size > CamouflageLadder.MAX_ENTRIES) m.remove(m.keys.first())
+                s.copy(pathMtu = m)
+            }
+        }
+        return mtu < current || mtu >= current + MTU_STEP
+    }
+
     /** [variant] of [serverId] carried traffic on the current network. */
     fun worked(serverId: String, variant: String) {
         if (variant.isEmpty() || network.isEmpty()) return
@@ -73,5 +103,7 @@ class CamouflagePlanner(private val repo: Repo) {
 
     private companion object {
         const val TAG = "PnCamouflage"
+        /** Rebuilding to gain less than this is not worth a new handshake. */
+        const val MTU_STEP = 40
     }
 }

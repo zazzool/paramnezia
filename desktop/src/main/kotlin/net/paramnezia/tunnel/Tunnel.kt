@@ -32,6 +32,8 @@ data class TunnelSpec(
     /** Content padding after the start of the flow, set by the service [paddingAfterMs] after it is up. */
     val paddingSteady: String? = null,
     val paddingAfterMs: Long = 0,
+    /** Path MTU probe after the tunnel is verified (see PathMtu.probeSpec); the service raises the MTU in place. */
+    val mtuProbe: String? = null,
 )
 
 /** Same meaning as on Android: blocked names, Russian names outside, the rest through the tunnel. */

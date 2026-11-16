@@ -41,7 +41,10 @@ type supervisor struct {
 	reconnects int
 	since      time.Time
 	gen        int // bumped by start/stop: a stale timer does nothing
-	timer      *time.Timer
+	// The build generation and network the path MTU was last measured for (mtuGen -1: not yet).
+	mtuGen int
+	mtuNet uint32
+	timer  *time.Timer
 	// ctx ends with the generation: stop cancels a rebuild that is still bringing a tunnel up.
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -189,7 +192,11 @@ func (s *supervisor) act(gen int, spec *upSpec, a linkwatch.Action) {
 		if gen == s.gen {
 			s.scheduleLocked(a.Delay)
 		}
+		verified := s.verified
 		s.mu.Unlock()
+		if verified {
+			s.measureMTU(gen, spec)
+		}
 	case linkwatch.ActVerified:
 		s.mu.Lock()
 		if gen == s.gen {
@@ -197,6 +204,7 @@ func (s *supervisor) act(gen int, spec *upSpec, a linkwatch.Action) {
 			s.scheduleLocked(a.Delay)
 		}
 		s.mu.Unlock()
+		s.measureMTU(gen, spec)
 		log.Printf("watch %q: verified, %v", spec.Name, a.RTT.Round(time.Millisecond))
 	case linkwatch.ActRebind:
 		log.Printf("watch %q: fresh sockets", spec.Name)
@@ -226,6 +234,23 @@ func (s *supervisor) act(gen int, spec *upSpec, a linkwatch.Action) {
 		s.timer = time.AfterFunc(delay, func() { s.rebuild(gen, next) })
 		s.mu.Unlock()
 	}
+}
+
+// measureMTU runs the path MTU probe once per build and again after the physical network changed
+// (a new network may carry smaller packets), in the background.
+func (s *supervisor) measureMTU(gen int, spec *upSpec) {
+	if spec.MtuProbe == "" {
+		return
+	}
+	net := s.t.netGen.Load()
+	s.mu.Lock()
+	if gen != s.gen || (s.mtuGen == gen && s.mtuNet == net) {
+		s.mu.Unlock()
+		return
+	}
+	s.mtuGen, s.mtuNet = gen, net
+	s.mu.Unlock()
+	go s.t.checkMTU(spec.MtuProbe)
 }
 
 // rebuild brings the tunnel up again with specs[index] (the same server, or the next one).
@@ -259,6 +284,7 @@ func (s *supervisor) rebuild(gen, index int) {
 	}
 	s.reconnects++
 	s.active = index
+	s.mtuGen = -1 // a new adapter starts from the spec's MTU: measured again once verified
 	if err != nil {
 		log.Printf("watch: rebuild %q: %v", spec.Name, err)
 		s.scheduleLocked(10 * time.Second)

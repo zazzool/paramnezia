@@ -59,6 +59,9 @@ type upSpec struct {
 	// at the start of a flow) PaddingAfterMs after the tunnel is up.
 	PaddingSteady  string `json:"paddingSteady,omitempty"`
 	PaddingAfterMs int64  `json:"paddingAfterMs,omitempty"`
+	// MtuProbe ("<own> <server> <sizes>") is measured once the tunnel is verified and again after the
+	// physical network changes; the adapter's MTU follows in place (package pmtu).
+	MtuProbe string `json:"mtuProbe,omitempty"`
 }
 
 type response struct {

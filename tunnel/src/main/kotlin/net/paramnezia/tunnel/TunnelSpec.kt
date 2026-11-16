@@ -44,6 +44,11 @@ data class TunnelSpec(
      */
     val paddingSteady: String? = null,
     val paddingAfterMs: Long = 0,
+    /**
+     * Path MTU probe after the tunnel is verified (`"<own> <server> <sizes>"`, see PathMtu.probeSpec),
+     * or null for none. The result goes to [TunnelHost.onPathMtu].
+     */
+    val mtuProbe: String? = null,
 )
 
 /**
@@ -82,6 +87,12 @@ interface TunnelHost {
 
     /** Handshakes work again on [spec]'s server. */
     fun onServerHealthy(spec: TunnelSpec) {}
+
+    /**
+     * [spec]'s path carries packets up to [best] bytes (0: no probe came back). True if the tunnel
+     * should be rebuilt now, with the MTU the next [currentSpec] has.
+     */
+    fun onPathMtu(spec: TunnelSpec, best: Int): Boolean = false
 }
 
 /**

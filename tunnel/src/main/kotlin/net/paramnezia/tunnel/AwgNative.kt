@@ -32,6 +32,8 @@ object AwgNative {
     @JvmStatic external fun socketV6(handle: Int): Int
     @JvmStatic external fun getConfig(handle: Int): String?
     @JvmStatic external fun setConfig(handle: Int, uapi: String): Int
+    /** Largest packet the tunnel carries end to end; spec "<own> <server> <sizes,> <timeout ms>" (native package pmtu). */
+    @JvmStatic external fun probeMtu(handle: Int, spec: String): Int
     @JvmStatic external fun version(): String?
     @JvmStatic external fun setVerbose(on: Boolean)
     @JvmStatic external fun ed25519Generate(): ByteArray?

@@ -460,6 +460,12 @@ class FleetManager(
                 "release" to { release?.let { (r, wire) -> publisher.mirrorRelease(a, r.sha256, r.publicApkUrls(), wire, forInvites = false) } },
                 // Spare ports (once per server upgrade): a server without any gets them, and the
                 // manifest learns what each server answers on.
+                // Throughput tuning (2.17): MSS clamping, buffers, BBR, kept across reboots.
+                "tune" to {
+                    if (upgrade) runCatching { servers.tune(a) }.onFailure { e ->
+                        if ((e as? net.paramnezia.deploy.SshException)?.code != "no_container") upgradeFailed = true
+                    }.getOrThrow()
+                },
                 "ports" to {
                     if (upgrade || s.altPorts.isEmpty()) {
                         runCatching {
@@ -686,8 +692,8 @@ class FleetManager(
         /** How a prepared slot is called on the server until someone gets it. */
         const val POOL_PEER_NAME = "Paramnezia"
         const val DAY_MS = 24 * 3600_000L
-        /** Bumped when every server needs a one-off upgrade at the next self-check (2.16: spare ports). */
-        const val SERVER_UPGRADE = 1
+        /** Bumped when every server needs a one-off upgrade at the next self-check (1: spare ports, 2: tuning). */
+        const val SERVER_UPGRADE = 2
         /** While the tunnel works, look for a newer manifest at most this often. */
         const val SYNC_EVERY_MS = 3600_000L
     }

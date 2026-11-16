@@ -36,6 +36,8 @@ data class AppState(
      * not tried first again there.
      */
     val camouflage: Map<String, String> = emptyMap(),
+    /** The path MTU measured per network and server (`<network>|<server id>` → bytes, see PathMtu). */
+    val pathMtu: Map<String, Int> = emptyMap(),
 ) {
     /** Follower devices of a fleet get the one-button screen; the admin and standalone users get everything. */
     val simpleUi: Boolean get() = when (uiMode) {
