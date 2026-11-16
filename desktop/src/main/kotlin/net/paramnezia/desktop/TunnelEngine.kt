@@ -12,6 +12,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import net.paramnezia.app.platform.Log
 import net.paramnezia.tunnel.TunnelRuntime
+import net.paramnezia.tunnel.SessionInfo
 import net.paramnezia.tunnel.TunnelSpec
 import net.paramnezia.tunnel.TunnelState
 
@@ -176,6 +177,7 @@ class TunnelEngine(
         running = false
         servers = emptyList()
         TunnelRuntime.lastStats = null
+        TunnelRuntime.setSession(null)
         TunnelRuntime.setLink(unstable = false, offline = false)
         TunnelRuntime.set(TunnelState.Down)
     }
@@ -220,6 +222,8 @@ class TunnelEngine(
             }
             lastActive = w.active
         }
+        TunnelRuntime.setSession(SessionInfo(spec.serverId, spec.variant,
+            w.mtu.takeIf { it > 0 } ?: spec.config.iface.mtu ?: 1280, spec.keepaliveActive))
         repeat((w.reconnects - lastReconnects).coerceAtLeast(0)) { TunnelRuntime.noteReconnect() }
         lastReconnects = w.reconnects
         if (w.rttMs > 0) TunnelRuntime.setRtt(w.rttMs)

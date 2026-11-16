@@ -31,7 +31,7 @@ val jdk25: Provider<JavaLauncher> = javaToolchains.launcherFor { languageVersion
 // The Android app's screens, compiled here unchanged (they reach the system only through UiPlatform).
 val sharedUiFiles = listOf(
     "UiPlatform.kt", "Theme.kt", "PnIcons.kt", "PowerButton.kt", "HomeKit.kt", "HomeParts.kt", "HomeScreen.kt", "SimpleScreen.kt",
-    "FormKit.kt", "SshForm.kt", "AddScreen.kt", "CloudDialog.kt", "FleetScreen.kt", "Qr.kt", "Shell.kt", "Orbit.kt", "LanScreens.kt",
+    "FormKit.kt", "SshForm.kt", "AddScreen.kt", "CloudDialog.kt", "FleetScreen.kt", "Qr.kt", "Shell.kt", "Orbit.kt", "LanScreens.kt", "ServerScreen.kt",
 )
 val syncSharedUi by tasks.registering(Sync::class) {
     from(rootProject.file("app/src/main/kotlin/net/paramnezia/app/ui")) { include(sharedUiFiles) }

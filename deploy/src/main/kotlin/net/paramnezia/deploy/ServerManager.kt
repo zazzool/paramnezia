@@ -203,6 +203,13 @@ class ServerManager(private val hostKeys: HostKeyStore) {
             Ports(main, alt, r.results["ipv6"]?.trim()?.takeIf { ':' in it })
         }
 
+    /** What the server is and does right now (info.sh); read-only, one connection, a second or two. */
+    fun status(creds: SshCredentials, protocol: Protocol = Protocol.AWG): ServerStatus =
+        SshConnection.open(creds, hostKeys).use { ssh ->
+            val r = ssh.run(script("info.sh"), env = mapOf("CONTAINER" to protocol.amneziaContainer), timeoutMs = 60_000)
+            ServerStatus.parse(r.results)
+        }
+
     /**
      * Brings the server's AmneziaWG engine up to date (refresh.sh): when the latest
      * amneziavpn/amneziawg-go image has other binaries than the running container, the container is

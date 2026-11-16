@@ -102,6 +102,10 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
     /** Owner: a device to make a co-admin, or (with [revoking]) to take the rights back from. */
     var adminOf by remember { mutableStateOf<FleetDevice?>(null) }
     var revoking by remember { mutableStateOf(false) }
+    /** A server opened in detail (its id). */
+    var details by remember { mutableStateOf<String?>(null) }
+
+    details?.let { id -> ServerScreen(app, id, modifier) { details = null }; return }
 
     // Which links have been used: asked only while some are still open.
     LaunchedEffect(Unit) {
@@ -150,7 +154,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                 for (p in managed) {
                     val ssh = p.ssh!!
                     GroupRow(
-                        p.name, subtitle = ssh.host, icon = Glyph.Server,
+                        p.name, subtitle = ssh.host, icon = Glyph.Server, onClick = { details = p.id },
                         trailing = { Overflow(busy, "Перезагрузить сервер" to { rebootOf = RebootTarget(p.name, ssh.host, ssh) }) },
                     )
                 }
@@ -228,7 +232,8 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                     })
                 }
                 GroupRow(
-                    s.name, subtitle = "${s.host}:${s.port}", icon = Glyph.Server,
+                    s.name, subtitle = "${s.host}:${s.port}" + if (s.altPorts.isNotEmpty()) " · ещё ${plural(s.altPorts.size, "порт", "порта", "портов")}" else "",
+                    icon = Glyph.Server, onClick = { details = s.id },
                     accent = if (i == 0) Brand.Mint else MaterialTheme.colorScheme.onSurfaceVariant,
                     badge = if (i == 0) "основной" else "резервный",
                     trailing = { if (actions.isNotEmpty()) Overflow(busy, *actions.toTypedArray()) },

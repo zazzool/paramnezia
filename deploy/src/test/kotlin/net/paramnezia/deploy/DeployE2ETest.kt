@@ -172,6 +172,16 @@ class DeployE2ETest {
             assertEquals(2, sh("docker exec amnezia-awg2 iptables -t mangle -S FORWARD").lines().count { "TCPMSS" in it })
             handshake(tunnel, port)
             assertFalse(manager.refresh(creds))
+
+            // What the details screen shows about the server.
+            val st = manager.status(creds)
+            assertEquals("running", st.container)
+            assertEquals(port, st.listenPort)
+            assertTrue(st.ports.toString(), port in st.ports && portsBefore.alt.all { it in st.ports })
+            assertTrue((st.peers ?: 0) >= 2)
+            assertTrue(st.tuned)
+            assertTrue(st.engine != null && st.tools != null && st.imageBuilt != null && st.startedAt != null && st.mtu != null)
+            assertTrue(st.kernel != null && (st.memTotalMb ?: 0) > 0 && st.uptimeSec != null)
             println("e2e ok for $profile")
         }
     }

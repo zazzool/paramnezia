@@ -71,6 +71,8 @@ class ServiceClient(private val pipe: String = PIPE) {
         val active: Int = 0,
         val server: String? = null,
         val session: Long = 0,
+        /** The adapter's MTU now (it follows the path MTU probes). */
+        val mtu: Int = 0,
     )
 
     class ServiceException(message: String) : IOException(message)

@@ -45,6 +45,12 @@ data class DnsPolicy(
     fun encode() = "virtual=$virtual\ntunnel=${tunnel.joinToString(",")}\ndirect=${direct.joinToString(",")}"
 }
 
+/**
+ * The connection as it runs now, for the details screen: which server, how it is dialled
+ * (Camouflage variant id: signature@endpoint), the tunnel MTU and the keepalive in use.
+ */
+data class SessionInfo(val serverId: String, val variant: String, val mtu: Int, val keepalive: String)
+
 /** Same meaning as on Android: [Up] only once a probe came back through the tunnel. */
 sealed interface TunnelState {
     data object Down : TunnelState
@@ -82,6 +88,11 @@ object TunnelRuntime {
     /** Set by the engine: probe now and repair if needed (see the Android TunnelRuntime.recheck). */
     @Volatile var onRecheck: (() -> Unit)? = null
     fun recheck() { onRecheck?.invoke() }
+
+    private val _session = MutableStateFlow<SessionInfo?>(null)
+    /** The running connection's details (null while there is none); set by the engine from the service's status. */
+    val session: StateFlow<SessionInfo?> = _session.asStateFlow()
+    fun setSession(s: SessionInfo?) { if (_session.value != s) _session.value = s }
 
     private val _generation = MutableStateFlow(0)
     val generation: StateFlow<Int> = _generation.asStateFlow()

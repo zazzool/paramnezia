@@ -1,6 +1,7 @@
 package net.paramnezia.app
 
 import net.paramnezia.app.data.ServerReboot
+import net.paramnezia.app.data.ServerInsights
 import net.paramnezia.app.platform.Log as PLog
 import net.paramnezia.app.data.Vault
 import net.paramnezia.app.data.Cloud
@@ -72,6 +73,8 @@ class App : Application(), TunnelHost {
     val cloud: Cloud by lazy { Cloud(repo, scope, cacheDir) }
     /** Reboots a server over SSH, or through its hosting provider when SSH is dead. */
     val reboots: ServerReboot by lazy { ServerReboot(repo) }
+    /** What the server details screen shows (config, roles, the server's own report over SSH). */
+    val insights: ServerInsights by lazy { ServerInsights(repo, fleet) }
     /** Sharing the app and settings with devices in the same Wi-Fi, and finding such shares. */
     val lan: LanHub by lazy { LanHub(AndroidLan(this), repo, fleet, { links }, { updater }, android.os.Build.MODEL, scope) }
     private val visibilityCheck by lazy { VisibilityCheck(net, loadGeo = { repo.current.geo }, saveGeo = { m -> repo.update { it.copy(geo = m) } }) }
