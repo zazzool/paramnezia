@@ -48,12 +48,13 @@ old_img=$($D image inspect -f '{{.Id}}' "$IMG" 2>/dev/null || true)
 $D build -q -t "$IMG" "$dir" >/dev/null 2>&1 || fail "build_failed"
 
 # Everything the server keeps lives under /opt/amnezia inside the container.
-tmp=$(mktemp -d)
+# (docker cp writes as root: without root everything here goes through sudo.)
+tmp=$($SUDO mktemp -d)
 trap '$SUDO rm -rf "$tmp"' EXIT
 $D cp "$C:/opt/amnezia/." "$tmp/" || fail "copy_failed"
 conf=$tmp/awg/awg0.conf
-if [ -f "$conf" ] && grep -q '^HeaderProtectionKey' "$conf" && ! grep -q '^ContentPaddingAddition' "$conf"; then
-  sed -i 's/^\(HeaderProtectionKey = .*\)$/\1\nContentPaddingAddition = 0-31/' "$conf"
+if $SUDO test -f "$conf" && $SUDO grep -q '^HeaderProtectionKey' "$conf" && ! $SUDO grep -q '^ContentPaddingAddition' "$conf"; then
+  $SUDO sed -i 's/^\(HeaderProtectionKey = .*\)$/\1\nContentPaddingAddition = 0-31/' "$conf"
 fi
 
 args="--name $C --restart always --log-driver none"
