@@ -122,18 +122,23 @@ func newPair(t *testing.T, client string) *pair {
 	return p
 }
 
-// ping sends a small packet from the client and waits for it at the server.
+// ping sends a small packet from the client and waits for it at the server, sending again each
+// second like an app would (the first packet of a fresh tunnel waits for a handshake that a busy
+// test machine can lose; WireGuard retries it only after 5 s).
 func (p *pair) ping(t *testing.T) {
 	t.Helper()
-	p.cliTun.Outbound <- tuntest.Ping(netip.MustParseAddr("10.8.1.1"), netip.MustParseAddr("10.8.1.2"))
-	select {
-	case got := <-p.srvTun.Inbound:
-		if len(got) < 20 {
-			t.Fatalf("short packet %d", len(got))
+	for try := 0; try < 20; try++ {
+		p.cliTun.Outbound <- tuntest.Ping(netip.MustParseAddr("10.8.1.1"), netip.MustParseAddr("10.8.1.2"))
+		select {
+		case got := <-p.srvTun.Inbound:
+			if len(got) < 20 {
+				t.Fatalf("short packet %d", len(got))
+			}
+			return
+		case <-time.After(time.Second):
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("no data through the tunnel")
 	}
+	t.Fatal("no data through the tunnel")
 }
 
 func (p *pair) sent() [][]byte {
