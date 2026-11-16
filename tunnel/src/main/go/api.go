@@ -17,10 +17,13 @@ import (
 	"errors"
 	"math"
 	"net"
+	"net/netip"
 	"os"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/amnezia-vpn/amneziawg-go/v3/conn"
 	"github.com/amnezia-vpn/amneziawg-go/v3/device"
@@ -28,11 +31,13 @@ import (
 	"golang.org/x/sys/unix"
 
 	"net.paramnezia/tunnel/dnsfilter"
+	"net.paramnezia/tunnel/pmtu"
 )
 
 var (
 	mu      sync.Mutex
 	handles = map[int32]*device.Device{}
+	probes  = map[int32]*pmtu.Tun{}
 	verbose bool
 )
 
@@ -61,6 +66,9 @@ func pnTurnOn(interfaceName string, tunFd int32, settings string, dns string, dn
 	// The direct DNS socket is ours from here on and is closed exactly once: by udpFromFd (which keeps
 	// a duplicate) or right here. A second close could hit a socket opened meanwhile under the same
 	// number, such as the DNS filter's own tunnel socket.
+	// Closest to the TUN: path MTU probes (pnProbeMtu) go into what the device reads.
+	probe := pmtu.New(tunDev)
+	tunDev = probe
 	var direct *net.UDPConn
 	if dnsDirectFd >= 0 {
 		direct, _ = udpFromFd(int(dnsDirectFd))
@@ -100,6 +108,7 @@ func pnTurnOn(interfaceName string, tunFd int32, settings string, dns string, dn
 		}
 	}
 	handles[i] = dev
+	probes[i] = probe
 	return i
 }
 
@@ -108,6 +117,7 @@ func pnTurnOff(handle int32) {
 	mu.Lock()
 	dev, ok := handles[handle]
 	delete(handles, handle)
+	delete(probes, handle)
 	mu.Unlock()
 	if ok {
 		dev.Close()
@@ -197,6 +207,37 @@ func pnRebind(handle int32) int32 {
 		return -2
 	}
 	return 0
+}
+
+// pnProbeMtu finds the largest packet the tunnel carries end to end (see package pmtu). spec is
+// "<own tunnel address> <server tunnel address> <sizes, comma-separated> <timeout ms>"; returns the
+// largest size that came back, 0 if none, or a negative number on a bad call.
+//
+//export pnProbeMtu
+func pnProbeMtu(handle int32, spec string) int32 {
+	mu.Lock()
+	probe := probes[handle]
+	mu.Unlock()
+	if probe == nil {
+		return -1
+	}
+	f := strings.Fields(spec)
+	if len(f) != 4 {
+		return -2
+	}
+	src, err1 := netip.ParseAddr(f[0])
+	dst, err2 := netip.ParseAddr(f[1])
+	ms, err3 := strconv.Atoi(f[3])
+	if err1 != nil || err2 != nil || err3 != nil || ms <= 0 || ms > 30_000 {
+		return -2
+	}
+	var sizes []int
+	for _, v := range strings.Split(f[2], ",") {
+		if n, err := strconv.Atoi(v); err == nil {
+			sizes = append(sizes, n)
+		}
+	}
+	return int32(probe.Probe(src, dst, sizes, 2, time.Duration(ms)*time.Millisecond))
 }
 
 func udpFromFd(fd int) (*net.UDPConn, error) {

@@ -24,6 +24,7 @@ import (
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
 
 	"net.paramnezia/tunnel/dnsfilter"
+	"net.paramnezia/tunnel/pmtu"
 	"net.paramnezia/tunnel/windows/firewall"
 )
 
@@ -45,6 +46,12 @@ type tunnel struct {
 	watches []winipcfg.ChangeCallback
 	// rebindIface binds fresh sockets (after rebind) to the physical interface again.
 	rebindIface func()
+	// Path MTU: probes go in next to the adapter; the MTU starts at the spec's and follows the probes.
+	probe           *pmtu.Tun
+	native          tun.Device
+	baseMTU, curMTU int
+	// netGen changes whenever the physical network under the tunnel does.
+	netGen atomic.Uint32
 }
 
 // up builds the tunnel for s. A cancelled ctx (the app said "down" meanwhile) stops it at the next
@@ -93,7 +100,9 @@ func (t *tunnel) up(ctx context.Context, s *upSpec) (err error) {
 	luid := winipcfg.LUID(native.(*tun.NativeTun).LUID())
 	t.luid.Store(uint64(luid))
 
-	var dev tun.Device = native
+	probe := pmtu.New(native)
+	t.probe, t.native, t.baseMTU, t.curMTU = probe, native, mtu, mtu
+	var dev tun.Device = probe
 	if cfg, ok := dnsfilter.ParseConfig(s.DNSConfig); ok {
 		// Russian names are resolved over this socket. The direct resolvers are routed outside the
 		// tunnel by the app, and the firewall lets this process through.
@@ -186,6 +195,7 @@ func (t *tunnel) downLocked() {
 		t.tun.Close()
 	}
 	t.dev, t.tun, t.bind = nil, nil, nil
+	t.probe, t.native = nil, nil
 	t.luid.Store(0)
 	t.name = ""
 }
@@ -217,6 +227,55 @@ func (t *tunnel) rebind() error {
 		again()
 	}
 	return nil
+}
+
+// checkMTU measures what the path carries (spec: "<own> <server> <sizes>") and sets the adapter's
+// MTU to it in place: up to the largest size that came back, back to the spec's own when none did.
+// Wintun and Windows both take a new MTU on a live adapter; open connections keep their old segment
+// size, new ones use the new. Returns the MTU now in use.
+func (t *tunnel) checkMTU(spec string) int {
+	f := strings.Fields(spec)
+	t.mu.Lock()
+	probe, native, base, cur := t.probe, t.native, t.baseMTU, t.curMTU
+	luid := winipcfg.LUID(t.luid.Load())
+	t.mu.Unlock()
+	if probe == nil || len(f) != 3 {
+		return cur
+	}
+	src, err1 := netip.ParseAddr(f[0])
+	dst, err2 := netip.ParseAddr(f[1])
+	if err1 != nil || err2 != nil {
+		return cur
+	}
+	var sizes []int
+	for _, v := range strings.Split(f[2], ",") {
+		var n int
+		if _, err := fmt.Sscan(v, &n); err == nil {
+			sizes = append(sizes, n)
+		}
+	}
+	best := probe.Probe(src, dst, sizes, 2, 1500*time.Millisecond)
+	want := base
+	if best > base {
+		want = best
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.probe != probe || want == t.curMTU {
+		return t.curMTU
+	}
+	if nt, ok := native.(*tun.NativeTun); ok {
+		nt.ForceMTU(want)
+	}
+	for _, family := range []winipcfg.AddressFamily{windows.AF_INET, windows.AF_INET6} {
+		if ipif, err := luid.IPInterface(family); err == nil {
+			ipif.NLMTU = uint32(want)
+			_ = ipif.Set()
+		}
+	}
+	log.Printf("path MTU: %d (largest probe back: %d)", want, best)
+	t.curMTU = want
+	return want
 }
 
 func (t *tunnel) set(uapi string) error {
@@ -300,6 +359,9 @@ func (t *tunnel) watchDefaultInterface(ours winipcfg.LUID) {
 		if i, err := defaultInterface(windows.AF_INET, ours); err == nil {
 			setLocalDNS(i)
 			if i != last4 && binder.BindSocketToInterface4(i, false) == nil {
+				if last4 != ^uint32(0) {
+					t.netGen.Add(1)
+				}
 				last4 = i
 			}
 		}

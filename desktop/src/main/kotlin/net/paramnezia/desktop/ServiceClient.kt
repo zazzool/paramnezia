@@ -27,6 +27,8 @@ class ServiceClient(private val pipe: String = PIPE) {
         /** Content padding after the start of the flow (UAPI range), set [paddingAfterMs] after the tunnel is up. */
         val paddingSteady: String? = null,
         val paddingAfterMs: Long = 0,
+        /** "<own> <server> <sizes>": the service measures the path after verifying it and raises the MTU in place. */
+        val mtuProbe: String? = null,
     )
 
     @Serializable

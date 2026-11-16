@@ -16,6 +16,7 @@ import net.paramnezia.app.tunnel.Net
 import net.paramnezia.app.tunnel.SpecBuilder
 import net.paramnezia.app.tunnel.CamouflagePlanner
 import net.paramnezia.core.config.TunnelConfig
+import net.paramnezia.core.config.PathMtu
 import net.paramnezia.app.ui.WidgetProvider
 import net.paramnezia.app.work.SyncJob
 import net.paramnezia.core.config.Uapi
@@ -236,8 +237,16 @@ class App : Application(), TunnelHost {
             ?: repo.current.profiles.firstOrNull { it.id == serverId }?.let { CamouflagePlanner.Reach(it.altPorts, it.altHosts) }
             ?: CamouflagePlanner.Reach()
 
-    private fun dressed(id: String, name: String, raw: TunnelConfig, d: CamouflagePlanner.Dressed): TunnelSpec =
-        specs.build(id, name, d.config, repo.current.settings).copy(variant = d.variant, paddingSteady = d.padding?.steady, paddingAfterMs = d.padding?.afterMs ?: 0)
+    private fun dressed(id: String, name: String, raw: TunnelConfig, d: CamouflagePlanner.Dressed): TunnelSpec {
+        val (config, probe) = camo.sized(id, raw, d.config)
+        return specs.build(id, name, config, repo.current.settings)
+            .copy(variant = d.variant, paddingSteady = d.padding?.steady, paddingAfterMs = d.padding?.afterMs ?: 0, mtuProbe = probe)
+    }
+
+    override fun onPathMtu(spec: TunnelSpec, best: Int): Int? {
+        val raw = rawConfig(spec.serverId) ?: return null
+        return camo.measured(spec.serverId, raw, spec.config.iface.mtu ?: PathMtu.SAFE, best)
+    }
 
     /** The server's config as the fleet or the profile has it, before Camouflage dressed it. */
     private fun rawConfig(serverId: String): TunnelConfig? =

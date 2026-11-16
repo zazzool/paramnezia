@@ -26,8 +26,8 @@ class Servers(
     private val manager = ServerManager(repo.hostKeys)
 
     companion object {
-        /** Bumped when own standalone servers need a one-off upgrade (2.16: spare ports). */
-        const val PORTS_UPGRADE = 1
+        /** Bumped when own standalone servers need a one-off upgrade (1: spare ports, 2: tuning, 3: engine). */
+        const val PORTS_UPGRADE = 3
     }
 
     sealed interface Imported {
@@ -108,8 +108,8 @@ class Servers(
     }
 
     /**
-     * Once per upgrade: own standalone servers (with SSH) get spare ports, and the app learns what each
-     * answers on. A server whose container must be re-created for it is down for a few seconds.
+     * Once per upgrade: own standalone servers (with SSH) are tuned for throughput (tune.sh) and get
+     * spare ports, and the app learns what each answers on. A server whose container must be re-created for it is down for a few seconds.
      * Call from the open app, never from background work. Each server fails on its own.
      */
     suspend fun upgradePorts() = withContext(Dispatchers.IO) {
@@ -121,7 +121,11 @@ class Servers(
             if (now - (upgradeTried[p.id] ?: 0L) < 3600_000L) continue
             upgradeTried[p.id] = now
             val main = runCatching { portOf(WgQuick.parse(p.conf)) }.getOrNull() ?: continue
-            runCatching { manager.ports(ssh, if (p.altPorts.isEmpty()) ServerManager.altPortsFor(main) else emptyList()) }
+            runCatching {
+                manager.refresh(ssh)
+                manager.tune(ssh)
+                manager.ports(ssh, if (p.altPorts.isEmpty()) ServerManager.altPortsFor(main) else emptyList())
+            }
                 .onSuccess { r ->
                     repo.update { s -> s.copy(profiles = s.profiles.map {
                         if (it.id != p.id) it

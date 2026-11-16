@@ -101,6 +101,7 @@ class SpecBuilder(
             excludedApps = spec.excludedApps,
             paddingSteady = spec.paddingSteady,
             paddingAfterMs = spec.paddingAfterMs,
+            mtuProbe = spec.mtuProbe,
         )
     }
 

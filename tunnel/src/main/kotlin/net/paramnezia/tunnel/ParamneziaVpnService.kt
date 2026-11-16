@@ -248,6 +248,8 @@ class ParamneziaVpnService : VpnService() {
             protect(AwgNative.socketV4(h)); protect(AwgNative.socketV6(h))
             handle = h
             spec = next
+            mtuChecked = false
+            mtuUpgrade = false
             schedulePadding(h, next)
             val now = System.currentTimeMillis()
             builtAt = now
@@ -354,7 +356,7 @@ class ParamneziaVpnService : VpnService() {
         when (action) {
             is LinkWatch.Action.Wait -> {
                 // Fleet devices pick up the admin's changes within the hour while the tunnel works.
-                if (watch.phase == LinkWatch.Phase.GOOD) host?.onServerHealthy(current)
+                if (watch.phase == LinkWatch.Phase.GOOD) { host?.onServerHealthy(current); probeMtu(current) }
                 scheduleCheck(action.ms)
             }
             LinkWatch.Action.Probe -> scheduleCheck(0)
@@ -362,6 +364,7 @@ class ParamneziaVpnService : VpnService() {
                 TunnelRuntime.set(TunnelState.Up(current.serverName, current.serverId, sessionSince))
                 TunnelRuntime.bumpGeneration()
                 host?.onServerHealthy(current)
+                probeMtu(current)
                 scheduleCheck(action.ms)
             }
             is LinkWatch.Action.Rebind -> {
@@ -383,6 +386,43 @@ class ParamneziaVpnService : VpnService() {
                     TunnelRuntime.noteReconnect()
                     connect(replacement, reconnecting = true)
                 } else rebuildAfter(current, action.delayMs)
+            }
+        }
+    }
+
+    /** The path MTU was measured for this tunnel on this network (reset by a build and a network change). */
+    @Volatile private var mtuChecked = false
+    /** A larger MTU was measured: rebuilt at the next screen-off. */
+    @Volatile private var mtuUpgrade = false
+    private var mtuRebuilds = 0
+
+    /**
+     * Once per build and network, right after the tunnel proved itself: which packet sizes the path
+     * carries (probes inside the tunnel, a second or two, in the background). Android fixes a VPN
+     * interface's MTU when it is built, so a new one takes a quiet rebuild (the screen stays
+     * "protected"): at once when the MTU must go down (larger packets would be lost), and when it can
+     * go up only at the next screen-off (or the next connect), since registering the VPN again costs
+     * the system real work with the long route lists of Android before 13. A couple of rebuilds per
+     * network at most, so a flaky path cannot loop.
+     */
+    private fun probeMtu(s: TunnelSpec) {
+        val probe = s.mtuProbe ?: return
+        if (mtuChecked) return
+        mtuChecked = true
+        val h = handle
+        if (h < 0) return
+        scope.launch(Dispatchers.IO) {
+            val best = runCatching { runInterruptible { AwgNative.probeMtu(h, "$probe $MTU_PROBE_MS") } }.getOrDefault(-1)
+            if (best < 0) return@launch
+            Log.i(TAG, "${s.serverName}: path carries ${if (best > 0) "$best bytes" else "no more than the minimum"}")
+            work {
+                if (handle != h || spec !== s) return@work
+                val next = host?.onPathMtu(s, best) ?: return@work
+                if (mtuRebuilds >= MAX_MTU_REBUILDS) return@work
+                if (next < (s.config.iface.mtu ?: 1280)) {
+                    mtuRebuilds++
+                    connect(host?.currentSpec() ?: return@work, reconnecting = true, quiet = true)
+                } else mtuUpgrade = true
             }
         }
     }
@@ -438,7 +478,12 @@ class ParamneziaVpnService : VpnService() {
             underlying = network
             // Wi-Fi ↔ mobile under a working tunnel: give it a moment to re-handshake, then probe. A
             // fresh tunnel is being verified anyway; its quick verification is not pushed back.
-            if (changed) work { if (handle >= 0 && TunnelRuntime.state.value is TunnelState.Up) { watch.suspect(); scheduleCheck(NETWORK_CHANGE_CHECK_MS) } }
+            if (changed) {
+                // Another network may carry smaller packets: measured again once the tunnel answers there.
+                mtuChecked = false
+                mtuRebuilds = 0
+                work { if (handle >= 0 && TunnelRuntime.state.value is TunnelState.Up) { watch.suspect(); scheduleCheck(NETWORK_CHANGE_CHECK_MS) } }
+            }
         }
     }
 
@@ -482,6 +527,12 @@ class ParamneziaVpnService : VpnService() {
             // A repair in progress keeps its quick pace either way.
             if (TunnelRuntime.state.value is TunnelState.Up && watch.phase == LinkWatch.Phase.GOOD)
                 scheduleCheck(if (screenOn) SCREEN_ON_CHECK_MS else watch.interval(false))
+            if (!screenOn && mtuUpgrade && TunnelRuntime.state.value is TunnelState.Up) {
+                mtuUpgrade = false
+                mtuRebuilds++
+                work { if (handle == h) connect(host?.currentSpec() ?: return@work, reconnecting = true, quiet = true) }
+                return
+            }
             val ka = if (screenOn) s.keepaliveScreenOn else s.keepaliveScreenOff
             scope.launch {
                 val peer = s.config.peers.firstOrNull() ?: return@launch
@@ -498,6 +549,10 @@ class ParamneziaVpnService : VpnService() {
         /** First verification probe of a fresh tunnel: right after its first handshake could finish. */
         private const val VERIFY_FIRST_MS = 150L
         private const val NETWORK_CHANGE_CHECK_MS = 3_000L
+        /** How long the path MTU probes wait for their echoes. */
+        private const val MTU_PROBE_MS = 1_500
+        /** Rebuilds for a new MTU per network (a path that answers differently each time cannot loop). */
+        private const val MAX_MTU_REBUILDS = 2
         /** Look again this soon while Android is still connecting the VPN network. */
         private const val VPN_NOT_READY_MS = 200L
         private const val VPN_WAIT_MS = 8_000L
