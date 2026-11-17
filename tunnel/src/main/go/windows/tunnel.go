@@ -52,6 +52,8 @@ type tunnel struct {
 	baseMTU, curMTU int
 	// netGen changes whenever the physical network under the tunnel does.
 	netGen atomic.Uint32
+	// mtuNow is the adapter's MTU, for the status (read without the lock).
+	mtuNow atomic.Int32
 }
 
 // up builds the tunnel for s. A cancelled ctx (the app said "down" meanwhile) stops it at the next
@@ -102,6 +104,7 @@ func (t *tunnel) up(ctx context.Context, s *upSpec) (err error) {
 
 	probe := pmtu.New(native)
 	t.probe, t.native, t.baseMTU, t.curMTU = probe, native, mtu, mtu
+	t.mtuNow.Store(int32(mtu))
 	var dev tun.Device = probe
 	if cfg, ok := dnsfilter.ParseConfig(s.DNSConfig); ok {
 		// Russian names are resolved over this socket. The direct resolvers are routed outside the
@@ -275,6 +278,7 @@ func (t *tunnel) checkMTU(spec string) int {
 	}
 	log.Printf("path MTU: %d (largest probe back: %d)", want, best)
 	t.curMTU = want
+	t.mtuNow.Store(int32(want))
 	return want
 }
 

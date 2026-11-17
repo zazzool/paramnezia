@@ -248,6 +248,8 @@ class ParamneziaVpnService : VpnService() {
             protect(AwgNative.socketV4(h)); protect(AwgNative.socketV6(h))
             handle = h
             spec = next
+            TunnelRuntime.setSession(SessionInfo(next.serverId, next.variant, next.config.iface.mtu ?: 1280,
+                if (screenOn) next.keepaliveScreenOn else next.keepaliveScreenOff))
             mtuChecked = false
             mtuUpgrade = false
             schedulePadding(h, next)
@@ -292,6 +294,7 @@ class ParamneziaVpnService : VpnService() {
         handle = -1
         if (h >= 0) AwgNative.turnOff(h)
         spec = null
+        TunnelRuntime.setSession(null)
         sessionSince = 0
         TunnelRuntime.setLink(unstable = false, offline = false)
         TunnelRuntime.set(TunnelState.Down)

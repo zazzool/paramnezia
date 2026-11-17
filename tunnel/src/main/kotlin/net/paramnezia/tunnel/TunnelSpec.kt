@@ -58,6 +58,12 @@ data class TunnelSpec(
  */
 data class LocalNetwork(val prefixes: List<IpPrefix>, val dns: List<String>)
 
+/**
+ * The connection as it runs now, for the details screen: which server, how it is dialled
+ * (Camouflage variant id: signature@endpoint), the tunnel MTU and the keepalive in use.
+ */
+data class SessionInfo(val serverId: String, val variant: String, val mtu: Int, val keepalive: String)
+
 /** See [TunnelRuntime.networkIdentity]. */
 data class NetworkIdentity(val key: String, val ipv6: Boolean)
 
@@ -140,6 +146,11 @@ object TunnelRuntime {
         val h = _health.value
         if (h.unstable != unstable || h.offline != offline) _health.value = h.copy(unstable = unstable, offline = offline)
     }
+
+    private val _session = MutableStateFlow<SessionInfo?>(null)
+    /** The running connection's details (null while there is none). */
+    val session: StateFlow<SessionInfo?> = _session.asStateFlow()
+    internal fun setSession(s: SessionInfo?) { _session.value = s }
 
     private val _generation = MutableStateFlow(0)
     /** Changes on every successful (re)connect: a signal to refresh what depends on the route. */

@@ -107,6 +107,7 @@ type watchStatus struct {
 	Active     int    `json:"active"`
 	Server     string `json:"server,omitempty"`
 	Session    int64  `json:"session,omitempty"`
+	MTU        int    `json:"mtu,omitempty"`
 }
 
 func (s *supervisor) status() *watchStatus {
@@ -125,6 +126,7 @@ func (s *supervisor) status() *watchStatus {
 		Active:     s.active,
 		Server:     s.specs[s.active].Name,
 		Session:    s.since.UnixMilli(),
+		MTU:        int(s.t.mtuNow.Load()),
 	}
 }
 
