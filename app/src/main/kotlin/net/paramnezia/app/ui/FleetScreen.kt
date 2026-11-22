@@ -228,7 +228,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
             servers.forEachIndexed { i, s ->
                 val actions = buildList<Pair<String, () -> Unit>> {
                     if (isAdmin) add("Перезагрузить сервер" to { rebootOf = RebootTarget(s.name, s.host, app.fleet.accessTo(s.id)) })
-                    if (isAdmin && i > 0) add("Сделать основным" to { work("${s.name} теперь основной") { app.fleet.promote(s.id) } })
+                    if (isAdmin && i > 0) add("Сделать основным" to { work("${s.name} теперь основной") { app.fleet.promote(s.id, useAutomaticSelection = true) } })
                     if (isOwner && servers.size > 1) add("Убрать сервер" to {
                         val bought = app.cloud.serverAt(s.host)
                         work("Сервер убран из семьи") { app.fleet.removeServer(s.id); boughtRemoved = bought }

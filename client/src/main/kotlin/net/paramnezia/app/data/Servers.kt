@@ -150,6 +150,11 @@ class Servers(
         return label
     }
 
+    fun makePrimary(id: String) = repo.update { s ->
+        val server = s.profiles.firstOrNull { it.id == id } ?: error("Сервер не найден")
+        s.copy(profiles = listOf(server) + s.profiles.filterNot { it.id == id }, activeProfile = id)
+    }
+
     fun edit(id: String, name: String, conf: String) {
         val label = name.trim()
         require(label.isNotEmpty()) { "Введите название сервера" }

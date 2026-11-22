@@ -106,6 +106,12 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
     val family = remember(repoState.fleet?.manifest) { app.fleet.manifest()?.servers.orEmpty() }
     val familyServer = family.firstOrNull { it.id == serverId }
     val canEditFamily = app.fleet.isOwner && familyServer != null
+    val canPromoteFamily = app.fleet.isAdmin && familyServer != null && family.first().id != serverId
+    val canMakeLocalPrimary = local != null && (
+        repoState.profiles.first().id != serverId ||
+            repoState.activeProfile?.let { it != serverId } == true ||
+            (repoState.fleet != null && repoState.activeProfile == null)
+        )
     val canShare = local?.ssh?.let { ssh ->
         app.fleet.isOwner && repoState.fleet?.serverAccess?.values.orEmpty().none {
             it.host.equals(ssh.host, ignoreCase = true) && it.port == ssh.port
@@ -194,10 +200,30 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
             if (view.ssh != null) IconButton(enabled = !loading, onClick = { reload++ }) { Icon(PnIcons.Refresh, "Обновить сведения сервера") }
         }
 
-        if (local != null || canEditFamily) Group {
-            GroupRow("Редактировать", icon = Glyph.Server, onClick = { if (!busy) editing = true })
+        if (local != null || canEditFamily || canPromoteFamily) Group {
+            if (canPromoteFamily || canMakeLocalPrimary) {
+                GroupRow(
+                    "Сделать основным",
+                    subtitle = if (local == null) "Для всей семьи" else "На этом устройстве",
+                    icon = Glyph.Server,
+                    onClick = {
+                        if (!busy) manage {
+                            if (local == null) {
+                                app.fleet.promote(serverId, useAutomaticSelection = true)
+                            } else {
+                                app.servers.makePrimary(serverId)
+                                app.reconnectIfUp()
+                            }
+                            platform.toast("${view.name} теперь основной")
+                        }
+                    },
+                )
+            }
+            if (local != null || canEditFamily) {
+                GroupRow("Редактировать", icon = Glyph.Server, onClick = { if (!busy) editing = true })
+            }
             if (canShare) GroupRow("Добавить в семью", icon = Glyph.Server, onClick = { if (!busy) sharing = true })
-            if (local != null || family.size > 1) {
+            if (local != null || (canEditFamily && family.size > 1)) {
                 GroupRow("Удалить из списка", icon = Glyph.Server, onClick = { if (!busy) deleting = true })
             }
         }

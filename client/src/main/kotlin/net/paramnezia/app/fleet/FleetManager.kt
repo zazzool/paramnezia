@@ -139,6 +139,7 @@ class FleetManager(
     private fun receive(
         text: String,
         accessChange: (Map<String, SshCredentials>) -> Map<String, SshCredentials> = { it },
+        useAutomaticSelection: Boolean = false,
     ): Boolean {
         val m = member() ?: return false
         val wire = FleetCrypto.unwrap(text)
@@ -153,7 +154,7 @@ class FleetManager(
             s.copy(
                 fleet = s.fleet?.let { it.copy(manifest = wire, ownerVersion = m.ownerVersion, serverAccess = accessChange(it.serverAccess)) },
                 settings = applied,
-                activeProfile = selected,
+                activeProfile = if (useAutomaticSelection) null else selected,
             )
         }
         applyGrant(m)
@@ -590,12 +591,15 @@ class FleetManager(
     }
 
     /** Admin: makes [serverId] the master. Devices follow at their next manifest read. */
-    suspend fun promote(serverId: String) = withContext(Dispatchers.IO) {
-        val admin = admin() ?: return@withContext
-        val current = manifest() ?: return@withContext
-        val target = current.servers.firstOrNull { it.id == serverId } ?: return@withContext
-        if (current.servers.first().id == serverId) return@withContext
-        accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) { m -> m.copy(servers = listOf(target) + m.servers.filter { it.id != serverId }) })))
+    suspend fun promote(serverId: String, useAutomaticSelection: Boolean = false) = withContext(Dispatchers.IO) {
+        synchronized(this@FleetManager) {
+            val admin = admin() ?: error("Эта команда доступна администратору семьи")
+            val current = manifest() ?: error("Семья не найдена")
+            val target = current.servers.firstOrNull { it.id == serverId } ?: error("Сервер не найден")
+            if (current.servers.first().id == serverId) return@synchronized
+            val next = admin.nextFor(current) { m -> m.copy(servers = listOf(target) + m.servers.filter { it.id != serverId }) }
+            accept(FleetCrypto.encode(admin.seal(next)), useAutomaticSelection = useAutomaticSelection)
+        }
     }
 
     /** Owner: updates the name and endpoint advertised to every member. */
@@ -641,7 +645,7 @@ class FleetManager(
         if (next == current) return
         val serverAccess = accessChange(stored?.serverAccess.orEmpty())
         val signed = FleetCrypto.encode(admin.seal(admin.next(current) { withAdmins(next, serverAccess) }))
-        accept(signed, extraTargets) { serverAccess }
+        accept(signed, extraTargets, accessChange = { serverAccess })
     }
 
     /**
@@ -728,8 +732,9 @@ class FleetManager(
         signed: String,
         extraTargets: List<SshCredentials> = emptyList(),
         accessChange: (Map<String, SshCredentials>) -> Map<String, SshCredentials> = { it },
+        useAutomaticSelection: Boolean = false,
     ) {
-        if (!receive(signed, accessChange)) return
+        if (!receive(signed, accessChange, useAutomaticSelection)) return
         val trust = stored?.trust ?: return
         // Spreading the new manifest (servers, gist) can take a while on a slow network;
         // the admin's screen does not wait for it.

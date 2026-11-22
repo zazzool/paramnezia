@@ -47,12 +47,18 @@ class FleetServersTest {
         network.mirror = ownerManager.stored!!.manifest
         assertTrue(memberManager.sync())
         assertEquals(listOf("first", "second"), memberManager.member()!!.tunnels().map { it.first.id })
+        ownerRepo.update { it.copy(activeProfile = first.id) }
+        ownerManager.promote(second.id, useAutomaticSelection = true)
+        assertNull(ownerRepo.current.activeProfile)
+        network.mirror = ownerManager.stored!!.manifest
+        assertTrue(memberManager.sync())
+        assertEquals(listOf("second", "first"), memberManager.member()!!.tunnels().map { it.first.id })
         memberRepo.update { it.copy(activeProfile = second.id) }
 
         ownerManager.editServer(second.id, "New backup", "backup.example:8443")
         network.mirror = ownerManager.stored!!.manifest
         assertTrue(memberManager.sync())
-        val (server, tunnel) = memberManager.member()!!.tunnels().last()
+        val (server, tunnel) = memberManager.member()!!.tunnels().first()
         assertEquals("New backup", server.name)
         assertTrue(server.altPorts.isEmpty())
         assertEquals("backup.example:8443", tunnel.peers.single().endpoint)
@@ -63,7 +69,7 @@ class FleetServersTest {
         assertEquals(listOf("first"), memberManager.member()!!.tunnels().map { it.first.id })
         assertNull(memberRepo.current.activeProfile)
         assertFalse(memberManager.sync())
-        assertEquals(4, updates)
+        assertEquals(5, updates)
     }
 
     private fun memoryRepo(state: AppState): Repo = Repo(object : StateStore {
