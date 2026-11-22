@@ -211,11 +211,13 @@ class App : Application(), TunnelHost {
     override suspend fun currentSpec(): TunnelSpec? {
         noteNetwork()
         val state = repo.current
+        state.profiles.firstOrNull { it.id == state.activeProfile }?.let { return profileSpec(it) }
         val member = fleet.member()
         if (member != null) {
             val tunnels = member.tunnels()
             if (tunnels.isNotEmpty()) {
-                val chosen = failover.choose(tunnels.map { it.first }, System.currentTimeMillis()) ?: return null
+                val preferred = tunnels.map { it.first }.sortedByDescending { it.id == state.activeProfile }
+                val chosen = failover.choose(preferred, System.currentTimeMillis()) ?: return null
                 val config = tunnels.first { it.first.id == chosen.id }.second
                 return dressed(chosen.id, chosen.name, config, camo.dress(chosen.id, config, reachOf(chosen.id)))
             }

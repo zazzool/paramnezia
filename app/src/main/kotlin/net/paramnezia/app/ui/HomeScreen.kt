@@ -73,7 +73,7 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer:
     var details by remember { mutableStateOf(false) }
 
     Column(modifier.fillMaxSize().padding(horizontal = Space.M + 4.dp).padding(top = Space.S, bottom = Space.M)) {
-        TopBar(app, tunnel, servers, onDetails = { details = true })
+        TopBar(app, tunnel, servers, onDetails = { details = true }, onManage = { onOpen(Tab.FLEET) })
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             val dial = dialFor(maxHeight, maxWidth)
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -107,9 +107,9 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer:
     }
 }
 
-/** Title, update badge and the server chip (a menu when there are several standalone servers). */
+/** Title, update badge and the connection server selector. */
 @Composable
-private fun TopBar(app: App, tunnel: TunnelState, servers: Int, onDetails: () -> Unit) {
+private fun TopBar(app: App, tunnel: TunnelState, servers: Int, onDetails: () -> Unit, onManage: () -> Unit) {
     val state by app.repo.state.collectAsState()
     val update by app.updater.status.collectAsState()
     val health by TunnelRuntime.health.collectAsState()
@@ -123,11 +123,14 @@ private fun TopBar(app: App, tunnel: TunnelState, servers: Int, onDetails: () ->
             Spacer(Modifier.width(Space.S))
         }
         val server = when (tunnel) { is TunnelState.Up -> tunnel.serverName; is TunnelState.Connecting -> tunnel.serverName; else -> null }
-        val pickable = state.fleet == null && state.profiles.size > 1
+        val family = remember(state.fleet?.manifest) { app.fleet.member()?.tunnels().orEmpty().map { it.first } }
+        val choices = family.map { it.id to it.name } + state.profiles.map { it.id to it.name }
+        val selected = choices.firstOrNull { it.first == state.activeProfile }
+        val pickable = choices.isNotEmpty()
         val (label, dot) = when {
             server != null -> server to (if (tunnel is TunnelState.Up && !health.unstable && !health.offline) Brand.Mint else Brand.Amber)
             servers == 0 -> "нет сервера" to Brand.Coral
-            pickable -> (state.profiles.firstOrNull { it.id == state.activeProfile } ?: state.profiles.first()).name to MaterialTheme.colorScheme.outline
+            pickable -> (selected?.second ?: choices.first().second) to MaterialTheme.colorScheme.outline
             else -> "серверов: $servers" to MaterialTheme.colorScheme.outline
         }
         Box {
@@ -140,17 +143,33 @@ private fun TopBar(app: App, tunnel: TunnelState, servers: Int, onDetails: () ->
                 }
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                for (pr in state.profiles) {
+                fun select(id: String?) {
+                    menu = false
+                    app.repo.update { it.copy(activeProfile = id) }
+                    app.reconnectIfUp()
+                }
+                if (family.isNotEmpty()) DropdownMenuItem(
+                    text = { Text("Семья · автоматически") },
+                    leadingIcon = { RadioButton(selected = selected == null, onClick = null) },
+                    onClick = { select(null) },
+                )
+                for ((id, name) in choices) {
                     DropdownMenuItem(
-                        text = { Text(pr.name) },
-                        leadingIcon = { RadioButton(selected = pr.id == (state.activeProfile ?: state.profiles.first().id), onClick = null) },
-                        onClick = {
-                            menu = false
-                            app.repo.update { it.copy(activeProfile = pr.id) }
-                            app.reconnectIfUp()
+                        text = {
+                            Column {
+                                Text(name)
+                                if (family.isNotEmpty() && state.profiles.any { it.id == id }) {
+                                    Text("Локальный сервер", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
                         },
+                        leadingIcon = {
+                            RadioButton(selected = id == (selected?.first ?: choices.first().first.takeIf { family.isEmpty() }), onClick = null)
+                        },
+                        onClick = { select(id) },
                     )
                 }
+                DropdownMenuItem(text = { Text("Управление серверами") }, onClick = { menu = false; onManage() })
             }
         }
     }

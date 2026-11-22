@@ -61,7 +61,7 @@ class Servers(
             }
         }
         if (added.isEmpty()) throw ConfigException("В ключе нет поддерживаемых протоколов (AmneziaWG, WireGuard)")
-        repo.update { s -> s.copy(profiles = s.profiles + added, activeProfile = s.activeProfile ?: added.first().id) }
+        repo.update { s -> s.copy(profiles = s.profiles + added, activeProfile = added.first().id) }
         Imported.Profiles(added.map { it.name })
     }
 
@@ -142,8 +142,38 @@ class Servers(
     private fun portOf(t: net.paramnezia.core.config.TunnelConfig): Int =
         net.paramnezia.core.config.Uapi.splitEndpoint(t.peers.first().endpoint ?: throw ConfigException("no endpoint")).second
 
+    /** The owner's VPS is provisioned for every family device. */
+    suspend fun addVps(name: String, ssh: SshCredentials, onStep: (ServerManager.Step) -> Unit): String {
+        val label = name.trim().ifEmpty { ssh.host }
+        if (fleet.isOwner) fleet.addServer(label, ssh, makeMaster = false, onStep = onStep)
+        else deploy(label, ssh, onStep)
+        return label
+    }
+
+    fun edit(id: String, name: String, conf: String) {
+        val label = name.trim()
+        require(label.isNotEmpty()) { "Введите название сервера" }
+        repo.update { s ->
+            val profile = s.profiles.firstOrNull { it.id == id } ?: error("Сервер не найден")
+            val updated = if (conf == profile.conf) profile.copy(name = label) else {
+                val config = WgQuick.parse(conf)
+                require(config.peers.any { it.endpoint != null }) { "Укажите Endpoint в конфигурации" }
+                profile.copy(name = label, conf = WgQuick.write(config), protocol = if (config.isAmnezia) "AWG" else "WIREGUARD",
+                    altPorts = emptyList(), altHosts = emptyList())
+            }
+            s.copy(
+                profiles = s.profiles.map { if (it.id == id) updated else it },
+                clientPool = if (conf == profile.conf) s.clientPool else s.clientPool.filter { it.profileId != id },
+            )
+        }
+    }
+
     fun remove(id: String) = repo.update { s ->
         val rest = s.profiles.filter { it.id != id }
-        s.copy(profiles = rest, activeProfile = if (s.activeProfile == id) rest.firstOrNull()?.id else s.activeProfile)
+        s.copy(
+            profiles = rest,
+            activeProfile = s.activeProfile.takeUnless { it == id },
+            clientPool = s.clientPool.filter { it.profileId != id },
+        )
     }
 }

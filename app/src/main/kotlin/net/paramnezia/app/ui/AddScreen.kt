@@ -153,7 +153,7 @@ private fun DeployCard(app: App, toast: (String) -> Unit, onDone: () -> Unit) {
     var buying by remember { mutableStateOf(false) }
     var vps by remember { mutableStateOf(false) }
 
-    if (buying) CloudBuyDialog(app, onDismiss = { buying = false }, toast = toast) { n, ssh, onStep -> app.servers.deploy(n, ssh, onStep) }
+    if (buying) CloudBuyDialog(app, onDismiss = { buying = false }, toast = toast) { n, ssh, onStep -> app.servers.addVps(n, ssh, onStep) }
     // Hoster prices are ready before the tap (cached copy at once, refreshed when older than 10 min).
     LaunchedEffect(Unit) { if (app.repo.current.cloud.tokens.isNotEmpty()) app.cloud.prefetch() }
 
@@ -178,8 +178,8 @@ private fun DeployCard(app: App, toast: (String) -> Unit, onDone: () -> Unit) {
             onClick = {
                 running = true
                 scope.launch {
-                    runCatching { app.servers.deploy(form.name, form.credentials()) { s -> step = s } }
-                        .onSuccess { toast("Сервер ${it.name} готов"); form.clear(); step = null; onDone() }
+                    runCatching { app.servers.addVps(form.name, form.credentials()) { s -> step = s } }
+                        .onSuccess { toast("Сервер $it готов"); form.clear(); step = null; onDone() }
                         .onFailure { toast(deployError(it)) }
                     running = false
                 }

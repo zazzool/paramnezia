@@ -36,10 +36,12 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val app get() = application as App
+    private var fleetSync: Job? = null
 
     /** Keys that arrived by link, share or file; handled by the Add screen. */
     private val incoming = MutableSharedFlow<String>(extraBufferCapacity = 4)
@@ -100,8 +102,12 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         // Admin: the daily server check runs while the admin is looking at the app, not in the background.
         app.scope.launch { app.healServers() }
-        // Everyone in a fleet: opening the app looks for a newer configuration (at most every 15 min).
-        app.fleet.syncIfDue(15 * 60_000L)
+        fleetSync = app.scope.launch { app.fleet.syncWhileVisible() }
+    }
+
+    override fun onStop() {
+        fleetSync?.cancel()
+        super.onStop()
     }
 
     override fun onNewIntent(intent: Intent) {

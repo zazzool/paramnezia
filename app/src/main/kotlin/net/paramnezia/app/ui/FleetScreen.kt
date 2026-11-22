@@ -137,6 +137,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
             ScreenTitle("Семья", "Раздайте VPN семье и друзьям")
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (managed.isEmpty()) {
+                LocalServers(state.profiles) { details = it }
                 NeedServer(onAddServer)
                 return@Column
             }
@@ -159,6 +160,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                     )
                 }
             }
+            LocalServers(state.profiles.filter { it.ssh == null }) { details = it }
             SectionTitle("Раздача")
             Group { LanShareRow("Телевизору и компьютеру рядом: приложение и ключ") { if (!busy) lanShare = true } }
             FamilyPage(state.pages[managed.first().ssh!!.host], busy, onCreate = { work { app.links.familyPage() } }, onShare = shareFamily, onOpen = openUrl)
@@ -221,6 +223,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
         if (isAdmin && servers.size < 2) {
             Hint("Добавьте резервный сервер: если основной заблокируют, устройства сами переключатся на него.", PnIcons.Warning, Brand.Amber)
         }
+        LocalServers(state.profiles) { details = it }
         Group {
             servers.forEachIndexed { i, s ->
                 val actions = buildList<Pair<String, () -> Unit>> {
@@ -824,4 +827,16 @@ private fun RebootDialog(app: App, t: RebootTarget, onDismiss: () -> Unit) {
         },
         dismissButton = { if (!started) TextButton(onClick = onDismiss) { Text("Отмена") } },
     )
+}
+
+
+@Composable
+private fun LocalServers(profiles: List<StoredProfile>, onOpen: (String) -> Unit) {
+    if (profiles.isEmpty()) return
+    SectionTitle("Локальные серверы")
+    Group {
+        profiles.forEach { profile ->
+            GroupRow(profile.name, icon = Glyph.Server, onClick = { onOpen(profile.id) }, trailing = { Chevron() })
+        }
+    }
 }

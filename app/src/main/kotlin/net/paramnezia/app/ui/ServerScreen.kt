@@ -12,7 +12,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -26,6 +29,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,6 +38,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import net.paramnezia.app.App
 import net.paramnezia.core.config.Camouflage
 import net.paramnezia.core.config.ParamCatalog
@@ -96,6 +101,88 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
     }
     val traffic = rememberLive(tunnel)
     val copy: (String) -> Unit = { platform.copy(it); platform.toast("Скопировано") }
+    val scope = rememberCoroutineScope()
+    val local = repoState.profiles.firstOrNull { it.id == serverId }
+    val family = remember(repoState.fleet?.manifest) { app.fleet.manifest()?.servers.orEmpty() }
+    val familyServer = family.firstOrNull { it.id == serverId }
+    val canEditFamily = app.fleet.isOwner && familyServer != null
+    val canShare = local?.ssh?.let { ssh ->
+        app.fleet.isOwner && repoState.fleet?.serverAccess?.values.orEmpty().none {
+            it.host.equals(ssh.host, ignoreCase = true) && it.port == ssh.port
+        }
+    } == true
+    var editing by remember(serverId) { mutableStateOf(false) }
+    var deleting by remember(serverId) { mutableStateOf(false) }
+    var sharing by remember(serverId) { mutableStateOf(false) }
+    var busy by remember(serverId) { mutableStateOf(false) }
+    fun manage(action: suspend () -> Unit) {
+        busy = true
+        scope.launch {
+            runCatching { action() }.onFailure { platform.toast(it.message ?: "Ошибка") }
+            busy = false
+        }
+    }
+    if (editing) {
+        var name by remember { mutableStateOf(view.name) }
+        var connection by remember { mutableStateOf(local?.conf ?: view.endpoint.orEmpty()) }
+        AlertDialog(
+            onDismissRequest = { editing = false },
+            title = { Text("Редактировать сервер") },
+            text = {
+                Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(Space.S)) {
+                    OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("Название") })
+                    OutlinedTextField(connection, { connection = it }, singleLine = local == null,
+                        label = { Text(if (local == null) "Адрес VPN и порт" else "Конфигурация VPN") })
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = !busy && name.isNotBlank() && connection.isNotBlank(), onClick = {
+                    manage {
+                        if (local != null) {
+                            app.servers.edit(serverId, name, connection)
+                            if (live != null) app.reconnectIfUp()
+                        } else app.fleet.editServer(serverId, name, connection)
+                        editing = false
+                    }
+                }) { Text("Сохранить") }
+            },
+            dismissButton = { TextButton(onClick = { editing = false }) { Text("Отмена") } },
+        )
+    }
+    if (deleting) AlertDialog(
+        onDismissRequest = { deleting = false },
+        title = { Text("Удалить сервер?") },
+        text = { Text(view.name) },
+        confirmButton = {
+            TextButton(onClick = {
+                deleting = false
+                manage {
+                    if (local != null) {
+                        app.servers.remove(serverId)
+                        if (app.serverCount() == 0) app.disconnect()
+                        else if (live != null || repoState.activeProfile == serverId) app.reconnectIfUp()
+                    } else app.fleet.removeServer(serverId)
+                    onBack()
+                }
+            }) { Text("Удалить") }
+        },
+        dismissButton = { TextButton(onClick = { deleting = false }) { Text("Отмена") } },
+    )
+    if (sharing) AlertDialog(
+        onDismissRequest = { sharing = false },
+        title = { Text("Добавить сервер в семью?") },
+        text = { Text(view.name) },
+        confirmButton = {
+            TextButton(onClick = {
+                sharing = false
+                manage {
+                    app.fleet.addServer(view.name, checkNotNull(local?.ssh), makeMaster = false) {}
+                    platform.toast("Сервер добавлен в семью")
+                }
+            }) { Text("Добавить") }
+        },
+        dismissButton = { TextButton(onClick = { sharing = false }) { Text("Отмена") } },
+    )
     val config = view.config
     val protocol = ProtocolVersion.of(config)
 
@@ -105,6 +192,14 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
     ) {
         Header(view.name, listOfNotNull(view.endpoint?.substringBeforeLast(':'), view.role).joinToString(" · "), onBack) {
             if (view.ssh != null) IconButton(enabled = !loading, onClick = { reload++ }) { Icon(PnIcons.Refresh, "Обновить сведения сервера") }
+        }
+
+        if (local != null || canEditFamily) Group {
+            GroupRow("Редактировать", icon = Glyph.Server, onClick = { if (!busy) editing = true })
+            if (canShare) GroupRow("Добавить в семью", icon = Glyph.Server, onClick = { if (!busy) sharing = true })
+            if (local != null || family.size > 1) {
+                GroupRow("Удалить из списка", icon = Glyph.Server, onClick = { if (!busy) deleting = true })
+            }
         }
 
         // The state in one line, coloured like the power button.

@@ -28,10 +28,15 @@ import net.paramnezia.core.fleet.HealthReport
 import net.paramnezia.core.fleet.Invite
 import net.paramnezia.core.fleet.fleetServerOf
 import net.paramnezia.core.profile.SshCredentials
+import net.paramnezia.core.profile.Protocol
+import net.paramnezia.core.config.Uapi
+import net.paramnezia.core.fleet.FleetTrust
+import kotlinx.coroutines.sync.Mutex
 import net.paramnezia.deploy.FleetPublisher
 import net.paramnezia.deploy.ServerManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -107,19 +112,20 @@ class FleetManager(
         next(current) { m -> change(m).let { if (isOwner) withAdmins(it) else it } }
 
     /** Owner: the co-admin list and grants, built from what the owner holds (server access follows the owner's own). */
-    private fun withAdmins(m: FleetManifest): FleetManifest {
+    private fun withAdmins(m: FleetManifest, access: Map<String, SshCredentials>? = null): FleetManifest {
         val f = stored ?: return m
         val records = f.coAdmins.filter { r -> m.devices.any { it.publicKey == r.device } }
-        val pins = repo.current.hostKeys.filterKeys { k -> f.serverAccess.values.any { k == "${it.host}:${it.port}" } }
+        val serverAccess = access ?: f.serverAccess
+        val pins = repo.current.hostKeys.filterKeys { k -> serverAccess.values.any { k == "${it.host}:${it.port}" } }
         val now = System.currentTimeMillis()
         val pskSeed = f.adminSeed?.let { Base64.getEncoder().encodeToString(DevicePsk.seed(Base64.getDecoder().decode(it))) }
         return m.copy(
             ownerDevice = WgKey.fromBase64(f.deviceKey).publicKey().toBase64(),
             admins = records.map { FleetCoAdmin(it.name, it.device, it.verifyKey, it.sshPublic, it.since) },
             grants = records.map { r ->
-                val access = f.serverAccess.filterKeys { id -> m.servers.any { it.id == id } }
+                val grantAccess = serverAccess.filterKeys { id -> m.servers.any { it.id == id } }
                     .mapValues { (_, c) -> c.copy(password = "", privateKey = r.sshPrivate, passphrase = "") }
-                GrantBox.seal(AdminGrant(r.signingSeed, r.verifyKey, access, pins, f.gistId, f.gistToken, now, pskSeed), WgKey.fromBase64(r.device))
+                GrantBox.seal(AdminGrant(r.signingSeed, r.verifyKey, grantAccess, pins, f.gistId, f.gistToken, now, pskSeed), WgKey.fromBase64(r.device))
             },
         )
     }
@@ -127,7 +133,13 @@ class FleetManager(
     // --- receiving ----------------------------------------------------------------------------
 
     /** Offers a manifest from any channel. Returns true if it was newer and is now in use. */
-    fun offer(text: String): Boolean {
+    fun offer(text: String): Boolean = receive(text)
+
+    @Synchronized
+    private fun receive(
+        text: String,
+        accessChange: (Map<String, SshCredentials>) -> Map<String, SshCredentials> = { it },
+    ): Boolean {
         val m = member() ?: return false
         val wire = FleetCrypto.unwrap(text)
         if (!m.offer(wire)) return false
@@ -135,7 +147,14 @@ class FleetManager(
         repo.update { s ->
             val follows = s.fleet?.let { it.adminSeed == null || it.coAdmin } == true
             val applied = if (policy != null && follows) s.settings.applying(policy) else s.settings
-            s.copy(fleet = s.fleet?.copy(manifest = wire, ownerVersion = m.ownerVersion), settings = applied)
+            val selected = s.activeProfile?.takeIf { id ->
+                s.profiles.any { it.id == id } || m.manifest?.servers?.any { it.id == id } == true
+            }
+            s.copy(
+                fleet = s.fleet?.let { it.copy(manifest = wire, ownerVersion = m.ownerVersion, serverAccess = accessChange(it.serverAccess)) },
+                settings = applied,
+                activeProfile = selected,
+            )
         }
         applyGrant(m)
         // A co-admin's change, seen by the owner: signed again with the owner's key, so devices with an
@@ -176,6 +195,7 @@ class FleetManager(
     }
 
     /** Joins a fleet from an invite. Returns false for an ordinary key (not an invite). */
+    @Synchronized
     fun join(invite: String, deviceName: String): Boolean {
         val m = FleetMember.fromInvite(invite.trim(), ed) ?: return false
         val inv = Invite.read(invite) ?: return false
@@ -226,10 +246,20 @@ class FleetManager(
      * Cheap background check while the tunnel works: at most once per [minIntervalMs], and at once
      * after a switch to another server. One small HTTP request inside the tunnel.
      */
-    fun syncIfDue(minIntervalMs: Long = SYNC_EVERY_MS) {
+    @Synchronized
+    fun syncIfDue(minIntervalMs: Long = SYNC_EVERY_MS, tunnelFirst: Boolean = true) {
         if (stored == null || System.currentTimeMillis() - lastAttempt < minIntervalMs) return
         lastAttempt = System.currentTimeMillis()
-        scope.launch { runCatching { sync(tunnelFirst = true) } }
+        scope.launch { runCatching { sync(tunnelFirst = tunnelFirst) } }
+    }
+
+    /** Keep the server picker current while the app is visible, including when disconnected. */
+    suspend fun syncWhileVisible() {
+        val interval = 5 * 60_000L
+        while (true) {
+            syncIfDue(interval, tunnelFirst = false)
+            delay(interval)
+        }
     }
 
     private fun channelName(url: String) = when {
@@ -284,7 +314,7 @@ class FleetManager(
                 activeProfile = null,
             )
         }
-        publish(signed)
+        publish(admin.trust)
         onManifestChanged()
         onServerReady(ssh)
     }
@@ -438,7 +468,7 @@ class FleetManager(
         val peers = m.devices.filter { !it.ownPsk || admin.pskSeed != null }
             .map { ServerManager.PeerSpec(WgKey.fromBase64(it.publicKey), it.name, it.address.substringBefore('/'), admin.pskFor(it)) }
         val upgrade = f.portsChecked < SERVER_UPGRADE
-        val updated = HashMap<String, FleetServer>()
+        val updated = HashMap<String, Pair<FleetServer, FleetServer>>()
         var upgradeFailed = false
         var ok = 0
         val stillRevoked = HashSet<String>()
@@ -456,7 +486,6 @@ class FleetManager(
                             .onFailure { stillRevokedKeys += f.revokedAdminKeys }.getOrThrow()
                     }
                 },
-                "manifest" to { if (!publisher.publishToServer(a, f.manifest)) Log.w(TAG, "${s.name}: in-tunnel web server is not answering") },
                 "release" to { release?.let { (r, wire) -> publisher.mirrorRelease(a, r.sha256, r.publicApkUrls(), wire, forInvites = false) } },
                 // Spare ports (once per server upgrade): a server without any gets them, and the
                 // manifest learns what each server answers on.
@@ -477,7 +506,7 @@ class FleetManager(
                         runCatching {
                             val p = servers.ports(a, if (s.altPorts.isEmpty()) ServerManager.altPortsFor(s.port) else emptyList())
                             val next = s.copy(altPorts = p.alt, altHosts = listOfNotNull(p.ipv6))
-                            if (next != s && p.main == s.port) updated[s.id] = next
+                            if (next != s && p.main == s.port) updated[s.id] = s to next
                         }.onFailure { e ->
                             // Not an AmneziaWG 2 container (an older AmneziaVPN protocol): nothing to upgrade there.
                             if ((e as? net.paramnezia.deploy.SshException)?.code != "no_container") upgradeFailed = true
@@ -487,6 +516,14 @@ class FleetManager(
             )
             var serverOk = true
             for ((name, step) in steps) runCatching { step() }.onFailure { serverOk = false; Log.w(TAG, "heal ${s.name}/$name: ${it.message}") }
+            runCatching {
+                publishLock.withLock {
+                    val latest = stored?.takeIf { it.trust == f.trust && s.id in it.serverAccess }
+                    if (latest != null && !publisher.publishToServer(a, latest.manifest)) {
+                        Log.w(TAG, "${s.name}: in-tunnel web server is not answering")
+                    }
+                }
+            }.onFailure { serverOk = false; Log.w(TAG, "heal ${s.name}/manifest: ${it.message}") }
             if (serverOk) ok++
         }
         repo.update { st ->
@@ -498,9 +535,14 @@ class FleetManager(
             })
         }
         if (updated.isNotEmpty()) {
-            Log.i(TAG, "spare ports on ${updated.values.joinToString { "${it.name}: ${it.altPorts}" }}")
+            Log.i(TAG, "spare ports on ${updated.values.joinToString { (_, server) -> "${server.name}: ${server.altPorts}" }}")
             manifest()?.let { cur ->
-                accept(FleetCrypto.encode(admin.seal(admin.nextFor(cur) { mm -> mm.copy(servers = mm.servers.map { updated[it.id] ?: it }) })))
+                accept(FleetCrypto.encode(admin.seal(admin.nextFor(cur) { mm -> mm.copy(servers = mm.servers.map { server ->
+                    val (before, after) = updated[server.id] ?: return@map server
+                    if (server.host == before.host && server.port == before.port) {
+                        server.copy(altPorts = after.altPorts, altHosts = after.altHosts)
+                    } else server
+                }) })))
             }
         }
         ok
@@ -513,9 +555,20 @@ class FleetManager(
     suspend fun addServer(name: String, ssh: SshCredentials, makeMaster: Boolean, onStep: (ServerManager.Step) -> Unit) = withContext(Dispatchers.IO) {
         val admin = owner()
         val current = manifest() ?: error("no manifest")
-        val f = stored!!
+        val f = stored ?: error("Семья не найдена")
+        fun checkNewServer() {
+            val latest = stored?.takeIf { it.trust == f.trust } ?: error("Семья изменилась")
+            require(latest.serverAccess.values.none { it.host.equals(ssh.host, ignoreCase = true) && it.port == ssh.port }) {
+                "Этот сервер уже добавлен в семью"
+            }
+        }
+        checkNewServer()
         val inspection = servers.inspect(ssh)
-        if (inspection.awgContainer == null) servers.install(ssh, ServerManager.InstallOptions(), onStep)
+        val protocol = inspection.awgContainer ?: run {
+            servers.install(ssh, ServerManager.InstallOptions(), onStep)
+            Protocol.AWG
+        }
+        require(protocol == Protocol.AWG) { "Для семейного сервера нужен AmneziaWG 2" }
         val myKey = WgKey.fromBase64(f.deviceKey)
         val me = current.deviceFor(myKey.publicKey()) ?: error("admin is not a fleet member")
         val config = servers.addClient(ssh, myKey, me.name, clientIp = me.address.substringBefore('/'), psk = admin.pskFor(me))
@@ -523,12 +576,16 @@ class FleetManager(
         for (d in current.devices) if (d.publicKey != me.publicKey) {
             servers.registerPeer(ssh, WgKey.fromBase64(d.publicKey), d.name, clientIp = d.address.substringBefore('/'), psk = admin.pskFor(d))
         }
-        repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(serverAccess = it.serverAccess + (server.id to ssh)) }) }
         // The co-admins reach the new server with their own keys too.
         f.coAdmins.takeIf { it.isNotEmpty() }?.let { list -> runCatching { servers.updateAdminKeys(ssh, list.map { it.sshPublic }) } }
-        accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) {
-            it.copy(servers = if (makeMaster) listOf(server) + it.servers else it.servers + server)
-        })))
+        changeServers(accessChange = { it + (server.id to ssh) }) { latest ->
+            checkNewServer()
+            check(latest.devices == current.devices && latest.admins == current.admins) {
+                "Состав семьи изменился. Повторите добавление сервера"
+            }
+            latest.copy(servers = if (makeMaster) listOf(server) + latest.servers else latest.servers + server)
+        }
+        onStep(ServerManager.Step.DONE)
         onServerReady(ssh)
     }
 
@@ -541,13 +598,50 @@ class FleetManager(
         accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) { m -> m.copy(servers = listOf(target) + m.servers.filter { it.id != serverId }) })))
     }
 
-    /** Admin: drops a server (for example one banned for good). */
+    /** Owner: updates the name and endpoint advertised to every member. */
+    suspend fun editServer(serverId: String, name: String, endpoint: String) = withContext(Dispatchers.IO) {
+        val label = name.trim()
+        require(label.isNotEmpty()) { "Введите название сервера" }
+        val (host, port) = Uapi.splitEndpoint(endpoint)
+        require(host.isNotEmpty() && host.none { it.isWhitespace() || it in "/[]@?#" }) {
+            "Введите адрес сервера и порт"
+        }
+        changeServers { current ->
+            require(current.servers.any { it.id == serverId }) { "Сервер не найден" }
+            current.copy(servers = current.servers.map { server ->
+                when {
+                    server.id != serverId -> server
+                    server.host == host && server.port == port -> server.copy(name = label)
+                    else -> server.copy(name = label, host = host, port = port, altPorts = emptyList(), altHosts = emptyList())
+                }
+            })
+        }
+    }
+
+    /** Owner: drops a server and publishes the removal there for devices still connected to it. */
     suspend fun removeServer(serverId: String) = withContext(Dispatchers.IO) {
+        synchronized(this@FleetManager) {
+            val removed = accessTo(serverId)
+            changeServers(listOfNotNull(removed), accessChange = { it - serverId }) { current ->
+                require(current.servers.size > 1) { "В семье должен остаться хотя бы один сервер" }
+                current.copy(servers = current.servers.filter { it.id != serverId })
+            }
+        }
+    }
+
+    @Synchronized
+    private fun changeServers(
+        extraTargets: List<SshCredentials> = emptyList(),
+        accessChange: (Map<String, SshCredentials>) -> Map<String, SshCredentials> = { it },
+        change: (FleetManifest) -> FleetManifest,
+    ) {
         val admin = owner()
-        val current = manifest() ?: return@withContext
-        if (current.servers.size <= 1) return@withContext
-        accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) { m -> m.copy(servers = m.servers.filter { it.id != serverId }) })))
-        repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(serverAccess = it.serverAccess - serverId) }) }
+        val current = manifest() ?: error("Семья не найдена")
+        val next = change(current)
+        if (next == current) return
+        val serverAccess = accessChange(stored?.serverAccess.orEmpty())
+        val signed = FleetCrypto.encode(admin.seal(admin.next(current) { withAdmins(next, serverAccess) }))
+        accept(signed, extraTargets) { serverAccess }
     }
 
     /**
@@ -630,32 +724,50 @@ class FleetManager(
         if (everywhere) repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(revokedAdminKeys = it.revokedAdminKeys - record.sshPublic) }) }
     }
 
-    private fun accept(signed: String) {
-        offer(signed)
+    private fun accept(
+        signed: String,
+        extraTargets: List<SshCredentials> = emptyList(),
+        accessChange: (Map<String, SshCredentials>) -> Map<String, SshCredentials> = { it },
+    ) {
+        if (!receive(signed, accessChange)) return
+        val trust = stored?.trust ?: return
         // Spreading the new manifest (servers, gist) can take a while on a slow network;
         // the admin's screen does not wait for it.
-        scope.launch { runCatching { publish(signed) }.onFailure { Log.w(TAG, "publish failed", it) } }
+        scope.launch { runCatching { publish(trust, extraTargets) }.onFailure { Log.w(TAG, "publish failed", it) } }
     }
 
     /** Admin: pushes a manifest to every channel. Failures are fine as long as one channel works. */
-    private suspend fun publish(signed: String) = withContext(Dispatchers.IO) {
-        val f = stored ?: return@withContext
-        val m = manifest() ?: return@withContext
-        val gist = coroutineScope {
-            val jobs = m.servers.mapNotNull { s -> access(s)?.let { a -> async { runCatching { publisher.publishToServer(a, signed) } } } }
-            val gistJob = f.gistToken?.let { t -> async { runCatching { publisher.publishToGist(t, f.gistId, signed) } } }
-            jobs.awaitAll()
-            gistJob?.await()?.also { r ->
-                val error = r.exceptionOrNull()?.let { it.message ?: it.toString() }
-                if (error != stored?.gistError) repo.update { s -> s.copy(fleet = s.fleet?.copy(gistError = error)) }
-            }?.getOrNull()
+    private val publishLock = Mutex()
+
+    private suspend fun publish(trust: FleetTrust, extraTargets: List<SshCredentials> = emptyList()) =
+        withContext(Dispatchers.IO) {
+            publishLock.withLock {
+                val f = stored?.takeIf { it.trust == trust } ?: return@withLock
+                val m = manifest() ?: return@withLock
+                val signed = f.manifest
+                val gist = coroutineScope {
+                    val targets = (m.servers.mapNotNull { f.serverAccess[it.id] } + extraTargets).distinct()
+                    val jobs = targets.map { a ->
+                        async {
+                            runCatching {
+                                if (!publisher.publishToServer(a, signed)) Log.w(TAG, "${a.host}: in-tunnel web server is not answering")
+                            }.onFailure { Log.w(TAG, "${a.host}: manifest publication failed", it) }
+                        }
+                    }
+                    val gistJob = f.gistToken?.let { t -> async { runCatching { publisher.publishToGist(t, f.gistId, signed) } } }
+                    jobs.awaitAll()
+                    gistJob?.await()?.also { r ->
+                        val error = r.exceptionOrNull()?.let { it.message ?: it.toString() }
+                        if (error != stored?.gistError) repo.update { s -> s.copy(fleet = s.fleet?.copy(gistError = error)) }
+                    }?.getOrNull()
+                }
+                // The gist was deleted on GitHub and a new one was made: point the devices at it.
+                if (gist != null && gist.id != f.gistId) {
+                    repo.update { s -> s.copy(fleet = s.fleet?.copy(gistId = gist.id)) }
+                    f.gistToken?.let { setReserveChannel(it) }
+                }
+            }
         }
-        // The gist was deleted on GitHub and a new one was made: point the devices at it.
-        if (gist != null && gist.id != f.gistId) {
-            repo.update { s -> s.copy(fleet = s.fleet?.copy(gistId = gist.id)) }
-            f.gistToken?.let { setReserveChannel(it) }
-        }
-    }
 
     /**
      * The ports [server] answers on, asked from the server itself (spare ones are added if it has
