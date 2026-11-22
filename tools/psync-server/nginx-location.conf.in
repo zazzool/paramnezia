@@ -1,0 +1,11 @@
+location @paramnezia_write {
+    client_max_body_size 2m;
+    proxy_pass http://unix:/usr/share/nginx/html/paramnezia/<FAMILY_ID>/writer.sock;
+}
+location = /paramnezia/<FAMILY_ID>/fleet.json {
+    error_page 418 = @paramnezia_write;
+    if ($request_method = PUT) { return 418; }
+    root /usr/share/nginx/html;
+    default_type application/json;
+    expires -1;
+}

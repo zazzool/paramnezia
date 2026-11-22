@@ -1,0 +1,5 @@
+$ORIGIN awg-family.psync.ru.
+$TTL 60
+@ IN SOA psync.ru. hostmaster.psync.ru. (<SERIAL> 300 60 86400 60) ; serial=<SERIAL>
+@ IN NS psync.ru.
+@ IN A <VPN_IPV4>
