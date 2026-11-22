@@ -1,0 +1,7 @@
+awg-family.psync.ru:53 {
+    bind <AUTHORITATIVE_IPV4>
+    file /var/lib/paramnezia-dns/family.zone {
+        reload 2s
+    }
+    errors
+}

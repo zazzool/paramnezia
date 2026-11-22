@@ -1,0 +1,17 @@
+[Unit]
+Description=Paramnezia family manifest publisher
+After=local-fs.target
+[Service]
+User=pnmirror
+ExecStart=/usr/bin/python3 /opt/paramnezia-mirror/writer.py
+Environment=FAMILY_ID=<FAMILY_ID>
+LoadCredential=token:/opt/paramnezia-mirror/token
+BindPaths=/root/nginx/www/paramnezia/<FAMILY_ID>:/var/lib/paramnezia-mirror/files
+ReadWritePaths=/var/lib/paramnezia-mirror/files
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target
