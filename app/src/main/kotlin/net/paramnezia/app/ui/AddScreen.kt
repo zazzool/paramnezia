@@ -59,6 +59,7 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
             runCatching { block() }
                 .onSuccess {
                     toast(when (it) {
+                        Servers.Imported.UpdatedFleet -> "Настройки семьи обновлены"
                         Servers.Imported.JoinedFleet -> "Устройство добавлено в семью"
                         is Servers.Imported.Profiles -> "Добавлено: ${it.names.joinToString()}"
                     })

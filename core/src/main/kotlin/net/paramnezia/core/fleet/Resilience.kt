@@ -12,7 +12,7 @@ class FailoverPolicy(
     private val deadAfterMs: Long = 150_000,
     private val retryBlockedAfterMs: Long = 6 * 3_600_000L,
 ) {
-    private val blockedAt = HashMap<String, Long>()
+    private val blockedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     fun markBlocked(serverId: String, now: Long) { blockedAt[serverId] = now }
     fun markHealthy(serverId: String) { blockedAt.remove(serverId) }

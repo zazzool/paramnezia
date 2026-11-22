@@ -87,6 +87,8 @@ data class StoredFleet(
     val gistToken: String? = null,
     /** Admin: why the last update of the reserve channel failed (expired token…); null when fine. */
     val gistError: String? = null,
+    /** Owner only: public manifest URLs and their private write tokens. */
+    val recoveryMirrors: Map<String, String> = emptyMap(),
     /** Admin: the admin's own settings go to every device in the manifest. */
     val sharePolicy: Boolean = true,
     /** Last time some channel answered with a valid manifest. */
@@ -124,6 +126,8 @@ data class StoredFleet(
     val pskSeed: String? = null,
     /** Admin: the app version whose server upgrades (spare ports) went through on every server. */
     val portsChecked: Int = 0,
+    /** Owner: servers whose public address is discovered over SSH. */
+    val followServerAddress: Set<String> = emptySet(),
 )
 
 /** Owner: one appointed co-admin (its device, signing key and SSH key; kept to re-seal its grant). */

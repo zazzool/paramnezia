@@ -34,6 +34,8 @@ data class FleetManifest(
     val grants: List<SealedGrant> = emptyList(),
     /** The owner's own device (WireGuard public key), so co-admins cannot remove it. */
     val ownerDevice: String? = null,
+    /** Unique identifier of the owner's last deliberate switch to a new endpoint. */
+    val endpointRotation: String? = null,
 ) {
     fun deviceFor(publicKey: WgKey): FleetDevice? = devices.firstOrNull { it.publicKey == publicKey.toBase64() }
 }
@@ -71,6 +73,7 @@ data class FleetServer(
     val altPorts: List<Int> = emptyList(),
     /** Other addresses of the same server, typically its IPv6 address (since 2.16). */
     val altHosts: List<String> = emptyList(),
+    val tunnelIpv6: Boolean = false,
 )
 
 @Serializable
@@ -97,7 +100,8 @@ fun FleetServer.tunnelFor(device: FleetDevice, privateKey: WgKey, psk: WgKey? = 
     return TunnelConfig(
         TunnelConfig.Interface(
             privateKey = privateKey,
-            addresses = listOf(IpPrefix.parse(device.address)),
+            addresses = listOf(IpPrefix.parse(device.address)) +
+                listOfNotNull(if (tunnelIpv6) managedIpv6Address(device.address) else null),
             dns = dns,
             mtu = mtu,
             awg = awgParams,
@@ -114,6 +118,14 @@ fun FleetServer.tunnelFor(device: FleetDevice, privateKey: WgKey, psk: WgKey? = 
     )
 }
 
+/** Managed servers derive a unique IPv6 host address from each peer's IPv4 host address. */
+fun managedIpv6Address(address: String): IpPrefix? {
+    val ipv4 = IpPrefix.parse(address.substringBefore('/'))
+    if (ipv4.isV6) return null
+    val value = ipv4.network.toLong()
+    return IpPrefix.parse("fd38:706e:1::${(value ushr 16).toString(16)}:${(value and 0xffff).toString(16)}/128")
+}
+
 /** Turns a server's client config (from a deploy or an imported key) into a fleet server entry. */
 fun fleetServerOf(id: String, name: String, tunnel: TunnelConfig): FleetServer {
     val peer = tunnel.peers.first()
@@ -128,5 +140,6 @@ fun fleetServerOf(id: String, name: String, tunnel: TunnelConfig): FleetServer {
         dns = tunnel.iface.dns.ifEmpty { listOf("1.1.1.1", "1.0.0.1") },
         mtu = tunnel.iface.mtu ?: 1280,
         keepalive = peer.persistentKeepalive ?: "25",
+        tunnelIpv6 = tunnel.iface.addresses.any { it.isV6 && IpPrefix.parse("fd38:706e:1::/64").contains(it) },
     )
 }

@@ -34,6 +34,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -280,6 +281,12 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                     onEnable = { token -> work("Резервный канал включён") { app.fleet.setReserveChannel(token) } },
                     onDisable = { work("Резервный канал отключён") { app.fleet.clearReserveChannel() } },
                     openTokenPage = { openUrl(GITHUB_TOKEN_PAGE) })
+                RecoveryMirrors(
+                    urls = fleet.recoveryMirrors.keys,
+                    busy = busy,
+                    add = { url, token -> work("Зеркало подключено") { app.fleet.addRecoveryMirror(url, token) } },
+                    remove = { url -> work("Зеркало отключено") { app.fleet.removeRecoveryMirror(url) } },
+                )
             }
         } else {
             if (manifest?.policy != null) {
@@ -734,6 +741,31 @@ private fun ReserveChannel(on: Boolean, error: String?, busy: Boolean, toast: (S
                         }
                     }
                     if (on) TextButton(enabled = !busy, onClick = onDisable) { Text("Отключить резервный канал") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecoveryMirrors(urls: Set<String>, busy: Boolean, add: (String, String) -> Unit, remove: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    var url by remember { mutableStateOf("") }
+    var token by remember { mutableStateOf("") }
+    GroupRow("Резервные HTTPS-зеркала", subtitle = if (urls.isEmpty()) null else urls.size.toString(),
+        icon = Glyph.Link, onClick = { open = !open })
+    AnimatedVisibility(open) {
+        Column(Modifier.padding(Space.M), verticalArrangement = Arrangement.spacedBy(Space.S)) {
+            Text("Укажите адрес с открытым чтением и записью по токену. Выбирайте независимые площадки, доступные из сетей вашей семьи.")
+            for (item in urls) {
+                Text(item, style = MaterialTheme.typography.bodySmall)
+                TextButton(enabled = !busy, onClick = { remove(item) }) { Text("Отключить зеркало") }
+            }
+            if (urls.size < 4) {
+                OutlinedTextField(url, { url = it }, singleLine = true, label = { Text("HTTPS-адрес файла") })
+                PasteField(token, { token = it }, "Токен записи", secret = true, enabled = !busy)
+                Button(enabled = !busy && url.isNotBlank() && token.isNotBlank(), onClick = { add(url, token) }) {
+                    Text("Проверить и добавить")
                 }
             }
         }

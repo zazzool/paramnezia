@@ -84,11 +84,21 @@ fi
 alt=$(ours | grep -vx "$lp" | paste -sd, -)
 # IPv6: the host's global address, if Docker accepts the main port on it.
 v6=""
-if (ss -lunH 2>/dev/null || true) | awk '{print $4}' | grep -qE "^(\[::\]|\*|::):$lp\$" || \
+if (ss -6 -lunH 2>/dev/null || true) | awk '{print $4}' | grep -qE "^(\[::\]|\*|::):$lp\$" || \
    ($SUDO ip6tables -t nat -S DOCKER 2>/dev/null | grep -q -- "--dport $lp"); then
-  v6=$(ip -6 addr show scope global 2>/dev/null | awk '/inet6/ && !/temporary|deprecated|tentative/ {print $2}' | cut -d/ -f1 | grep -vi '^f[cd]' | head -1)
+  v6=$(ip -6 addr show scope global 2>/dev/null | awk '/inet6/ && !/temporary|deprecated|tentative|dadfailed/ && $2 ~ /^[23][[:xdigit:]][[:xdigit:]][[:xdigit:]]:/ {print $2}' | cut -d/ -f1 | head -1)
 fi
 echo "::result::port=$lp"
 echo "::result::alt_ports=$alt"
 echo "::result::ipv6=$v6"
+if $D exec "$C" sh -c 'ip -6 addr show dev awg0 | grep -q "fd38:706e:1::1/64" && ip -6 route show default | grep -q "^default"' 2>/dev/null; then
+  echo "::result::tunnel_ipv6=1"
+fi
+# Only advertise a public IPv4 directly assigned to the SSH server. A private address can
+# belong to an upstream NAT whose external endpoint cannot be inferred on this machine.
+v4=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<NF;i++) if ($i=="src") {print $(i+1); exit}}')
+v4=$(printf '%s\n' "$v4" | awk -F. 'NF==4 && $1>0 && $1<224 && $1!=10 && $1!=127 && !($1==100 && $2>=64 && $2<=127) && !($1==169 && $2==254) && !($1==172 && $2>=16 && $2<=31) && !($1==192 && $2==168)')
+[ -z "$v4" ] || echo "::result::ipv4=$v4"
+server_pub=$($D exec "$C" sh -c 'awg show awg0 public-key || wg show wg0 public-key' 2>/dev/null || true)
+[ -z "$server_pub" ] || echo "::result::server_pub=$server_pub"
 echo "::result::changed=$changed"

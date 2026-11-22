@@ -27,12 +27,13 @@ class Servers(
 
     companion object {
         /** Bumped when own standalone servers need a one-off upgrade (1: spare ports, 2: tuning, 3: engine). */
-        const val PORTS_UPGRADE = 3
+        const val PORTS_UPGRADE = 4
     }
 
     sealed interface Imported {
         data class Profiles(val names: List<String>) : Imported
         data object JoinedFleet : Imported
+        data object UpdatedFleet : Imported
     }
 
     /**
@@ -41,6 +42,10 @@ class Servers(
      */
     suspend fun import(text: String): Imported = withContext(Dispatchers.IO) {
         val t = net.paramnezia.core.amnezia.KeyText.extract(text)
+        if (net.paramnezia.core.fleet.FleetCrypto.decode(t) != null) {
+            if (!fleet.offer(t)) throw ConfigException("Обновление семьи уже применено или подпись не подтверждена")
+            return@withContext Imported.UpdatedFleet
+        }
         if (Invite.read(t) != null) {
             if (!fleet.join(t, deviceModel)) throw ConfigException("Приглашение повреждено или устарело")
             return@withContext Imported.JoinedFleet
@@ -124,13 +129,25 @@ class Servers(
             runCatching {
                 manager.refresh(ssh)
                 manager.tune(ssh)
+                manager.enableIpv6(ssh)
                 manager.ports(ssh, if (p.altPorts.isEmpty()) ServerManager.altPortsFor(main) else emptyList())
             }
                 .onSuccess { r ->
                     repo.update { s -> s.copy(profiles = s.profiles.map {
-                        if (it.id != p.id) it
-                        else if (r.main == main) it.copy(altPorts = r.alt, altHosts = listOfNotNull(r.ipv6), portsChecked = PORTS_UPGRADE)
-                        else it.copy(portsChecked = PORTS_UPGRADE)
+                        if (it.id != p.id || it.conf != p.conf || it.ssh != ssh || r.main != main) it
+                        else {
+                            val config = WgQuick.parse(p.conf)
+                            val address = config.iface.addresses.firstOrNull { !it.isV6 }
+                            val ipv6 = if (r.tunnelIpv6 && config.iface.addresses.none { it.isV6 }) {
+                                address?.let { net.paramnezia.core.fleet.managedIpv6Address(it.toString()) }
+                            } else null
+                            val updated = if (ipv6 == null) it.conf else WgQuick.write(config.copy(
+                                iface = config.iface.copy(addresses = config.iface.addresses + ipv6),
+                            ))
+                            val host = net.paramnezia.core.config.Uapi.splitEndpoint(config.peers.first().endpoint.orEmpty()).first
+                            val alternate = if (':' in host) r.ipv4 else r.ipv6
+                            it.copy(conf = updated, altPorts = r.alt, altHosts = listOfNotNull(alternate), portsChecked = PORTS_UPGRADE)
+                        }
                     }) }
                 }
                 .onFailure { net.paramnezia.app.platform.Log.w("PnServers", "ports of ${p.name}: ${it.message}") }

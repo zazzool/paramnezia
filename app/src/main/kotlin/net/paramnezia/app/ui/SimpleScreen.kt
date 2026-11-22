@@ -88,7 +88,14 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
     }
 
     if (details) {
-        androidx.compose.material3.ModalBottomSheet(onDismissRequest = { details = false }) { DetailsSheet(app, tunnel) }
+        androidx.compose.material3.ModalBottomSheet(onDismissRequest = { details = false }) {
+            if (app.fleet.stored != null) {
+                androidx.compose.material3.TextButton(onClick = { details = false; paste() }) {
+                    Text("Вставить обновление семьи")
+                }
+            }
+            DetailsSheet(app, tunnel)
+        }
     }
 
     if (askFull) {

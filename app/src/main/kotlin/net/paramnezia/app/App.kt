@@ -1,6 +1,7 @@
 package net.paramnezia.app
 
 import net.paramnezia.app.data.ServerReboot
+import net.paramnezia.deploy.FleetPublisher
 import net.paramnezia.app.data.ServerInsights
 import net.paramnezia.app.platform.Log as PLog
 import net.paramnezia.app.data.Vault
@@ -140,6 +141,16 @@ class App : Application(), TunnelHost {
         // Every new server gets the page to share with family and friends, in the background.
         val pageOn: (net.paramnezia.core.profile.SshCredentials) -> Unit = { ssh -> scope.launch { runCatching { links.preparePage(ssh) } } }
         fleet.onServerReady = pageOn
+        fleet.onEndpointChanged = failover::markHealthy
+        FleetPublisher.githubRoute = {
+            net.direct()?.let { network ->
+                FleetPublisher.GitHubRoute(
+                    sockets = network.socketFactory,
+                    resolve = { network.getAllByName(it).toList() },
+                )
+            }
+        }
+        fleet.watchEndpointUpdates()
         servers = Servers(repo, fleet, android.os.Build.MODEL, pageOn)
 
         // DNS rules follow the settings and the lists; loading them is a one-off ~1 ms parse in Go.
@@ -261,6 +272,7 @@ class App : Application(), TunnelHost {
     override suspend fun onServerUnreachable(spec: TunnelSpec): TunnelSpec? {
         val now = System.currentTimeMillis()
         noteNetwork()
+        fleet.syncIfDue(minIntervalMs = 60_000, tunnelFirst = false)
         // First another way into the same server (signature, port, address): a blocked port or
         // fingerprint is far more common than a dead server. After a round of those, another server
         // gets its turn if there is one that is not known to be blocked.
@@ -274,9 +286,9 @@ class App : Application(), TunnelHost {
         }
         failover.markBlocked(spec.serverId, now)
         // The admin may already have moved the fleet elsewhere: look before guessing.
-        withTimeoutOrNull(25_000) { runCatching { fleet.sync() } }
+        withTimeoutOrNull(25_000) { runCatching { if (!fleet.syncRecoveryChannel()) fleet.sync() } }
         val next = currentSpec() ?: return null
-        if (next.serverId == spec.serverId) return null
+        if (next.serverId == spec.serverId) return next.takeIf { it.config.peers != spec.config.peers && !failover.isBlocked(spec.serverId, System.currentTimeMillis()) }
         Log.i(TAG, "${spec.serverName} unreachable, switching to ${next.serverName}")
         fleet.reportHealth(spec.serverId, reachable = false)
         return next

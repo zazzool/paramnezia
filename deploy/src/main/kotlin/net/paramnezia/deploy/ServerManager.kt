@@ -27,7 +27,14 @@ class ServerManager(private val hostKeys: HostKeyStore) {
     )
 
     /** The ports a server answers on and its IPv6 address, if clients can reach it there. */
-    data class Ports(val main: Int, val alt: List<Int>, val ipv6: String?)
+    data class Ports(
+        val main: Int,
+        val alt: List<Int>,
+        val ipv6: String?,
+        val ipv4: String?,
+        val publicKey: String?,
+        val tunnelIpv6: Boolean,
+    )
 
     enum class Step { CHECK, DOCKER, IMAGE, RUN, CONFIGURE, START, FIREWALL, DONE }
 
@@ -80,6 +87,7 @@ class ServerManager(private val hostKeys: HostKeyStore) {
             }
             r.error?.let { throw SshException(it, "Install failed: $it\n${r.stderr.takeLast(2000)}") }
             if (r.exitCode != 0) throw SshException("install_failed", "Install failed (${r.exitCode}): ${r.stderr.takeLast(2000)}")
+            runCatching { enableIpv6(ssh) }
             // Throughput tuning is a bonus: a server without it still works.
             runCatching { ssh.run(script("tune.sh"), env = mapOf("CONTAINER" to Protocol.AWG.amneziaContainer), timeoutMs = 60_000) }
         }
@@ -200,8 +208,16 @@ class ServerManager(private val hostKeys: HostKeyStore) {
             r.error?.let { throw SshException(it, "Ports: $it ${r.stderr.takeLast(500)}") }
             val main = r.results["port"]?.toIntOrNull() ?: throw SshException("ports_failed", "Ports: ${r.stderr.takeLast(500)}")
             val alt = r.results["alt_ports"].orEmpty().split(',').mapNotNull { it.trim().toIntOrNull() }.filter { it != main }
-            Ports(main, alt, r.results["ipv6"]?.trim()?.takeIf { ':' in it })
+            Ports(main, alt, r.results["ipv6"]?.trim()?.takeIf { ':' in it },
+                r.results["ipv4"], r.results["server_pub"], r.results["tunnel_ipv6"] == "1")
         }
+
+    fun enableIpv6(creds: SshCredentials) = SshConnection.open(creds, hostKeys).use { enableIpv6(it) }
+
+    private fun enableIpv6(ssh: SshConnection) {
+        val result = ssh.run(script("ipv6.sh"), env = mapOf("CONTAINER" to Protocol.AWG.amneziaContainer), timeoutMs = 60_000)
+        if (result.exitCode != 0) throw SshException("ipv6_failed", result.stderr.takeLast(500))
+    }
 
     /** What the server is and does right now (info.sh); read-only, one connection, a second or two. */
     fun status(creds: SshCredentials, protocol: Protocol = Protocol.AWG): ServerStatus =
@@ -299,7 +315,8 @@ class ServerManager(private val hostKeys: HostKeyStore) {
             val tunnel = TunnelConfig(
                 TunnelConfig.Interface(
                     privateKey = clientPrivateKey,
-                    addresses = listOf(IpPrefix.parse("$ip/32")),
+                    addresses = listOf(IpPrefix.parse("$ip/32")) +
+                        listOfNotNull(results["client_ipv6"]?.let(IpPrefix::parse)),
                     dns = dns,
                     mtu = mtu,
                     awg = awg,

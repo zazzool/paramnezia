@@ -8,8 +8,15 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
-import java.net.HttpURLConnection
-import java.net.URL
+import okhttp3.Dns
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.net.InetAddress
+import java.net.Proxy
+import java.util.concurrent.TimeUnit
+import javax.net.SocketFactory
 
 /**
  * Puts a signed fleet manifest where devices look for it. Mirrors are untrusted by design: the
@@ -93,7 +100,7 @@ class FleetPublisher(private val hostKeys: HostKeyStore) {
      * null or gone. The token needs only the `gist` scope. The manifest is encrypted and signed, so
      * GitHub learns nothing and cannot change it.
      */
-    fun publishToGist(token: String, gistId: String?, manifest: String): Gist {
+    fun publishToGist(token: String, gistId: String?, manifest: String, createIfMissing: Boolean = true): Gist {
         val body = buildJsonObject {
             put("description", "Paramnezia fleet (encrypted)")
             if (gistId == null) put("public", false)
@@ -103,6 +110,7 @@ class FleetPublisher(private val hostKeys: HostKeyStore) {
             val (code, text) = github(token, "https://api.github.com/gists/$gistId", "PATCH", body)
             if (code in 200..299) return gistOf(text) ?: Gist(gistId, "-")
             if (code != 404) throw SshException("gist_failed", gistError(code))
+            if (!createIfMissing) throw SshException("gist_failed", "Существующий канал GitHub недоступен")
         }
         val (code, text) = github(token, "https://api.github.com/gists", "POST", body)
         if (code !in 200..299) throw SshException("gist_failed", gistError(code))
@@ -120,29 +128,51 @@ class FleetPublisher(private val hostKeys: HostKeyStore) {
         else -> "GitHub ответил $code"
     }
 
-    private fun github(token: String, url: String, method: String, body: String): Pair<Int, String> {
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-            // Android's HttpURLConnection speaks PATCH; the desktop JDK one does not.
-            runCatching { requestMethod = method }.onFailure {
-                requestMethod = "POST"
-                setRequestProperty("X-HTTP-Method-Override", method)
-            }
-            setRequestProperty("Authorization", "Bearer $token")
-            setRequestProperty("Accept", "application/vnd.github+json")
-            setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("User-Agent", "paramnezia")
-            connectTimeout = 15_000; readTimeout = 30_000
-            doOutput = true
-        }
-        try {
-            conn.outputStream.use { it.write(body.toByteArray()) }
-            val code = conn.responseCode
-            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.readText().orEmpty()
-            return code to text
-        } finally { conn.disconnect() }
+    fun publishToHttpsMirror(url: String, token: String, manifest: String) {
+        require(url.startsWith("https://")) { "Зеркалу нужен HTTPS" }
+        val body = manifest.toRequestBody("application/json".toMediaType())
+        val request = Request.Builder().url(url).header("Authorization", "Bearer $token").put(body).build()
+        val (code, _) = execute(request)
+        check(code in 200..299) { "Зеркало отклонило запись (HTTP $code)" }
+        val read = Request.Builder().url(url).header("Cache-Control", "no-cache").build()
+        val (readCode, published) = execute(read)
+        check(readCode == 200 && published.trim() == manifest.trim()) { "Зеркало не отдаёт сохранённый манифест без токена" }
     }
 
+    private fun github(token: String, url: String, method: String, body: String): Pair<Int, String> =
+        execute(Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer $token")
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "paramnezia")
+            .method(method, body.toRequestBody("application/json".toMediaType()))
+            .build())
+
+    private fun execute(request: Request): Pair<Int, String> {
+        val route = githubRoute()
+        val client = if (route == null) githubClient else githubClient.newBuilder().apply {
+            route.proxy?.let { proxy(it) }
+            route.sockets?.let { socketFactory(it) }
+            route.resolve?.let { resolve -> dns(object : Dns { override fun lookup(hostname: String): List<InetAddress> = resolve(hostname) }) }
+        }.build()
+        client.newCall(request).execute().use { response ->
+            return response.code to response.peekBody(2L shl 20).string()
+        }
+    }
+
+    data class GitHubRoute(
+        val proxy: Proxy? = null,
+        val sockets: SocketFactory? = null,
+        val resolve: ((String) -> List<InetAddress>)? = null,
+    )
+
     companion object {
+        @Volatile var githubRoute: () -> GitHubRoute? = { null }
+
+        private val githubClient = OkHttpClient.Builder()
+            .callTimeout(15, TimeUnit.SECONDS)
+            .followRedirects(false)
+            .build()
         const val TUNNEL_FLEET_URL = "http://10.8.1.1:8080/fleet.json"
         const val TUNNEL_APK_MIRROR = "http://10.8.1.1:8080/apk"
         const val TUNNEL_RELEASE_URL = "http://10.8.1.1:8080/release.json"

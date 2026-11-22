@@ -131,6 +131,9 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
     if (editing) {
         var name by remember { mutableStateOf(view.name) }
         var connection by remember { mutableStateOf(local?.conf ?: view.endpoint.orEmpty()) }
+        val ssh = app.fleet.accessTo(serverId)
+        var sshHost by remember { mutableStateOf(ssh?.host.orEmpty()) }
+        var followAddress by remember { mutableStateOf(app.fleet.followsAddress(serverId)) }
         AlertDialog(
             onDismissRequest = { editing = false },
             title = { Text("Редактировать сервер") },
@@ -139,6 +142,17 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
                     OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("Название") })
                     OutlinedTextField(connection, { connection = it }, singleLine = local == null,
                         label = { Text(if (local == null) "Адрес VPN и порт" else "Конфигурация VPN") })
+                    if (local == null && connection.trim() != view.endpoint) {
+                        Text("При смене адреса этот сервер станет основным для семьи.")
+                    }
+                    if (local == null && ssh != null) {
+                        OutlinedTextField(sshHost, { sshHost = it }, singleLine = true, label = { Text("Адрес SSH") })
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.material3.Checkbox(followAddress, { followAddress = it })
+                            Text("Автоматически обновлять IP по SSH")
+                        }
+                        if (followAddress) Text("Используйте SSH-адрес, который останется доступен после смены IP VPN.")
+                    }
                 }
             },
             confirmButton = {
@@ -147,7 +161,7 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
                         if (local != null) {
                             app.servers.edit(serverId, name, connection)
                             if (live != null) app.reconnectIfUp()
-                        } else app.fleet.editServer(serverId, name, connection)
+                        } else app.fleet.editServer(serverId, name, connection, followAddress, sshHost, confirmRecovery = true)
                         editing = false
                     }
                 }) { Text("Сохранить") }
@@ -200,7 +214,10 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
             if (view.ssh != null) IconButton(enabled = !loading, onClick = { reload++ }) { Icon(PnIcons.Refresh, "Обновить сведения сервера") }
         }
 
-        if (local != null || canEditFamily || canPromoteFamily) Group {
+        if (local != null || canEditFamily || (familyServer != null && app.fleet.isAdmin)) Group {
+            if (local != null || canEditFamily) {
+                GroupRow("Настройки сервера", icon = Glyph.Server, onClick = { if (!busy) editing = true })
+            }
             if (canPromoteFamily || canMakeLocalPrimary) {
                 GroupRow(
                     "Сделать основным",
@@ -219,8 +236,10 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
                     },
                 )
             }
-            if (local != null || canEditFamily) {
-                GroupRow("Редактировать", icon = Glyph.Server, onClick = { if (!busy) editing = true })
+            if (familyServer != null && app.fleet.isAdmin) {
+                GroupRow("Поделиться обновлением семьи", icon = Glyph.Server, onClick = {
+                    app.fleet.addressUpdate()?.let { platform.shareText(it, "Обновление адреса Paramnezia") }
+                })
             }
             if (canShare) GroupRow("Добавить в семью", icon = Glyph.Server, onClick = { if (!busy) sharing = true })
             if (local != null || (canEditFamily && family.size > 1)) {

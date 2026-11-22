@@ -40,7 +40,9 @@ class FleetServersTest {
         val network = ManifestNetwork()
         val ownerManager = FleetManager(ownerRepo, network, ed, this) {}
         var updates = 0
+        val endpointChanges = mutableListOf<String>()
         val memberManager = FleetManager(memberRepo, network, ed, this) { updates++ }
+        memberManager.onEndpointChanged = { endpointChanges += it }
         assertTrue(memberManager.join(admin.invite(original, member, memberKey), member.name))
         assertEquals(listOf("first"), memberManager.member()!!.tunnels().map { it.first.id })
 
@@ -63,13 +65,52 @@ class FleetServersTest {
         assertTrue(server.altPorts.isEmpty())
         assertEquals("backup.example:8443", tunnel.peers.single().endpoint)
 
+        ownerManager.editServer(second.id, "New backup", "[2001:db8::42]:8443")
+        val manual = ownerManager.addressUpdate()!!
+        assertTrue(memberManager.offer(manual))
+        assertEquals("[2001:db8::42]:8443", memberManager.member()!!.tunnels().first().second.peers.single().endpoint)
+        assertFalse(memberManager.offer(manual))
+        assertFalse(memberManager.offer(network.mirror!!))
+
         ownerManager.removeServer(second.id)
         network.mirror = ownerManager.stored!!.manifest
         assertTrue(memberManager.sync())
         assertEquals(listOf("first"), memberManager.member()!!.tunnels().map { it.first.id })
         assertNull(memberRepo.current.activeProfile)
         assertFalse(memberManager.sync())
-        assertEquals(5, updates)
+        assertEquals(6, updates)
+        assertEquals(listOf("second", "second"), endpointChanges)
+    }
+
+    @Test
+    fun changedEndpointIsAcceptedOverPhysicalNetworkWithoutAnyTunnelServer() = runBlocking {
+        val ed = Ed25519.Jca
+        val (admin, empty) = FleetAdmin.create("Family", ed)
+        val (device, key) = admin.newDevice(empty, "Phone")
+        val initial = admin.next(empty) {
+            it.copy(
+                servers = listOf(FleetServer("primary", "Primary", "192.0.2.1", 51820,
+                    WgKey.generatePrivate().publicKey().toBase64())),
+                devices = listOf(device),
+                mirrors = listOf("https://api.github.com/gists/example", "https://independent.example/fleet.json"),
+            )
+        }
+        val rotated = admin.next(initial) {
+            it.copy(servers = listOf(it.servers.single().copy(host = "192.0.2.2")), endpointRotation = "rotation-1")
+        }
+        val network = ManifestNetwork()
+        val endpoints = mutableListOf<String>()
+        val repo = memoryRepo(AppState())
+        val memberManager = FleetManager(repo, network, ed, this) {}
+        memberManager.onEndpointChanged = { endpoints += it }
+        assertTrue(memberManager.join(admin.invite(initial, device, key), device.name))
+        repo.update { it.copy(activeProfile = "primary") }
+        network.directMirror = FleetCrypto.encode(admin.seal(rotated))
+        assertTrue(memberManager.syncRecoveryChannel())
+        assertEquals("192.0.2.2:51820", memberManager.member()!!.tunnels().single().second.peers.single().endpoint)
+        assertFalse(memberManager.syncRecoveryChannel())
+        assertEquals(listOf("primary"), endpoints)
+        assertNull(repo.current.activeProfile)
     }
 
     private fun memoryRepo(state: AppState): Repo = Repo(object : StateStore {
@@ -81,10 +122,11 @@ class FleetServersTest {
 
     private class ManifestNetwork : Http {
         var mirror: String? = null
+        var directMirror: String? = null
         override fun get(url: String, maxBytes: Int, fallbackDirect: Boolean, fresh: Boolean, timeoutMs: Int) =
             mirror.takeIf { url.startsWith("https://") }
 
-        override fun fetch(url: String, direct: Boolean, maxBytes: Int, timeoutMs: Int, userAgent: String) = Http.Fetched(null, null)
+        override fun fetch(url: String, direct: Boolean, maxBytes: Int, timeoutMs: Int, userAgent: String) = Http.Fetched(directMirror.takeIf { direct && url == "https://independent.example/fleet.json" }, null)
         override fun getViaTor(url: String, maxBytes: Int): String? = null
         override fun hasDirect() = true
     }

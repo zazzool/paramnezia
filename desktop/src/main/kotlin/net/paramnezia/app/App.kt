@@ -1,6 +1,7 @@
 package net.paramnezia.app
 
 import net.paramnezia.app.data.ServerReboot
+import net.paramnezia.deploy.FleetPublisher
 import net.paramnezia.app.data.ServerInsights
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -95,6 +96,12 @@ class App(
         }
         val pageOn: (net.paramnezia.core.profile.SshCredentials) -> Unit = { ssh -> scope.launch { runCatching { links.preparePage(ssh) } } }
         fleet.onServerReady = pageOn
+        fleet.onEndpointChanged = failover::markHealthy
+        FleetPublisher.githubRoute = {
+            if (TunnelRuntime.state.value is TunnelState.Down) null
+            else net.directProxy()?.let { FleetPublisher.GitHubRoute(proxy = it) }
+        }
+        fleet.watchEndpointUpdates()
         servers = Servers(repo, fleet, deviceModel, pageOn)
     }
 
@@ -249,9 +256,9 @@ class App(
 
     override suspend fun onServerUnreachable(spec: TunnelSpec): TunnelSpec? {
         failover.markBlocked(spec.serverId, System.currentTimeMillis())
-        withTimeoutOrNull(25_000) { runCatching { fleet.sync() } }
+        withTimeoutOrNull(25_000) { runCatching { if (!fleet.syncRecoveryChannel()) fleet.sync() } }
         val next = currentSpec() ?: return null
-        if (next.serverId == spec.serverId) return null
+        if (next.serverId == spec.serverId) return next.takeIf { it.config.peers != spec.config.peers && !failover.isBlocked(spec.serverId, System.currentTimeMillis()) }
         Log.i(TAG, "${spec.serverName} unreachable, switching to ${next.serverName}")
         fleet.reportHealth(spec.serverId, reachable = false)
         return next
