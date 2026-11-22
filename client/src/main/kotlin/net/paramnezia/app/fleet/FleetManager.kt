@@ -890,9 +890,9 @@ class FleetManager(
         recoveryPublishLock.withLock {
             owner()
             val f = requireNotNull(stored)
-            val server = manifest()?.servers?.firstOrNull { it.id == id } ?: error("Ñåðâåð îòñóòñòâóåò")
+            val server = manifest()?.servers?.firstOrNull { it.id == id } ?: error("Ð¡ÐµÑ€Ð²ÐµÑ€ Ð¾Ñ‚ÑÑƒÑ‚ÑÑ‚Ð²ÑƒÐµÑ‚")
             val url = "https://psync.ru/paramnezia/${f.trust.fleetId}/fleet.json"
-            val token = f.recoveryMirrors[url] ?: error("Ñíà÷àëà ïîäêëþ÷èòå çåðêàëî psync.ru")
+            val token = f.recoveryMirrors[url] ?: error("Ð¡Ð½Ð°Ñ‡Ð°Ð»Ð° Ð¿Ð¾Ð´ÐºÐ»ÑŽÑ‡Ð¸Ñ‚Ðµ Ð·ÐµÑ€ÐºÐ°Ð»Ð¾ psync.ru")
             publisher.publishToHttpsMirror(url, token, f.manifest, server.host)
             repo.update { s -> s.copy(fleet = s.fleet?.let {
                 if (it.trust == f.trust) it.copy(psyncDnsServerId = id) else it

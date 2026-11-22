@@ -298,6 +298,9 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                 RecoveryMirrors(
                     urls = fleet.recoveryMirrors.keys,
                     fleetId = fleet.trust.fleetId,
+                    servers = manifest?.servers.orEmpty().associate { it.id to it.name },
+                    dnsServer = fleet.psyncDnsServerId,
+                    selectDns = { id -> work("Адрес опубликован для AmneziaVPN") { app.fleet.selectAmneziaDnsServer(id) } },
                     busy = busy,
                     add = { url, token -> work("Зеркало подключено") { app.fleet.addRecoveryMirror(url, token) } },
                     remove = { url -> work("Зеркало отключено") { app.fleet.removeRecoveryMirror(url) } },
@@ -776,7 +779,7 @@ private fun ReserveChannel(on: Boolean, error: String?, busy: Boolean, toast: (S
 }
 
 @Composable
-private fun RecoveryMirrors(urls: Set<String>, fleetId: String, busy: Boolean, add: (String, String) -> Unit, remove: (String) -> Unit) {
+private fun RecoveryMirrors(urls: Set<String>, fleetId: String, servers: Map<String, String>, dnsServer: String?, selectDns: (String) -> Unit, busy: Boolean, add: (String, String) -> Unit, remove: (String) -> Unit) {
     var open by remember { mutableStateOf(false) }
     var url by remember { mutableStateOf("") }
     var token by remember { mutableStateOf("") }
@@ -788,6 +791,14 @@ private fun RecoveryMirrors(urls: Set<String>, fleetId: String, busy: Boolean, a
             for (item in urls) {
                 Text(item, style = MaterialTheme.typography.bodySmall)
                 TextButton(enabled = !busy, onClick = { remove(item) }) { Text("Отключить зеркало") }
+            }
+            if ("https://psync.ru/paramnezia/$fleetId/fleet.json" in urls) {
+                Text("Выберите сервер для AmneziaVPN. Его IPv4 будет доступен по имени awg-family.psync.ru.")
+                for ((id, name) in servers) {
+                    TextButton(enabled = !busy, onClick = { selectDns(id) }) {
+                        Text(if (id == dnsServer) "$name ✓" else name)
+                    }
+                }
             }
             if (urls.size < 4) {
                 TextButton(enabled = !busy, onClick = { url = "https://psync.ru/paramnezia/$fleetId/fleet.json" }) {
