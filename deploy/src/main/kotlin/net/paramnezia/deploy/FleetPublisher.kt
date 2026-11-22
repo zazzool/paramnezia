@@ -128,10 +128,15 @@ class FleetPublisher(private val hostKeys: HostKeyStore) {
         else -> "GitHub ответил $code"
     }
 
-    fun publishToHttpsMirror(url: String, token: String, manifest: String) {
+    fun publishToHttpsMirror(url: String, token: String, manifest: String, dnsAddress: String? = null) {
         require(url.startsWith("https://")) { "Зеркалу нужен HTTPS" }
         val body = manifest.toRequestBody("application/json".toMediaType())
-        val request = Request.Builder().url(url).header("Authorization", "Bearer $token").put(body).build()
+        val builder = Request.Builder().url(url).header("Authorization", "Bearer $token")
+        if (dnsAddress != null) {
+            require(java.net.URI(url).host == "psync.ru")
+            builder.header("X-Paramnezia-Endpoint", dnsAddress)
+        }
+        val request = builder.put(body).build()
         val (code, _) = execute(request)
         check(code in 200..299) { "Зеркало отклонило запись (HTTP $code)" }
         val read = Request.Builder().url(url).header("Cache-Control", "no-cache").build()

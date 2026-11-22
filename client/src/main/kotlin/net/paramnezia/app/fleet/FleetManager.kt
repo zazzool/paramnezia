@@ -886,6 +886,20 @@ class FleetManager(
         if (mirrors != current.mirrors) accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) { it.copy(mirrors = mirrors) })))
     }
 
+    suspend fun selectAmneziaDnsServer(id: String) = withContext(Dispatchers.IO) {
+        recoveryPublishLock.withLock {
+            owner()
+            val f = requireNotNull(stored)
+            val server = manifest()?.servers?.firstOrNull { it.id == id } ?: error("Сервер отсутствует")
+            val url = "https://psync.ru/paramnezia/${f.trust.fleetId}/fleet.json"
+            val token = f.recoveryMirrors[url] ?: error("Сначала подключите зеркало psync.ru")
+            publisher.publishToHttpsMirror(url, token, f.manifest, server.host)
+            repo.update { s -> s.copy(fleet = s.fleet?.let {
+                if (it.trust == f.trust) it.copy(psyncDnsServerId = id) else it
+            }) }
+        }
+    }
+
     /** Readable without credentials, writable by the owner with a bearer token. */
     suspend fun addRecoveryMirror(address: String, token: String) = withContext(Dispatchers.IO) {
         val url = address.trim()
@@ -1010,10 +1024,16 @@ class FleetManager(
 
     private suspend fun publishReserve(trust: FleetTrust): Result<Unit> = recoveryPublishLock.withLock {
         val saved = stored?.takeIf { it.trust == trust } ?: return@withLock Result.failure(IllegalStateException("РЎРµРјСЊСЏ РёР·РјРµРЅРёР»Р°СЃСЊ"))
+        val dnsUrl = "https://psync.ru/paramnezia/${trust.fleetId}/fleet.json"
+        val dnsAddress = saved.psyncDnsServerId?.let { id ->
+            val envelope = requireNotNull(FleetCrypto.decode(saved.manifest))
+            FleetCrypto.open(envelope, trust, ed, listOfNotNull(envelope.signer))
+                ?.servers?.firstOrNull { it.id == id }?.host
+        }
         val result = coroutineScope {
             val writes = saved.recoveryMirrors.map { (url, token) -> async {
                 runCatching<Unit> {
-                    publisher.publishToHttpsMirror(url, token, saved.manifest)
+                    publisher.publishToHttpsMirror(url, token, saved.manifest, dnsAddress.takeIf { url == dnsUrl })
                     val version = requireNotNull(FleetCrypto.decode(saved.manifest)).version
                     repo.update { state -> state.copy(fleet = state.fleet?.let {
                         if (it.trust == trust && it.recoveryMirrors[url] == token)
