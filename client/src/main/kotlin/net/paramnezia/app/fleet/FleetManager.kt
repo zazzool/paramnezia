@@ -891,7 +891,7 @@ class FleetManager(
             owner()
             val f = requireNotNull(stored)
             val server = manifest()?.servers?.firstOrNull { it.id == id } ?: error("Сервер отсутствует")
-            val url = "https://psync.ru/paramnezia/${f.trust.fleetId}/fleet.json"
+            val url = psyncMirrorUrl(f.trust.fleetId)
             val token = f.recoveryMirrors[url] ?: error("Сначала подключите зеркало psync.ru")
             publisher.publishToHttpsMirror(url, token, f.manifest, server.host)
             repo.update { s -> s.copy(fleet = s.fleet?.let {
@@ -1024,7 +1024,7 @@ class FleetManager(
 
     private suspend fun publishReserve(trust: FleetTrust): Result<Unit> = recoveryPublishLock.withLock {
         val saved = stored?.takeIf { it.trust == trust } ?: return@withLock Result.failure(IllegalStateException("Семья изменилась"))
-        val dnsUrl = "https://psync.ru/paramnezia/${trust.fleetId}/fleet.json"
+        val dnsUrl = psyncMirrorUrl(trust.fleetId)
         val dnsAddress = saved.psyncDnsServerId?.let { id ->
             val envelope = requireNotNull(FleetCrypto.decode(saved.manifest))
             FleetCrypto.open(envelope, trust, ed, listOfNotNull(envelope.signer))

@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Version
-        run: echo "VERSION=2.19.3-psync" >> "$GITHUB_ENV"
+        run: echo "VERSION=2.19.3-psync.2" >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 21 }
       - uses: actions/setup-go@v5
@@ -31,16 +31,22 @@ jobs:
           echo "PN_KEYSTORE=$k/paramnezia.jks" >> "$GITHUB_ENV"
       - name: Build signed APK
         env:
-          PN_VERSION_CODE: "29"
+          PN_VERSION_CODE: "30"
           PN_VERSION_NAME: ${{ env.VERSION }}
         run: |
-          ./gradlew :app:assembleRelease :client:test
+          ./gradlew :core:test :deploy:test :client:test :app:assembleRelease
           # Published byte for byte as apksigner wrote it: the same file for every user and channel.
           cp app/build/outputs/apk/release/app-release.apk "paramnezia-${VERSION}.apk"
       - name: Audit release certificate and APK
         run: bash .github/scripts/apk-audit.sh "paramnezia-${VERSION}.apk" --release
+      - name: Assemble owner kit
+        run: |
+          mkdir kit
+          cp "paramnezia-${VERSION}.apk" docs/OWNER.md kit/
+          cd kit
+          sha256sum *.apk OWNER.md > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: paramnezia-owner
-          path: paramnezia-2.19.3-psync.apk
+          name: paramnezia-owner-${{ env.VERSION }}
+          path: kit/
           if-no-files-found: error

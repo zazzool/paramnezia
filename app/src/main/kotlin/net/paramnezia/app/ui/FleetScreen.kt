@@ -2,6 +2,7 @@
 
 package net.paramnezia.app.ui
 
+import net.paramnezia.app.fleet.psyncMirrorUrl
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -792,7 +793,7 @@ private fun RecoveryMirrors(urls: Set<String>, fleetId: String, servers: Map<Str
                 Text(item, style = MaterialTheme.typography.bodySmall)
                 TextButton(enabled = !busy, onClick = { remove(item) }) { Text("Отключить зеркало") }
             }
-            if ("https://psync.ru/paramnezia/$fleetId/fleet.json" in urls) {
+            if (psyncMirrorUrl(fleetId) in urls) {
                 Text("Выберите сервер для AmneziaVPN. Его IPv4 будет доступен по имени awg-family.psync.ru.")
                 for ((id, name) in servers) {
                     TextButton(enabled = !busy, onClick = { selectDns(id) }) {
@@ -801,7 +802,7 @@ private fun RecoveryMirrors(urls: Set<String>, fleetId: String, servers: Map<Str
                 }
             }
             if (urls.size < 4) {
-                TextButton(enabled = !busy, onClick = { url = "https://psync.ru/paramnezia/$fleetId/fleet.json" }) {
+                TextButton(enabled = !busy && psyncMirrorUrl(fleetId) !in urls, onClick = { url = psyncMirrorUrl(fleetId) }) {
                     Text("Использовать psync.ru")
                 }
                 OutlinedTextField(url, { url = it }, singleLine = true, label = { Text("HTTPS-адрес файла") })
