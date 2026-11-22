@@ -1012,7 +1012,7 @@ class FleetManager(
         val saved = stored?.takeIf { it.trust == trust } ?: return@withLock Result.failure(IllegalStateException("Семья изменилась"))
         val result = coroutineScope {
             val writes = saved.recoveryMirrors.map { (url, token) -> async {
-                runCatching {
+                runCatching<Unit> {
                     publisher.publishToHttpsMirror(url, token, saved.manifest)
                     val version = requireNotNull(FleetCrypto.decode(saved.manifest)).version
                     repo.update { state -> state.copy(fleet = state.fleet?.let {
