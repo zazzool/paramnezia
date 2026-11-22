@@ -1,0 +1,46 @@
+name: Owner APK
+on:
+  push:
+    branches: [codex/psync-owner-apk]
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        run: echo "VERSION=2.19.3-psync" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: tunnel/src/main/go/go.mod, cache-dependency-path: tunnel/src/main/go/go.sum }
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Open the keys
+        env:
+          PN_KEYS_PASSWORD: ${{ secrets.PN_KEYS_PASSWORD }}
+        run: |
+          if [ -z "$PN_KEYS_PASSWORD" ]; then echo "::error::Secret PN_KEYS_PASSWORD is not set (docs/RELEASE.md)"; exit 1; fi
+          k="$RUNNER_TEMP/keys"; mkdir -p "$k"
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in keys/release-keys.enc -pass env:PN_KEYS_PASSWORD | tar x -C "$k"
+          while IFS='=' read -r name value; do
+            [ -n "$name" ] || continue
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done < "$k/release.env"
+          echo "PN_KEYSTORE=$k/paramnezia.jks" >> "$GITHUB_ENV"
+      - name: Build signed APK
+        env:
+          PN_VERSION_CODE: "29"
+          PN_VERSION_NAME: ${{ env.VERSION }}
+        run: |
+          ./gradlew :app:assembleRelease :client:test
+          # Published byte for byte as apksigner wrote it: the same file for every user and channel.
+          cp app/build/outputs/apk/release/app-release.apk "paramnezia-${VERSION}.apk"
+      - name: Audit release certificate and APK
+        run: bash .github/scripts/apk-audit.sh "paramnezia-${VERSION}.apk" --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paramnezia-owner
+          path: paramnezia-2.19.3-psync.apk
+          if-no-files-found: error

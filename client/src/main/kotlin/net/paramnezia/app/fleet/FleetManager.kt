@@ -327,6 +327,13 @@ class FleetManager(
         val interval = 5 * 60_000L
         while (true) {
             syncIfDue(interval, tunnelFirst = false)
+            val family = stored
+            if (family != null && isOwner && family.recoveryMirrors.isNotEmpty()) {
+                val version = FleetCrypto.decode(family.manifest)?.version
+                if (version != null && family.recoveryMirrors.keys.any { family.deliveredMirrorVersions[it] != version }) {
+                    withContext(Dispatchers.IO) { publishReserve(family.trust) }
+                }
+            }
             delay(interval)
         }
     }
@@ -914,7 +921,7 @@ class FleetManager(
             synchronized(this@FleetManager) {
                 val admin = owner()
                 val current = manifest() ?: error("Семья не найдена")
-                repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(recoveryMirrors = it.recoveryMirrors - url) }) }
+                repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(recoveryMirrors = it.recoveryMirrors - url, deliveredMirrorVersions = it.deliveredMirrorVersions - url) }) }
                 accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) { it.copy(mirrors = it.mirrors - url) })))
             }
         }
@@ -1005,7 +1012,15 @@ class FleetManager(
         val saved = stored?.takeIf { it.trust == trust } ?: return@withLock Result.failure(IllegalStateException("Семья изменилась"))
         val result = coroutineScope {
             val writes = saved.recoveryMirrors.map { (url, token) -> async {
-                runCatching { publisher.publishToHttpsMirror(url, token, saved.manifest) }
+                runCatching {
+                    publisher.publishToHttpsMirror(url, token, saved.manifest)
+                    val version = requireNotNull(FleetCrypto.decode(saved.manifest)).version
+                    repo.update { state -> state.copy(fleet = state.fleet?.let {
+                        if (it.trust == trust && it.recoveryMirrors[url] == token)
+                            it.copy(deliveredMirrorVersions = it.deliveredMirrorVersions + (url to version))
+                        else it
+                    }) }
+                }
             } }.toMutableList()
             if (saved.gistToken != null && saved.gistId != null) writes += async {
                 runCatching { publisher.publishToGist(saved.gistToken, saved.gistId, saved.manifest, createIfMissing = false); Unit }

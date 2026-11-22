@@ -297,6 +297,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                     openTokenPage = { openUrl(GITHUB_TOKEN_PAGE) })
                 RecoveryMirrors(
                     urls = fleet.recoveryMirrors.keys,
+                    fleetId = fleet.trust.fleetId,
                     busy = busy,
                     add = { url, token -> work("Зеркало подключено") { app.fleet.addRecoveryMirror(url, token) } },
                     remove = { url -> work("Зеркало отключено") { app.fleet.removeRecoveryMirror(url) } },
@@ -775,7 +776,7 @@ private fun ReserveChannel(on: Boolean, error: String?, busy: Boolean, toast: (S
 }
 
 @Composable
-private fun RecoveryMirrors(urls: Set<String>, busy: Boolean, add: (String, String) -> Unit, remove: (String) -> Unit) {
+private fun RecoveryMirrors(urls: Set<String>, fleetId: String, busy: Boolean, add: (String, String) -> Unit, remove: (String) -> Unit) {
     var open by remember { mutableStateOf(false) }
     var url by remember { mutableStateOf("") }
     var token by remember { mutableStateOf("") }
@@ -789,6 +790,9 @@ private fun RecoveryMirrors(urls: Set<String>, busy: Boolean, add: (String, Stri
                 TextButton(enabled = !busy, onClick = { remove(item) }) { Text("Отключить зеркало") }
             }
             if (urls.size < 4) {
+                TextButton(enabled = !busy, onClick = { url = "https://psync.ru/paramnezia/$fleetId/fleet.json" }) {
+                    Text("Использовать psync.ru")
+                }
                 OutlinedTextField(url, { url = it }, singleLine = true, label = { Text("HTTPS-адрес файла") })
                 PasteField(token, { token = it }, "Токен записи", secret = true, enabled = !busy)
                 Button(enabled = !busy && url.isNotBlank() && token.isNotBlank(), onClick = { add(url, token) }) {

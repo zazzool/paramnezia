@@ -90,6 +90,7 @@ data class StoredFleet(
     val gistError: String? = null,
     /** Owner only: public manifest URLs and their private write tokens. */
     val recoveryMirrors: Map<String, String> = emptyMap(),
+    val deliveredMirrorVersions: Map<String, Long> = emptyMap(),
     /** Admin: the admin's own settings go to every device in the manifest. */
     val sharePolicy: Boolean = true,
     /** Last time some channel answered with a valid manifest. */
