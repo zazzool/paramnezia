@@ -108,7 +108,7 @@ object Screenshots {
     /** «Раздать по Wi-Fi» with a TV asking for settings. */
     private fun lanShare(out: File) {
         val home = Files.createTempDirectory("pn-shot").toFile()
-        val app = App(StateFile(home), ServiceClient("""\\.\pipe\paramnezia-none"""), File(home, "cache").apply { mkdirs() }, "DESKTOP-PC", {})
+        val app = App(StateFile(home), ServiceClient("""\\.\pipe\paramnezia-none"""), File(home, "cache").apply { mkdirs() }, "DESKTOP-PC")
         app.repo.update { adminState() }
         val apk = LanFile("paramnezia-2.11.0.apk", LanFile.APK_MIME, 6_700_000, "2.11.0") { ByteArray(0).inputStream() }
         app.lan.preview(LanHub.Sharing(
@@ -136,7 +136,7 @@ object Screenshots {
     private fun shot(out: File, name: String, state: AppState, tab: Tab, prepare: (App) -> Unit = {}) {
         TunnelRuntime.set(TunnelState.Down)
         val home = Files.createTempDirectory("pn-shot").toFile()
-        val app = App(StateFile(home), ServiceClient("""\\.\pipe\paramnezia-none"""), File(home, "cache").apply { mkdirs() }, "DESKTOP-PC", {})
+        val app = App(StateFile(home), ServiceClient("""\\.\pipe\paramnezia-none"""), File(home, "cache").apply { mkdirs() }, "DESKTOP-PC")
         app.repo.update { state }
         if (state.cloud.tokens.isNotEmpty()) writeCatalogs(File(home, "cache"))
         prepare(app)

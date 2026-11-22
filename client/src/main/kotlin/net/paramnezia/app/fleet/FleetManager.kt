@@ -677,7 +677,13 @@ class FleetManager(
             val admin = admin() ?: error("Эта команда доступна администратору семьи")
             val current = manifest() ?: error("Семья не найдена")
             val target = current.servers.firstOrNull { it.id == serverId } ?: error("Сервер не найден")
-            if (current.servers.first().id == serverId) return@synchronized
+            if (current.servers.first().id == serverId) {
+                if (useAutomaticSelection && repo.current.activeProfile != null) {
+                    repo.update { it.copy(activeProfile = null) }
+                    onManifestChanged()
+                }
+                return@synchronized
+            }
             val next = admin.nextFor(current) { m -> m.copy(servers = listOf(target) + m.servers.filter { it.id != serverId }) }
             accept(FleetCrypto.encode(admin.seal(next)), useAutomaticSelection = useAutomaticSelection)
         }
@@ -710,10 +716,8 @@ class FleetManager(
         val current = manifest()?.servers?.firstOrNull { it.id == serverId } ?: error("Сервер не найден")
         val recovery = stored ?: error("Семья не найдена")
         val endpointChanged = current.host != host || current.port != port
-        val rotate = confirmRecovery && (endpointChanged || recovery.gistError != null)
-        if (rotate) require(recovery.recoveryMirrors.isNotEmpty() || (recovery.gistId != null && recovery.gistToken != null)) {
-            "Сначала настройте резервный канал во вкладке «Семья»"
-        }
+        val hasRecovery = recovery.recoveryMirrors.isNotEmpty() || (recovery.gistId != null && recovery.gistToken != null)
+        val rotate = confirmRecovery && hasRecovery && (endpointChanged || recovery.gistError != null)
         val ssh = accessTo(serverId)
         val newSsh = sshHost?.trim()?.removeSurrounding("[", "]")?.takeIf { it.isNotEmpty() && it != ssh?.host }?.let { address ->
             val old = requireNotNull(ssh) { "Нет SSH-доступа к серверу" }
@@ -768,8 +772,12 @@ class FleetManager(
         synchronized(this@FleetManager) {
             val removed = accessTo(serverId)
             changeServers(listOfNotNull(removed), accessChange = { it - serverId }) { current ->
+                require(current.servers.any { it.id == serverId }) { "Сервер не найден" }
                 require(current.servers.size > 1) { "В семье должен остаться хотя бы один сервер" }
                 current.copy(servers = current.servers.filter { it.id != serverId })
+            }
+            if (serverId in stored?.followServerAddress.orEmpty()) repo.update { state ->
+                state.copy(fleet = state.fleet?.let { it.copy(followServerAddress = it.followServerAddress - serverId) })
             }
         }
     }

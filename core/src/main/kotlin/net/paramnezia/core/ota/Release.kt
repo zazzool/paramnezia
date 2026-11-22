@@ -64,6 +64,8 @@ object ReleaseCodec {
     }
 }
 
+enum class UpdateCheckResult { AVAILABLE, UP_TO_DATE, UNAVAILABLE, FAILED }
+
 /**
  * Device-side decision logic. Keeps the newest verified release it has seen, from whatever channel
  * (the public release.json, the fleet server), and says whether it is worth installing.

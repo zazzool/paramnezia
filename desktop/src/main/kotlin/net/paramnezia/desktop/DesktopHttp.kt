@@ -130,6 +130,20 @@ class DesktopHttp(private val client: ServiceClient) : Http {
         }.getOrNull()
     }
 
+    fun download(url: String, consume: (java.io.InputStream) -> Boolean): Boolean {
+        for (direct in listOf(false, true)) {
+            val proxy = if (direct) directProxy() ?: return false else null
+            val ok = runCatching {
+                val connection = open(url, proxy, 30_000)
+                try {
+                    connection.responseCode == 200 && connection.inputStream.use(consume)
+                } finally { connection.disconnect() }
+            }.getOrDefault(false)
+            if (ok) return true
+        }
+        return false
+    }
+
     private fun open(url: String, proxy: Proxy?, readTimeoutMs: Int): HttpURLConnection {
         val u = URL(url)
         val c = (if (proxy != null) u.openConnection(proxy) else u.openConnection()) as HttpURLConnection

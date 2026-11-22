@@ -26,7 +26,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,14 +38,12 @@ import net.paramnezia.app.data.BatteryMode
 import net.paramnezia.app.data.Settings
 import net.paramnezia.app.data.UiMode
 import net.paramnezia.core.routing.AppRules
-import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
     val state by app.repo.state.collectAsState()
     val s = state.settings
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     var apps by remember { mutableStateOf(false) }
 
     fun change(f: (Settings) -> Settings) {
@@ -123,15 +120,8 @@ fun SettingsScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
         HorizontalDivider()
         Text("Обновления", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         if (app.updater.enabled) {
-            Text("Приложение раз в 12 часов проверяет, есть ли новая версия, подписанная ключом релизов. Скачивает её браузер по вашему нажатию, " +
-                "устанавливает Android с вашим подтверждением.", style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(onClick = {
-                scope.launch {
-                    app.updater.check()
-                    if (app.updater.status.value is net.paramnezia.app.ota.Updater.Status.Available) app.updater.openDownload()
-                    else toast("Установлена последняя версия")
-                }
-            }) { Text("Проверить обновления") }
+            Text("Paramnezia скачает и проверит обновление. Установку нужно подтвердить в Android.", style = MaterialTheme.typography.bodySmall)
+            UpdateAction(app.updater)
         } else {
             Text("Эта сборка без ключа релизов: проверка обновлений выключена.", style = MaterialTheme.typography.bodySmall)
         }

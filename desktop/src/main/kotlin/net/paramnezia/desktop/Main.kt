@@ -58,7 +58,7 @@ fun main(args: Array<String>) {
 
     val model = System.getenv("COMPUTERNAME") ?: runCatching { InetAddress.getLocalHost().hostName }.getOrDefault("Windows")
     val platform = DesktopUiPlatform(model)
-    val app = App(StateFile(Paths.home), ServiceClient(), Paths.cache, model, DesktopUiPlatform::openInBrowser)
+    val app = App(StateFile(Paths.home), ServiceClient(), Paths.cache, model)
     // The theme choice is one word in a plain file, read before the window opens (no flash of the wrong theme).
     val themeFile = File(Paths.home, "theme")
     ThemePrefs.mode.value = ThemePrefs.parse(runCatching { themeFile.readText().trim() }.getOrNull())

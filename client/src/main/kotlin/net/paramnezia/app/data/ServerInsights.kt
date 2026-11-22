@@ -34,7 +34,7 @@ class ServerInsights(private val repo: Repo, private val fleet: FleetManager) {
         val protocol: Protocol,
         val psk: Psk,
     ) {
-        val endpoint: String? get() = config.peers.firstOrNull()?.endpoint
+        val endpoint: String? get() = config.peers.firstNotNullOfOrNull { it.endpoint }
     }
 
     /** Every server this device can connect to: the family's (master first), then standalone ones. */

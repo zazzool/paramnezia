@@ -123,6 +123,9 @@ class Net(private val context: Context) : Http {
         } finally { c.disconnect() }
     }.getOrNull()
 
+    fun downloadThroughTunnel(url: String, consume: (java.io.InputStream) -> Boolean): Boolean =
+        vpnNetwork()?.let { download(url, it, consume) } == true
+
     private fun open(url: String, network: Network?, readTimeoutMs: Int = 20_000): HttpURLConnection {
         val u = URL(url)
         val c = (network?.openConnection(u) ?: u.openConnection()) as HttpURLConnection

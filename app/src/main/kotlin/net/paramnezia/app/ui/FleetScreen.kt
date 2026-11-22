@@ -142,15 +142,6 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                 NeedServer(onAddServer)
                 return@Column
             }
-            // Recommended: a fleet survives a blocked server; plain accounts do not.
-            FleetPitch(managed, busy) { p -> work("Семейная группа создана") { app.fleet.create(p.name, WgQuick.parse(p.conf), p.ssh!!, platform.deviceModel) } }
-            Group {
-                GroupRow(
-                    "Просто выдать ключи", subtitle = "Каждому свой ключ ссылкой или файлом, без автообновления серверов",
-                    icon = Glyph.PersonAdd, onClick = { if (!busy) accountOn = managed },
-                    trailing = { Chevron() },
-                )
-            }
             SectionTitle("Серверы") { Pill(managed.size.toString()) }
             Group {
                 for (p in managed) {
@@ -162,6 +153,15 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                 }
             }
             LocalServers(state.profiles.filter { it.ssh == null }) { details = it }
+            // Recommended: a fleet survives a blocked server; plain accounts do not.
+            FleetPitch(managed, busy) { p -> work("Семейная группа создана") { app.fleet.create(p.name, WgQuick.parse(p.conf), p.ssh!!, platform.deviceModel) } }
+            Group {
+                GroupRow(
+                    "Просто выдать ключи", subtitle = "Каждому свой ключ ссылкой или файлом, без автообновления серверов",
+                    icon = Glyph.PersonAdd, onClick = { if (!busy) accountOn = managed },
+                    trailing = { Chevron() },
+                )
+            }
             SectionTitle("Раздача")
             Group { LanShareRow("Телевизору и компьютеру рядом: приложение и ключ") { if (!busy) lanShare = true } }
             FamilyPage(state.pages[managed.first().ssh!!.host], busy, onCreate = { work { app.links.familyPage() } }, onShare = shareFamily, onOpen = openUrl)
@@ -187,6 +187,41 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
         }
         SyncStatus(fleet.lastSync, fleet.lastSyncVia)
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+
+        SectionTitle("Серверы") { Pill(servers.size.toString()) }
+        if (isAdmin && servers.size < 2) {
+            Hint("Добавьте резервный сервер: если основной заблокируют, устройства сами переключатся на него.", PnIcons.Warning, Brand.Amber)
+        }
+        LocalServers(state.profiles) { details = it }
+        Group {
+            servers.forEachIndexed { i, s ->
+                val actions = buildList<Pair<String, () -> Unit>> {
+                    if (isAdmin) add("Перезагрузить сервер" to { rebootOf = RebootTarget(s.name, s.host, app.fleet.accessTo(s.id)) })
+                    if (isAdmin && i > 0) add("Сделать сервером по умолчанию" to { work("${s.name} выбран по умолчанию") { app.fleet.promote(s.id, useAutomaticSelection = true) } })
+                    if (isOwner && servers.size > 1) add("Убрать сервер" to {
+                        val bought = app.cloud.serverAt(s.host)
+                        work("Сервер убран из семьи") { app.fleet.removeServer(s.id); boughtRemoved = bought }
+                    })
+                }
+                GroupRow(
+                    s.name, subtitle = "${s.host}:${s.port}" + if (s.altPorts.isNotEmpty()) " · ещё ${plural(s.altPorts.size, "порт", "порта", "портов")}" else "",
+                    icon = Glyph.Server, onClick = { details = s.id },
+                    accent = if (i == 0) Brand.Mint else MaterialTheme.colorScheme.onSurfaceVariant,
+                    badge = if (i == 0) "основной" else "резервный",
+                    trailing = { if (actions.isNotEmpty()) Overflow(busy, *actions.toTypedArray()) },
+                )
+            }
+            if (isOwner) Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
+                Row(Modifier.fillMaxWidth().padding(Space.M), horizontalArrangement = Arrangement.spacedBy(Space.S)) {
+                    FilledTonalButton(enabled = !busy, onClick = { buying = true }, modifier = Modifier.weight(1f).height(48.dp)) {
+                        Icon(Glyph.Cloud, null, Modifier.size(18.dp)); Spacer(Modifier.width(Space.S)); Text("У хостера", maxLines = 1)
+                    }
+                    OutlinedButton(enabled = !busy, onClick = { newServer = true }, modifier = Modifier.weight(1f).height(48.dp)) {
+                        Icon(Glyph.Server, null, Modifier.size(18.dp)); Spacer(Modifier.width(Space.S)); Text("Свой VPS", maxLines = 1)
+                    }
+                }
+            }
+        }
 
         if (isAdmin) ActionTile(Glyph.PersonAdd, "Пригласить", "Ссылкой, файлом или QR-кодом, сразу нескольким", primary = true) {
             if (!busy) newDevice = true
@@ -217,41 +252,6 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                     badge = if (self) "это устройство" else null,
                     trailing = { if (actions.isNotEmpty()) Overflow(busy, *actions.toTypedArray()) },
                 )
-            }
-        }
-
-        SectionTitle("Серверы") { Pill(servers.size.toString()) }
-        if (isAdmin && servers.size < 2) {
-            Hint("Добавьте резервный сервер: если основной заблокируют, устройства сами переключатся на него.", PnIcons.Warning, Brand.Amber)
-        }
-        LocalServers(state.profiles) { details = it }
-        Group {
-            servers.forEachIndexed { i, s ->
-                val actions = buildList<Pair<String, () -> Unit>> {
-                    if (isAdmin) add("Перезагрузить сервер" to { rebootOf = RebootTarget(s.name, s.host, app.fleet.accessTo(s.id)) })
-                    if (isAdmin && i > 0) add("Сделать основным" to { work("${s.name} теперь основной") { app.fleet.promote(s.id, useAutomaticSelection = true) } })
-                    if (isOwner && servers.size > 1) add("Убрать сервер" to {
-                        val bought = app.cloud.serverAt(s.host)
-                        work("Сервер убран из семьи") { app.fleet.removeServer(s.id); boughtRemoved = bought }
-                    })
-                }
-                GroupRow(
-                    s.name, subtitle = "${s.host}:${s.port}" + if (s.altPorts.isNotEmpty()) " · ещё ${plural(s.altPorts.size, "порт", "порта", "портов")}" else "",
-                    icon = Glyph.Server, onClick = { details = s.id },
-                    accent = if (i == 0) Brand.Mint else MaterialTheme.colorScheme.onSurfaceVariant,
-                    badge = if (i == 0) "основной" else "резервный",
-                    trailing = { if (actions.isNotEmpty()) Overflow(busy, *actions.toTypedArray()) },
-                )
-            }
-            if (isOwner) Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
-                Row(Modifier.fillMaxWidth().padding(Space.M), horizontalArrangement = Arrangement.spacedBy(Space.S)) {
-                    FilledTonalButton(enabled = !busy, onClick = { buying = true }, modifier = Modifier.weight(1f).height(48.dp)) {
-                        Icon(Glyph.Cloud, null, Modifier.size(18.dp)); Spacer(Modifier.width(Space.S)); Text("У хостера", maxLines = 1)
-                    }
-                    OutlinedButton(enabled = !busy, onClick = { newServer = true }, modifier = Modifier.weight(1f).height(48.dp)) {
-                        Icon(Glyph.Server, null, Modifier.size(18.dp)); Spacer(Modifier.width(Space.S)); Text("Свой VPS", maxLines = 1)
-                    }
-                }
             }
         }
 

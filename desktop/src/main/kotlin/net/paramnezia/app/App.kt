@@ -59,8 +59,6 @@ class App(
     val client: ServiceClient,
     private val cacheDir: File,
     private val deviceModel: String,
-    /** Opens links in the browser (the update button, provider pages). */
-    openUrl: (String) -> Unit,
     /** Bypass lists (the Android app's assets/bypass files, bundled as resources). */
     asset: (String) -> String = ::bundledAsset,
 ) : TunnelHost {
@@ -73,7 +71,7 @@ class App(
     val specs = SpecBuilder(lists::text, lists::version)
     val tunnel = TunnelEngine(client, specs, this, scope)
     val fleet: FleetManager = FleetManager(repo, net, ed, scope) { reconnectIfUp() }
-    val updater = Updater(repo, net, ed, scope, openUrl)
+    val updater = Updater(repo, net, ed, scope, cacheDir)
     val links: Links by lazy { Links(repo, fleet, { updater.android }, scope) }
     val cloud: Cloud by lazy { Cloud(repo, scope, cacheDir) }
     /** Reboots a server over SSH, or through its hosting provider when SSH is dead. */

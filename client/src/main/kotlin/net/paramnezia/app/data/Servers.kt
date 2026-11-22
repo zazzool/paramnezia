@@ -5,6 +5,8 @@ import net.paramnezia.core.amnezia.AmneziaFormat
 import net.paramnezia.core.amnezia.AmneziaKey
 import net.paramnezia.core.config.ConfigException
 import net.paramnezia.core.config.WgQuick
+import net.paramnezia.core.config.Uapi
+import net.paramnezia.core.net.IpPrefix
 import net.paramnezia.core.crypto.WgKey
 import net.paramnezia.core.fleet.Invite
 import net.paramnezia.core.profile.Protocol
@@ -172,15 +174,33 @@ class Servers(
         s.copy(profiles = listOf(server) + s.profiles.filterNot { it.id == id }, activeProfile = id)
     }
 
-    fun edit(id: String, name: String, conf: String) {
+    fun edit(id: String, name: String, conf: String) = editProfile(id, name, updateProtocol = true) { conf }
+
+    fun editEndpoint(id: String, name: String, endpoint: String) = editProfile(id, name, updateProtocol = false) { profile ->
+        val (host, port) = Uapi.splitEndpoint(endpoint)
+        require(host.isNotEmpty() && host.none { it.isWhitespace() || it in "/[]@?#%" } &&
+            (':' !in host || IpPrefix.parseOrNull(host)?.isV6 == true)) { "Введите адрес сервера и порт" }
+        val config = WgQuick.parse(profile.conf)
+        val index = config.peers.indexOfFirst { it.endpoint != null }
+        require(index >= 0) { "Укажите Endpoint в конфигурации" }
+        val address = if (':' in host) "[$host]:$port" else "$host:$port"
+        if (config.peers[index].endpoint == address) profile.conf
+        else WgQuick.write(config.copy(peers = config.peers.mapIndexed { i, peer ->
+            if (i == index) peer.copy(endpoint = address) else peer
+        }))
+    }
+
+    private fun editProfile(id: String, name: String, updateProtocol: Boolean, edit: (StoredProfile) -> String) {
         val label = name.trim()
         require(label.isNotEmpty()) { "Введите название сервера" }
         repo.update { s ->
             val profile = s.profiles.firstOrNull { it.id == id } ?: error("Сервер не найден")
+            val conf = edit(profile)
             val updated = if (conf == profile.conf) profile.copy(name = label) else {
                 val config = WgQuick.parse(conf)
                 require(config.peers.any { it.endpoint != null }) { "Укажите Endpoint в конфигурации" }
-                profile.copy(name = label, conf = WgQuick.write(config), protocol = if (config.isAmnezia) "AWG" else "WIREGUARD",
+                val protocol = if (!updateProtocol) profile.protocol else if (config.isAmnezia) "AWG" else "WIREGUARD"
+                profile.copy(name = label, conf = WgQuick.write(config), protocol = protocol,
                     altPorts = emptyList(), altHosts = emptyList())
             }
             s.copy(

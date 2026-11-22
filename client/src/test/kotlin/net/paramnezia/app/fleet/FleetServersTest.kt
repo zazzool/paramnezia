@@ -4,6 +4,9 @@ import kotlinx.coroutines.runBlocking
 import net.paramnezia.app.data.AppState
 import net.paramnezia.app.data.Repo
 import net.paramnezia.app.data.StoredFleet
+import net.paramnezia.app.data.StoredProfile
+import net.paramnezia.app.data.Servers
+import net.paramnezia.core.config.WgQuick
 import net.paramnezia.app.platform.Http
 import net.paramnezia.app.platform.StateStore
 import net.paramnezia.core.crypto.WgKey
@@ -52,15 +55,21 @@ class FleetServersTest {
         ownerRepo.update { it.copy(activeProfile = first.id) }
         ownerManager.promote(second.id, useAutomaticSelection = true)
         assertNull(ownerRepo.current.activeProfile)
+        val promotedManifest = ownerManager.stored!!.manifest
+        ownerRepo.update { it.copy(activeProfile = first.id) }
+        ownerManager.promote(second.id, useAutomaticSelection = true)
+        assertNull(ownerRepo.current.activeProfile)
+        assertEquals(promotedManifest, ownerManager.stored!!.manifest)
         network.mirror = ownerManager.stored!!.manifest
         assertTrue(memberManager.sync())
         assertEquals(listOf("second", "first"), memberManager.member()!!.tunnels().map { it.first.id })
         memberRepo.update { it.copy(activeProfile = second.id) }
 
-        ownerManager.editServer(second.id, "New backup", "backup.example:8443")
+        ownerManager.editServer(second.id, "New backup", "backup.example:8443", confirmRecovery = true)
         network.mirror = ownerManager.stored!!.manifest
         assertTrue(memberManager.sync())
         val (server, tunnel) = memberManager.member()!!.tunnels().first()
+        assertNull(memberRepo.current.activeProfile)
         assertEquals("New backup", server.name)
         assertTrue(server.altPorts.isEmpty())
         assertEquals("backup.example:8443", tunnel.peers.single().endpoint)
@@ -110,6 +119,40 @@ class FleetServersTest {
         assertEquals("192.0.2.2:51820", memberManager.member()!!.tunnels().single().second.peers.single().endpoint)
         assertFalse(memberManager.syncRecoveryChannel())
         assertEquals(listOf("primary"), endpoints)
+        assertNull(repo.current.activeProfile)
+    }
+
+    @Test
+    fun localEndpointCanChangeWithoutChangingKeysOrServerProtocol() = runBlocking {
+        val key = WgKey.generatePrivate()
+        val peer = WgKey.generatePrivate().publicKey()
+        val conf = """
+            [Interface]
+            PrivateKey = ${key.toBase64()}
+            Address = 10.8.1.2/32
+            [Peer]
+            PublicKey = ${peer.toBase64()}
+            AllowedIPs = 0.0.0.0/0
+            Endpoint = 192.0.2.1:51820
+        """.trimIndent()
+        val first = StoredProfile("one", "One", conf, "WIREGUARD")
+        val second = StoredProfile("two", "Two", conf, "AWG_LEGACY", altHosts = listOf("2001:db8::1"))
+        val repo = memoryRepo(AppState(profiles = listOf(first, second)))
+        val fleet = FleetManager(repo, ManifestNetwork(), Ed25519.Jca, this) {}
+        val servers = Servers(repo, fleet, "Test")
+        servers.editEndpoint(second.id, "New name", "[2001:db8::42]:8443")
+        val edited = repo.current.profiles.last()
+        val parsed = WgQuick.parse(edited.conf)
+        assertEquals("New name", edited.name)
+        assertEquals("[2001:db8::42]:8443", parsed.peers.single().endpoint)
+        assertEquals(key, parsed.iface.privateKey)
+        assertEquals(peer, parsed.peers.single().publicKey)
+        assertEquals("AWG_LEGACY", edited.protocol)
+        assertTrue(edited.altHosts.isEmpty())
+        servers.makePrimary(second.id)
+        assertEquals(second.id, repo.current.activeProfile)
+        servers.remove(second.id)
+        assertEquals(listOf(first), repo.current.profiles)
         assertNull(repo.current.activeProfile)
     }
 
