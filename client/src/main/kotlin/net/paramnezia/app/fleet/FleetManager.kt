@@ -537,8 +537,7 @@ class FleetManager(
         val admin = admin() ?: return@withContext 0
         // A device with its own key that this admin cannot derive (a co-admin with a grant from before
         // 2.16) is left to the owner: adding it with the shared key would lock it out of that server.
-        val peers = m.devices.filter { !it.ownPsk || admin.pskSeed != null }
-            .map { ServerManager.PeerSpec(WgKey.fromBase64(it.publicKey), it.name, it.address.substringBefore('/'), admin.pskFor(it)) }
+        val managedDevices = m.devices.filter { !it.ownPsk || admin.pskSeed != null }
         val upgrade = f.portsChecked < SERVER_UPGRADE
         val updated = HashMap<String, Pair<FleetServer, FleetServer>>()
         var upgradeFailed = false
@@ -547,6 +546,10 @@ class FleetManager(
         val stillRevokedKeys = HashSet<String>()
         for (s in m.servers) {
             val a = access(s) ?: continue
+            val peers = managedDevices.map {
+                val address = s.peerAddresses[it.publicKey] ?: it.address
+                ServerManager.PeerSpec(WgKey.fromBase64(it.publicKey), it.name, address.substringBefore('/'), admin.pskFor(it))
+            }
             val steps = listOf(
                 "peers" to { servers.ensurePeers(a, peers).forEach { (k, why) -> Log.w(TAG, "${s.name}: peer $k: $why") } },
                 "revoked" to {
@@ -634,7 +637,14 @@ class FleetManager(
      * Admin: deploys a fresh VPS as a standby (or master) and registers every device on it with its
      * fixed address. Devices switch to it automatically when they need to.
      */
-    suspend fun addServer(name: String, ssh: SshCredentials, makeMaster: Boolean, onStep: (ServerManager.Step) -> Unit) = withContext(Dispatchers.IO) {
+    suspend fun addServer(
+        name: String,
+        ssh: SshCredentials,
+        makeMaster: Boolean,
+        vpnEndpoint: String? = null,
+        expectedPublicKey: String? = null,
+        onStep: (ServerManager.Step) -> Unit,
+    ): String = withContext(Dispatchers.IO) {
         val admin = owner()
         val current = manifest() ?: error("no manifest")
         val f = stored ?: error("Семья не найдена")
@@ -645,30 +655,80 @@ class FleetManager(
             }
         }
         checkNewServer()
+        val endpoint = vpnEndpoint?.let(Uapi::splitEndpoint)
         val inspection = servers.inspect(ssh)
         val protocol = inspection.awgContainer ?: run {
+            check(expectedPublicKey == null) { "На SSH-сервере не найден AmneziaWG из локального профиля" }
             servers.install(ssh, ServerManager.InstallOptions(), onStep)
             Protocol.AWG
         }
         require(protocol == Protocol.AWG) { "Для семейного сервера нужен AmneziaWG 2" }
+        val existingPorts = expectedPublicKey?.let { expected ->
+            servers.ports(ssh).also { ports ->
+                check(ports.publicKey == expected) { "Ключ VPN на SSH-сервере отличается от локального профиля" }
+            }
+        }
         val myKey = WgKey.fromBase64(f.deviceKey)
         val me = current.deviceFor(myKey.publicKey()) ?: error("admin is not a fleet member")
-        val config = servers.addClient(ssh, myKey, me.name, clientIp = me.address.substringBefore('/'), psk = admin.pskFor(me))
-        val server = withPorts(fleetServerOf(UUID.randomUUID().toString(), name, config), ssh)
-        for (d in current.devices) if (d.publicKey != me.publicKey) {
-            servers.registerPeer(ssh, WgKey.fromBase64(d.publicKey), d.name, clientIp = d.address.substringBefore('/'), psk = admin.pskFor(d))
+        val assigned = linkedMapOf<String, String>()
+        fun <T> assign(device: FleetDevice, register: (String) -> T): T =
+            try {
+                register(device.address.substringBefore('/'))
+            } catch (e: net.paramnezia.deploy.SshException) {
+                if (e.code != "address_taken") throw e
+                val reserved = servers.usedAddresses(ssh) + current.devices.map { it.address.substringBefore('/') }
+                val subnet = FleetAdmin.DEFAULT_SUBNET.network
+                val free = (2..254).asSequence().map { i ->
+                    IpPrefix.of(false, subnet + i.toBigInteger(), 32).address.hostAddress
+                }.firstOrNull { it !in reserved } ?: error("На сервере нет свободного адреса в подсети семьи")
+                register(free)
+            }
+
+        fun rememberAddress(device: FleetDevice, actual: String) {
+            val ip = IpPrefix.parse(actual)
+            require(FleetAdmin.DEFAULT_SUBNET.contains(ip) && !ip.isV6) {
+                "На сервере нет свободного адреса в подсети семьи"
+            }
+            if (ip != IpPrefix.parse(device.address)) assigned[device.publicKey] = ip.toString()
         }
+
+        val config = assign(me) { ip ->
+            servers.addClient(ssh, myKey, me.name, clientIp = ip, psk = admin.pskFor(me))
+        }
+        rememberAddress(me, config.iface.addresses.first { !it.isV6 }.address.hostAddress)
+        val raw = fleetServerOf(UUID.randomUUID().toString(), name, config)
+        val advertised = endpoint?.let { (host, port) -> raw.copy(host = host, port = port) } ?: raw
+        val server = when {
+            existingPorts == null -> withPorts(advertised, ssh)
+            existingPorts.main != advertised.port -> advertised
+            else -> advertised.copy(altPorts = existingPorts.alt, altHosts = alternateHosts(advertised.host, existingPorts),
+                tunnelIpv6 = existingPorts.tunnelIpv6)
+        }
+        for (d in current.devices) if (d.publicKey != me.publicKey) {
+            val peer = assign(d) { ip ->
+                servers.registerPeer(ssh, WgKey.fromBase64(d.publicKey), d.name, clientIp = ip, psk = admin.pskFor(d))
+            }
+            rememberAddress(d, peer.clientIp)
+        }
+        val target = server.copy(peerAddresses = assigned.toMap())
+        val occupied = servers.usedAddresses(ssh)
         // The co-admins reach the new server with their own keys too.
         f.coAdmins.takeIf { it.isNotEmpty() }?.let { list -> runCatching { servers.updateAdminKeys(ssh, list.map { it.sshPublic }) } }
-        changeServers(accessChange = { it + (server.id to ssh) }) { latest ->
-            checkNewServer()
-            check(latest.devices == current.devices && latest.admins == current.admins) {
-                "Состав семьи изменился. Повторите добавление сервера"
+        poolLock.withLock {
+            changeServers(accessChange = { it + (target.id to ssh) }) { latest ->
+                checkNewServer()
+                check(latest.devices == current.devices && latest.admins == current.admins) {
+                    "Состав семьи изменился. Повторите добавление сервера"
+                }
+                latest.copy(servers = if (makeMaster) listOf(target) + latest.servers else latest.servers + target)
             }
-            latest.copy(servers = if (makeMaster) listOf(server) + latest.servers else latest.servers + server)
+            repo.update { state -> state.copy(fleet = state.fleet?.let { f ->
+                f.copy(pool = f.pool.filterNot { it.address.substringBefore('/') in occupied })
+            }) }
         }
         onStep(ServerManager.Step.DONE)
         onServerReady(ssh)
+        target.id
     }
 
     /** Admin: makes [serverId] the master. Devices follow at their next manifest read. */

@@ -34,6 +34,7 @@ class Servers(
 
     sealed interface Imported {
         data class Profiles(val names: List<String>) : Imported
+        data class FamilyServer(val name: String) : Imported
         data object JoinedFleet : Imported
         data object UpdatedFleet : Imported
     }
@@ -57,7 +58,17 @@ class Servers(
             val host = cfg.peers.firstOrNull()?.endpoint?.substringBeforeLast(':') ?: "server"
             listOf(StoredProfile(UUID.randomUUID().toString(), host, WgQuick.write(cfg), if (cfg.isAmnezia) "AWG" else "WIREGUARD"))
         } else {
-            AmneziaFormat.import(AmneziaKey.decode(t)).mapNotNull { p ->
+            val profiles = AmneziaFormat.import(AmneziaKey.decode(t))
+            val withAccess = profiles.firstOrNull { it.ssh != null }
+            if (fleet.isOwner && withAccess != null) {
+                val ssh = checkNotNull(withAccess.ssh)
+                val awg = profiles.firstOrNull { it.protocol == Protocol.AWG }
+                val name = withAccess.name.ifBlank { ssh.host }
+                val peer = awg?.tunnel?.peers?.firstOrNull { it.endpoint != null }
+                addFamilyServer(name, ssh, peer?.endpoint, peer?.publicKey?.toBase64())
+                return@withContext Imported.FamilyServer(name)
+            }
+            profiles.mapNotNull { p ->
                 val tunnel = p.tunnel ?: p.ssh?.let { ssh ->
                     // Full-access key without a client config: make ourselves a client on the server.
                     if (p.protocol == Protocol.XRAY) null
@@ -168,6 +179,70 @@ class Servers(
         else deploy(label, ssh, onStep)
         return label
     }
+
+    /** Moves the existing profile only after its server is available to all family devices. */
+    suspend fun moveToFamily(id: String, credentials: SshCredentials? = null) = withContext(Dispatchers.IO) {
+        check(fleet.isOwner) { "Перенести сервер может владелец семьи" }
+        val family = fleet.stored?.trust ?: error("Семья не найдена")
+        val profile = repo.current.profiles.firstOrNull { it.id == id } ?: error("Сервер не найден")
+        val config = WgQuick.parse(profile.conf)
+        val peer = config.peers.firstOrNull { it.endpoint != null } ?: error("В профиле нет адреса VPN")
+        val endpoint = checkNotNull(peer.endpoint)
+        val key = peer.publicKey.toBase64()
+        val familyId = existingFamilyServer(credentials ?: profile.ssh, endpoint, key) ?: run {
+            val ssh = credentials ?: profile.ssh ?: error("Укажите SSH-доступ к серверу")
+            check(profile.protocol == Protocol.AWG.name) { "Для семейного сервера нужен AmneziaWG 2" }
+            addFamilyServer(profile.name, ssh, endpoint, key)
+        }
+        check(fleet.manifest()?.servers?.any { it.id == familyId } == true) { "Семейный сервер не сохранился" }
+        repo.update { state ->
+            check(state.fleet?.trust == family) { "Семья изменилась во время переноса" }
+            val current = state.profiles.firstOrNull { it.id == id } ?: return@update state
+            check(current == profile) { "Профиль изменился во время переноса" }
+            state.copy(
+                profiles = state.profiles.filterNot { it.id == id },
+                activeProfile = state.activeProfile.takeUnless { it == id },
+                links = state.links.map { if (it.serverRef == id) it.copy(serverRef = familyId) else it },
+                clientPool = state.clientPool.filterNot { it.profileId == id },
+            )
+        }
+    }
+
+    data class FamilyMove(val moved: Int, val failures: List<String>)
+
+    suspend fun moveLocalServersToFamily(): FamilyMove = withContext(Dispatchers.IO) {
+        val profiles = repo.current.profiles
+        val failures = mutableListOf<String>()
+        var moved = 0
+        for (profile in profiles) {
+            try {
+                moveToFamily(profile.id)
+                if (repo.current.profiles.none { it.id == profile.id }) moved++
+                else failures += "${profile.name}: профиль изменился во время переноса"
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failures += "${profile.name}: ${e.message ?: "не удалось подключиться"}"
+            }
+        }
+        FamilyMove(moved, failures)
+    }
+
+    private fun existingFamilyServer(ssh: SshCredentials?, endpoint: String?, key: String?): String? {
+        val address = endpoint?.let(Uapi::splitEndpoint)
+        return fleet.manifest()?.servers.orEmpty().firstOrNull { server ->
+            val sameSsh = ssh != null && fleet.accessTo(server.id)?.let {
+                it.host.equals(ssh.host, ignoreCase = true) && it.port == ssh.port
+            } == true
+            val sameEndpoint = address?.let { (host, port) -> host.equals(server.host, ignoreCase = true) && port == server.port } == true
+            (sameSsh || (key != null && sameEndpoint)) && (key == null || key == server.publicKey)
+        }?.id
+    }
+
+    private suspend fun addFamilyServer(name: String, ssh: SshCredentials, endpoint: String?, key: String?): String =
+        existingFamilyServer(ssh, endpoint, key) ?: fleet.addServer(
+            name, ssh, makeMaster = false, vpnEndpoint = endpoint, expectedPublicKey = key,
+        ) {}
 
     fun makePrimary(id: String) = repo.update { s ->
         val server = s.profiles.firstOrNull { it.id == id } ?: error("Сервер не найден")

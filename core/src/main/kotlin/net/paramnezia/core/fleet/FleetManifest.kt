@@ -74,6 +74,8 @@ data class FleetServer(
     /** Other addresses of the same server, typically its IPv6 address (since 2.16). */
     val altHosts: List<String> = emptyList(),
     val tunnelIpv6: Boolean = false,
+    /** Addresses assigned on this VPS when a pre-existing peer owns the family's usual address. */
+    val peerAddresses: Map<String, String> = emptyMap(),
 )
 
 @Serializable
@@ -95,13 +97,14 @@ data class FleetDevice(
  */
 fun FleetServer.tunnelFor(device: FleetDevice, privateKey: WgKey, psk: WgKey? = null): TunnelConfig {
     require(privateKey.publicKey().toBase64() == device.publicKey) { "Key does not belong to ${device.name}" }
+    val address = peerAddresses[device.publicKey] ?: device.address
     val awgParams = LinkedHashMap<AwgParam, String>()
     for ((k, v) in awg) AwgParam.fromConfKey(k)?.let { awgParams[it] = v }
     return TunnelConfig(
         TunnelConfig.Interface(
             privateKey = privateKey,
-            addresses = listOf(IpPrefix.parse(device.address)) +
-                listOfNotNull(if (tunnelIpv6) managedIpv6Address(device.address) else null),
+            addresses = listOf(IpPrefix.parse(address)) +
+                listOfNotNull(if (tunnelIpv6) managedIpv6Address(address) else null),
             dns = dns,
             mtu = mtu,
             awg = awgParams,

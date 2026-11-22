@@ -112,11 +112,7 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
         (family.firstOrNull()?.id ?: repoState.profiles.firstOrNull()?.id) == serverId)
     val isDefault = if (familyAdmin) family.first().id == serverId && repoState.activeProfile == null else defaultOnDevice
     val inUse = session?.serverId == serverId || defaultOnDevice
-    val canShare = local?.ssh?.let { ssh ->
-        app.fleet.isOwner && repoState.fleet?.serverAccess?.values.orEmpty().none {
-            it.host.equals(ssh.host, ignoreCase = true) && it.port == ssh.port
-        }
-    } == true
+    val canShare = local != null && app.fleet.isOwner
     var editing by remember(serverId) { mutableStateOf(false) }
     var deleting by remember(serverId) { mutableStateOf(false) }
     var sharing by remember(serverId) { mutableStateOf(false) }
@@ -198,21 +194,34 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
         },
         dismissButton = { TextButton(onClick = { deleting = false }) { Text("Отмена") } },
     )
-    if (sharing) AlertDialog(
-        onDismissRequest = { sharing = false },
-        title = { Text("Добавить сервер в семью?") },
-        text = { Text(view.name) },
-        confirmButton = {
-            TextButton(onClick = {
-                sharing = false
-                manage {
-                    app.fleet.addServer(view.name, checkNotNull(local?.ssh), makeMaster = false) {}
-                    platform.toast("Сервер добавлен в семью")
+    if (sharing && local != null) {
+        val form = remember { SshFormState().apply {
+            host = view.endpoint?.let { runCatching { net.paramnezia.core.config.Uapi.splitEndpoint(it).first }.getOrNull() }.orEmpty()
+        } }
+        AlertDialog(
+            onDismissRequest = { if (!busy) sharing = false },
+            title = { Text("Перенести сервер в семью?") },
+            text = {
+                Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(Space.S)) {
+                    Text("«${view.name}» станет резервным для всех устройств семьи.")
+                    if (local.ssh == null) SshFields(form, enabled = !busy, toast = platform::toast, showName = false)
                 }
-            }) { Text("Добавить") }
-        },
-        dismissButton = { TextButton(onClick = { sharing = false }) { Text("Отмена") } },
-    )
+            },
+            confirmButton = {
+                TextButton(enabled = !busy && (local.ssh != null || form.ready), onClick = {
+                    manage {
+                        app.servers.moveToFamily(serverId, if (local.ssh == null) form.credentials() else null)
+                        if (inUse) app.reconnectIfUp()
+                        platform.toast("Сервер перенесён в семью")
+                        sharing = false
+                        onBack()
+                    }
+                }) { Text("Перенести") }
+            },
+            dismissButton = { TextButton(enabled = !busy, onClick = { sharing = false }) { Text("Отмена") } },
+        )
+    }
     val config = view.config
     val protocol = ProtocolVersion.of(config)
 
@@ -275,7 +284,7 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
             if (familyAdmin) GroupRow("Поделиться обновлением семьи", icon = Glyph.Server, onClick = {
                 app.fleet.addressUpdate()?.let { platform.shareText(it, "Обновление адреса Paramnezia") }
             })
-            if (canShare) GroupRow("Добавить в семью", icon = Glyph.Server, onClick = { if (!busy) sharing = true })
+            if (canShare) GroupRow("Перенести в семью", icon = Glyph.Server, onClick = { if (!busy) sharing = true })
         }
 
         // The state in one line, coloured like the power button.

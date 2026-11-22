@@ -86,7 +86,13 @@ fun Root(app: App, platform: DesktopUiPlatform, incoming: MutableSharedFlow<Stri
         LaunchedEffect(pending) {
             val key = pending ?: return@LaunchedEffect
             pending = null
-            runCatching { app.servers.import(key) }.onSuccess { toast("Готово"); onConnect() }.onFailure { toast(it.message ?: "Ошибка") }
+            runCatching { app.servers.import(key) }.onSuccess {
+                if (it is net.paramnezia.app.data.Servers.Imported.FamilyServer) toast("Сервер семьи: ${it.name}")
+                else {
+                    toast("Готово")
+                    onConnect()
+                }
+            }.onFailure { toast(it.message ?: "Ошибка") }
         }
         Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
             Column(Modifier.padding(padding)) {

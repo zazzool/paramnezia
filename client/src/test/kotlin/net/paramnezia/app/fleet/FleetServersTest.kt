@@ -5,8 +5,13 @@ import net.paramnezia.app.data.AppState
 import net.paramnezia.app.data.Repo
 import net.paramnezia.app.data.StoredFleet
 import net.paramnezia.app.data.StoredProfile
+import net.paramnezia.app.data.StoredLink
+import net.paramnezia.core.fleet.tunnelFor
+import net.paramnezia.core.profile.SshCredentials
 import net.paramnezia.app.data.Servers
 import net.paramnezia.core.config.WgQuick
+import net.paramnezia.core.amnezia.AmneziaFormat
+import net.paramnezia.core.amnezia.AmneziaKey
 import net.paramnezia.app.platform.Http
 import net.paramnezia.app.platform.StateStore
 import net.paramnezia.core.crypto.WgKey
@@ -154,6 +159,51 @@ class FleetServersTest {
         servers.remove(second.id)
         assertEquals(listOf(first), repo.current.profiles)
         assertNull(repo.current.activeProfile)
+    }
+
+    @Test
+    fun transfersDuplicateProfileAndKeepsProfilesThatStillNeedSsh() = runBlocking {
+        val (admin, empty) = FleetAdmin.create("Family", Ed25519.Jca)
+        val (owner, ownerKey) = admin.newDevice(empty, "Owner")
+        val primary = FleetServer("primary", "Primary", "192.0.2.1", 51820,
+            WgKey.generatePrivate().publicKey().toBase64(), awg = mapOf("Jc" to "3"))
+        val tunnel = primary.tunnelFor(owner, ownerKey, admin.pskFor(owner))
+        val localConfig = WgQuick.write(tunnel)
+        val differentConfig = localConfig.replace("192.0.2.1:", "192.0.2.2:")
+        val duplicate = StoredProfile("duplicate", "Duplicate", localConfig)
+        val withoutAccess = StoredProfile("no-access", "No SSH", differentConfig)
+        val manifest = admin.next(empty) { it.copy(servers = listOf(primary), devices = listOf(owner)) }
+        val repo = memoryRepo(AppState(
+            profiles = listOf(duplicate, withoutAccess), activeProfile = duplicate.id,
+            links = listOf(StoredLink("link", "", "Link", duplicate.id, 1, 2)),
+            fleet = StoredFleet(admin.trust, ownerKey.toBase64(), owner.name, FleetCrypto.encode(admin.seal(manifest)),
+                adminSeed = Base64.getEncoder().encodeToString(admin.signingSeed),
+                serverAccess = mapOf(primary.id to SshCredentials(primary.host))),
+        ))
+        val fleet = FleetManager(repo, ManifestNetwork(), Ed25519.Jca, this) {}
+        val servers = Servers(repo, fleet, "Test")
+        val fullAccess = AmneziaKey.encode(AmneziaFormat.export("Primary", tunnel, SshCredentials(primary.host)))
+        assertEquals(Servers.Imported.FamilyServer("Primary"), servers.import(fullAccess))
+        assertEquals(listOf(duplicate, withoutAccess), repo.current.profiles)
+        assertEquals(duplicate.id, repo.current.activeProfile)
+        val result = servers.moveLocalServersToFamily()
+        assertEquals(1, result.moved)
+        assertEquals(listOf("No SSH: Укажите SSH-доступ к серверу"), result.failures)
+        assertEquals(listOf(withoutAccess), repo.current.profiles)
+        assertNull(repo.current.activeProfile)
+        assertEquals(primary.id, repo.current.links.single().serverRef)
+        assertEquals(listOf(primary), fleet.manifest()!!.servers)
+    }
+
+    @Test
+    fun backupCanUseItsAssignedAddressWithoutChangingThePrimaryAddress() {
+        val (admin, empty) = FleetAdmin.create("Family", Ed25519.Jca)
+        val (device, key) = admin.newDevice(empty, "Phone")
+        val primary = FleetServer("primary", "Primary", "192.0.2.1", 51820,
+            WgKey.generatePrivate().publicKey().toBase64())
+        val backup = primary.copy(id = "backup", peerAddresses = mapOf(device.publicKey to "10.8.1.77/32"))
+        assertEquals(device.address, primary.tunnelFor(device, key).iface.addresses.single().toString())
+        assertEquals("10.8.1.77/32", backup.tunnelFor(device, key).iface.addresses.single().toString())
     }
 
     private fun memoryRepo(state: AppState): Repo = Repo(object : StateStore {

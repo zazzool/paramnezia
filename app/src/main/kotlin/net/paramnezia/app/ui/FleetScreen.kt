@@ -88,6 +88,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
     var invite by remember { mutableStateOf<String?>(null) }
     var newDevice by remember { mutableStateOf(false) }
     var newServer by remember { mutableStateOf(false) }
+    var moveResult by remember { mutableStateOf<net.paramnezia.app.data.Servers.FamilyMove?>(null) }
     var buying by remember { mutableStateOf(false) }
     /** A server bought from the app was just removed from the fleet: offer to delete it at the provider. */
     var boughtRemoved by remember { mutableStateOf<CloudServerRef?>(null) }
@@ -192,7 +193,6 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
         if (isAdmin && servers.size < 2) {
             Hint("Добавьте резервный сервер: если основной заблокируют, устройства сами переключатся на него.", PnIcons.Warning, Brand.Amber)
         }
-        LocalServers(state.profiles) { details = it }
         Group {
             servers.forEachIndexed { i, s ->
                 val actions = buildList<Pair<String, () -> Unit>> {
@@ -217,11 +217,25 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                         Icon(Glyph.Cloud, null, Modifier.size(18.dp)); Spacer(Modifier.width(Space.S)); Text("У хостера", maxLines = 1)
                     }
                     OutlinedButton(enabled = !busy, onClick = { newServer = true }, modifier = Modifier.weight(1f).height(48.dp)) {
-                        Icon(Glyph.Server, null, Modifier.size(18.dp)); Spacer(Modifier.width(Space.S)); Text("Свой VPS", maxLines = 1)
+                        Icon(Glyph.Server, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(Space.S))
+                        Text("Добавить VPS", maxLines = 1)
                     }
                 }
             }
         }
+
+        if (isOwner && state.profiles.isNotEmpty()) Group {
+            GroupRow("Перенести локальные серверы в семью", subtitle = "Доступные по SSH станут резервными",
+                icon = Glyph.Server, onClick = {
+                    if (!busy) work {
+                        val result = app.servers.moveLocalServersToFamily()
+                        if (result.moved > 0) app.reconnectIfUp()
+                        moveResult = result
+                    }
+                })
+        }
+        LocalServers(state.profiles) { details = it }
 
         if (isAdmin) ActionTile(Glyph.PersonAdd, "Пригласить", "Ссылкой, файлом или QR-кодом, сразу нескольким", primary = true) {
             if (!busy) newDevice = true
@@ -455,13 +469,26 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
             dismissButton = { TextButton(onClick = { boughtRemoved = null }) { Text("Оставить") } },
         )
     }
+    moveResult?.let { result ->
+        AlertDialog(
+            onDismissRequest = { moveResult = null },
+            title = { Text("Серверы семьи") },
+            text = {
+                Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                    Text("Перенесено: ${result.moved}")
+                    for (failure in result.failures) Text(failure)
+                }
+            },
+            confirmButton = { TextButton(onClick = { moveResult = null }) { Text("Готово") } },
+        )
+    }
     if (newServer) {
         val form = remember { SshFormState() }
         var master by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { newServer = false },
             icon = { Icon(Glyph.Server, null) },
-            title = { Text("Свой VPS для семьи") },
+            title = { Text("Добавить резервный сервер") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("AmneziaWG установится сам, все устройства семьи получат доступ к серверу.", style = MaterialTheme.typography.bodyMedium)
