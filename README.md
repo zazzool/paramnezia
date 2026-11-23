@@ -44,3 +44,4 @@
 - [Параметры AmneziaWG](docs/CAMOUFLAGE.md)
 - [Разрешения Android и проверки сборки](docs/PLAY-PROTECT.md)
 - [Сторонние компоненты и лицензии](THIRD-PARTY-NOTICES.md)
+- [Описание проекта и изображения для публикаций](docs/PRESS.md)
