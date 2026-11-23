@@ -58,6 +58,7 @@ object GeoIp {
 
     /** "What is my address" services. Cloudflare's trace also tells the country its own sites see. */
     const val CLOUDFLARE_TRACE = "https://www.cloudflare.com/cdn-cgi/trace"
+    const val CLOUDFLARE_TRACE_IP = "https://1.1.1.1/cdn-cgi/trace"
     val SELF_PLAIN = listOf("https://api.ipify.org", "https://ipinfo.io/ip")
 
     /** Yandex's own address check (the one yandex.ru/internet shows), IPv4 first. */

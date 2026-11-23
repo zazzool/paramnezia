@@ -108,7 +108,7 @@ class VisibilityCheck(
                     for (pause in DIRECT_RETRY_MS) {
                         if (pause > 0) delay(pause)
                         // Past the VPN every service sees the same address; Yandex often hides it, so last.
-                        ip = firstOf((GeoIp.CARRIER_SELF + GeoIp.CLOUDFLARE_TRACE + GeoIp.RUSSIAN_SELF).map { url ->
+                        ip = firstOf((GeoIp.CARRIER_SELF + GeoIp.CLOUDFLARE_TRACE_IP + GeoIp.RUSSIAN_SELF).map { url ->
                             suspend { ask(url, true, directLabel, 8_000, errors) }
                         })
                         if (ip != null) break
@@ -184,7 +184,7 @@ class VisibilityCheck(
 
     private fun ask(url: String, direct: Boolean, label: String, timeoutMs: Int, errors: MutableCollection<String>): String? {
         val res = net.fetch(url, direct, timeoutMs = timeoutMs)
-        val ip = if (url == GeoIp.CLOUDFLARE_TRACE) res.body?.let(GeoIp::parseCloudflareTrace)?.ip?.takeIf(GeoIp::isPublicIp)
+        val ip = if (url == GeoIp.CLOUDFLARE_TRACE || url == GeoIp.CLOUDFLARE_TRACE_IP) res.body?.let(GeoIp::parseCloudflareTrace)?.ip?.takeIf(GeoIp::isPublicIp)
             else GeoIp.parsePlainIp(res.body)
         if (ip == null) {
             // Yandex answers "127.0.0.1" to requests it does not want to tell the address to

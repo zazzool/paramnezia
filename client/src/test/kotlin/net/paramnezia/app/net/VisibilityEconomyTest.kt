@@ -20,7 +20,7 @@ class VisibilityEconomyTest {
      * [tunnelIp]: what foreign services see through the tunnel (null: the tunnel route gives nothing yet);
      * [plainIp]: what they see on an unbound request.
      */
-    private inner class FakeNet(val tunnelIp: String? = server, val plainIp: String = server) : Http {
+    private inner class FakeNet(val tunnelIp: String? = server, val plainIp: String = server, val directDnsDown: Boolean = false) : Http {
         val asked = ConcurrentLinkedQueue<String>()
         override fun getThroughTunnel(url: String, maxBytes: Int, timeoutMs: Int): String? {
             asked += "tunnel $url"
@@ -45,6 +45,10 @@ class VisibilityEconomyTest {
         }
         override fun fetch(url: String, direct: Boolean, maxBytes: Int, timeoutMs: Int, userAgent: String): Http.Fetched {
             asked += (if (direct) "direct " else "routed ") + url
+            if (direct && directDnsDown) {
+                return if (url == net.paramnezia.core.net.GeoIp.CLOUDFLARE_TRACE_IP) Http.Fetched("ip=$home\nloc=RU\n", null)
+                else Http.Fetched(null, "DNS unavailable")
+            }
             return if (url.contains("yandex")) Http.Fetched("\"127.0.0.1\"", null) else Http.Fetched(if (direct) home else server, null)
         }
     }
@@ -71,6 +75,14 @@ class VisibilityEconomyTest {
         val net2 = FakeNet()
         VisibilityCheck(net2, loadGeo = { store }, saveGeo = {}).run("k", serverHost = null, vpnUp = true, ruDirect = true)
         assertEquals(0, net2.asked.count { it.contains("ipwho.is/") || it.contains("ip.sb") || it.contains("geojs") })
+    }
+
+    @Test
+    fun directAddressSurvivesDnsFailure() = runBlocking {
+        val v = VisibilityCheck(FakeNet(directDnsDown = true)).run("k", serverHost = null, vpnUp = true, ruDirect = true)
+        assertEquals(home, v.russian?.ip)
+        assertEquals(RuSource.CARRIER, v.russianSource)
+        assertEquals(server, v.foreign?.ip)
     }
 
     @Test
