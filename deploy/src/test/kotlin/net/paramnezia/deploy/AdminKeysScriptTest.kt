@@ -12,13 +12,14 @@ class AdminKeysScriptTest {
     private fun run(home: File, add: String = "", del: String = ""): String {
         val p = ProcessBuilder("bash", "-s").apply { environment().putAll(mapOf("PN_HOME" to home.path, "PN_ADD" to add, "PN_DEL" to del)) }
             .redirectErrorStream(true).start()
-        p.outputStream.use { it.write(ServerManager.script("admin-keys.sh").toByteArray()) }
+        p.outputStream.use { it.write(("test -n \"\$PN_HOME\" && test -d \"\$PN_HOME\" || exit 1\n" + ServerManager.script("admin-keys.sh")).toByteArray()) }
         val out = p.inputStream.bufferedReader().readText()
         assertTrue(p.waitFor(20, TimeUnit.SECONDS)); assertEquals(out, 0, p.exitValue())
         return out
     }
 
     @Test fun addsOnceRemovesExactly() {
+        org.junit.Assume.assumeTrue("requires POSIX file permissions", "posix" in java.nio.file.FileSystems.getDefault().supportedFileAttributeViews())
         val home = Files.createTempDirectory("pn-home").toFile()
         val f = File(home, ".ssh/authorized_keys").apply { parentFile.mkdirs(); writeText("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOWNEROWNEROWNEROWNEROWNEROWNEROWNEROWNER owner\n") }
         val mom = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMOMMOMMOMMOMMOMMOMMOMMOMMOMMOMMOMMOMMOM paramnezia-admin:mom"

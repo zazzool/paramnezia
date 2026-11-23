@@ -813,8 +813,10 @@ class FleetManager(
             }
         }) { current ->
             require(current.servers.any { it.id == serverId }) { "Сервер не найден" }
-            if (expectedServer != null) check(current.servers.firstOrNull { it.id == serverId } == expectedServer && followsAddress(serverId))
-              val updated = current.servers.map { server ->
+            if (expectedServer != null) {
+                check(current.servers.firstOrNull { it.id == serverId } == expectedServer && followsAddress(serverId))
+            }
+            val updated = current.servers.map { server ->
                 when {
                     server.id != serverId -> server
                     server.host == host && server.port == port -> server.copy(name = label)
