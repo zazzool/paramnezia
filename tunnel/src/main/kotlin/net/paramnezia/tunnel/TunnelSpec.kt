@@ -183,15 +183,21 @@ object TunnelRuntime {
      * `socketFactory(network.socketFactory)`) for channels that must work while the tunnel is dead.
      * A VPN app may use the underlying network even in lockdown mode.
      */
+    fun directNetwork(context: Context): Network? = directNetworks(context).firstOrNull()
+
     @Suppress("DEPRECATION")
-    fun directNetwork(context: Context): Network? {
+    fun directNetworks(context: Context): List<Network> {
         val cm = context.getSystemService(ConnectivityManager::class.java)
-        return cm.allNetworks.firstOrNull { n ->
-            val c = cm.getNetworkCapabilities(n) ?: return@firstOrNull false
-            !c.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
-                c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-        }
+        val active = cm.activeNetwork
+        return cm.allNetworks.mapNotNull { network ->
+            val caps = cm.getNetworkCapabilities(network) ?: return@mapNotNull null
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) ||
+                !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+                !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) return@mapNotNull null
+            network to caps
+        }.sortedWith(compareByDescending<Pair<Network, NetworkCapabilities>> { it.first == active }
+            .thenByDescending { it.second.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) })
+            .map { it.first }
     }
 
     /**

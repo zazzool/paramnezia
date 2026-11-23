@@ -65,9 +65,16 @@ class Net(private val context: Context) : Http {
         return null
     }
 
-    override fun fetch(url: String, direct: Boolean, maxBytes: Int, timeoutMs: Int, userAgent: String): Http.Fetched =
-        if (!direct) fetch(url, null as Network?, maxBytes, timeoutMs, userAgent)
-        else this.direct()?.let { fetch(url, it, maxBytes, timeoutMs, userAgent) } ?: Http.Fetched(null, "нет сети")
+    override fun fetch(url: String, direct: Boolean, maxBytes: Int, timeoutMs: Int, userAgent: String): Http.Fetched {
+        if (!direct) return fetch(url, null as Network?, maxBytes, timeoutMs, userAgent)
+        var result = Http.Fetched(null, "Нет физической сети")
+        // During a handover Android can still list the previous network as validated.
+        for (network in TunnelRuntime.directNetworks(context)) {
+            result = fetch(url, network, maxBytes, timeoutMs, userAgent)
+            if (result.body != null) break
+        }
+        return result
+    }
 
     /**
      * One GET on a fresh connection (never a pooled one: a socket opened before the tunnel came up
