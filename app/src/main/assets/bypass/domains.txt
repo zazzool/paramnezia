@@ -53,6 +53,7 @@ beget.app
 beget.cloud
 beget.com
 beget.de
+beget.email
 beget.hosting
 beget.pro
 beget.tech
@@ -360,6 +361,7 @@ mcs.st
 medrocket.me
 medsi.com
 medsi.pro
+megabitus.com
 megafon.com
 megamarket.tech
 mel.fm
@@ -421,6 +423,7 @@ okolo.app
 opennet.dev
 oskelly.co
 ostin.com
+otzovik.com
 ozon.app
 ozon.by
 ozon.com
@@ -679,6 +682,7 @@ unidraw.io
 unirest.tech
 userapi.com
 usocial.pro
+vigo.tech
 vimu.tv
 viqeo.tv
 viqeotv.com
@@ -831,7 +835,6 @@ yandexcom.net
 yandexdataschool.com
 yandexgo.com
 yandexwebcache.net
-yandexwebcache.org
 yango-b2b.com
 yango-team.com
 yango-tech.com
@@ -853,6 +856,7 @@ ydb.tech
 yndx.net
 youla.io
 yourgood.app
+zapishu.me
 zvuk-b2b.com
 zvuk.com
 full:kp-config-smart-tv.akamaized.net
