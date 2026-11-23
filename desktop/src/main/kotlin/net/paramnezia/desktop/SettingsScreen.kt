@@ -1,6 +1,5 @@
 package net.paramnezia.desktop
 
-import net.paramnezia.app.ui.AppUpdates
 import net.paramnezia.app.ui.ScreenTitle
 import net.paramnezia.app.ui.ThemePicker
 import androidx.compose.foundation.clickable
@@ -35,9 +34,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.paramnezia.app.App
+import net.paramnezia.app.BuildConfig
 import net.paramnezia.app.data.BatteryMode
 import net.paramnezia.app.data.Settings
 import net.paramnezia.app.data.UiMode
+import net.paramnezia.app.ui.UpdateAction
 
 /**
  * Settings on Windows: the same routing, privacy and interface choices as on Android (so a fleet
@@ -123,7 +124,14 @@ fun SettingsScreen(app: App, platform: DesktopUiPlatform, modifier: Modifier, to
         }
 
         HorizontalDivider()
-        AppUpdates(app)
+        Section("Обновления")
+        if (app.updater.enabled) {
+            Hint("Paramnezia скачает и проверит обновление и откроет установщик Windows.")
+            UpdateAction(app.updater)
+        } else {
+            Hint("Эта сборка без ключа релизов: проверка обновлений выключена.")
+        }
+        Text("Версия ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) для Windows", style = MaterialTheme.typography.bodySmall)
     }
 }
 

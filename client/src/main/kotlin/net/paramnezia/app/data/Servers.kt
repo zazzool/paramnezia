@@ -5,6 +5,8 @@ import net.paramnezia.core.amnezia.AmneziaFormat
 import net.paramnezia.core.amnezia.AmneziaKey
 import net.paramnezia.core.config.ConfigException
 import net.paramnezia.core.config.WgQuick
+import net.paramnezia.core.config.Uapi
+import net.paramnezia.core.net.IpPrefix
 import net.paramnezia.core.crypto.WgKey
 import net.paramnezia.core.fleet.Invite
 import net.paramnezia.core.profile.Protocol
@@ -27,12 +29,14 @@ class Servers(
 
     companion object {
         /** Bumped when own standalone servers need a one-off upgrade (1: spare ports, 2: tuning, 3: engine). */
-        const val PORTS_UPGRADE = 3
+        const val PORTS_UPGRADE = 4
     }
 
     sealed interface Imported {
         data class Profiles(val names: List<String>) : Imported
+        data class FamilyServer(val name: String) : Imported
         data object JoinedFleet : Imported
+        data object UpdatedFleet : Imported
     }
 
     /**
@@ -41,6 +45,10 @@ class Servers(
      */
     suspend fun import(text: String): Imported = withContext(Dispatchers.IO) {
         val t = net.paramnezia.core.amnezia.KeyText.extract(text)
+        if (net.paramnezia.core.fleet.FleetCrypto.decode(t) != null) {
+            if (!fleet.offer(t)) throw ConfigException("Обновление семьи уже применено или подпись не подтверждена")
+            return@withContext Imported.UpdatedFleet
+        }
         if (Invite.read(t) != null) {
             if (!fleet.join(t, deviceModel)) throw ConfigException("Приглашение повреждено или устарело")
             return@withContext Imported.JoinedFleet
@@ -50,7 +58,17 @@ class Servers(
             val host = cfg.peers.firstOrNull()?.endpoint?.let { net.paramnezia.core.config.Uapi.splitEndpoint(it).first } ?: "server"
             listOf(StoredProfile(UUID.randomUUID().toString(), host, WgQuick.write(cfg), if (cfg.isAmnezia) "AWG" else "WIREGUARD"))
         } else {
-            AmneziaFormat.import(AmneziaKey.decode(t)).mapNotNull { p ->
+            val profiles = AmneziaFormat.import(AmneziaKey.decode(t))
+            val withAccess = profiles.firstOrNull { it.ssh != null }
+            if (fleet.isOwner && withAccess != null) {
+                val ssh = checkNotNull(withAccess.ssh)
+                val awg = profiles.firstOrNull { it.protocol == Protocol.AWG }
+                val name = withAccess.name.ifBlank { ssh.host }
+                val peer = awg?.tunnel?.peers?.firstOrNull { it.endpoint != null }
+                addFamilyServer(name, ssh, peer?.endpoint, peer?.publicKey?.toBase64())
+                return@withContext Imported.FamilyServer(name)
+            }
+            profiles.mapNotNull { p ->
                 val tunnel = p.tunnel ?: p.ssh?.let { ssh ->
                     // Full-access key without a client config: make ourselves a client on the server.
                     if (p.protocol == Protocol.XRAY) null
@@ -124,13 +142,25 @@ class Servers(
             runCatching {
                 manager.refresh(ssh)
                 manager.tune(ssh)
+                manager.enableIpv6(ssh)
                 manager.ports(ssh, if (p.altPorts.isEmpty()) ServerManager.altPortsFor(main) else emptyList())
             }
                 .onSuccess { r ->
                     repo.update { s -> s.copy(profiles = s.profiles.map {
-                        if (it.id != p.id) it
-                        else if (r.main == main) it.copy(altPorts = r.alt, altHosts = listOfNotNull(r.ipv6), portsChecked = PORTS_UPGRADE)
-                        else it.copy(portsChecked = PORTS_UPGRADE)
+                        if (it.id != p.id || it.conf != p.conf || it.ssh != ssh || r.main != main) it
+                        else {
+                            val config = WgQuick.parse(p.conf)
+                            val address = config.iface.addresses.firstOrNull { !it.isV6 }
+                            val ipv6 = if (r.tunnelIpv6 && config.iface.addresses.none { it.isV6 }) {
+                                address?.let { net.paramnezia.core.fleet.managedIpv6Address(it.toString()) }
+                            } else null
+                            val updated = if (ipv6 == null) it.conf else WgQuick.write(config.copy(
+                                iface = config.iface.copy(addresses = config.iface.addresses + ipv6),
+                            ))
+                            val host = net.paramnezia.core.config.Uapi.splitEndpoint(config.peers.first().endpoint.orEmpty()).first
+                            val alternate = if (':' in host) r.ipv4 else r.ipv6
+                            it.copy(conf = updated, altPorts = r.alt, altHosts = listOfNotNull(alternate), portsChecked = PORTS_UPGRADE)
+                        }
                     }) }
                 }
                 .onFailure { net.paramnezia.app.platform.Log.w("PnServers", "ports of ${p.name}: ${it.message}") }
@@ -150,20 +180,102 @@ class Servers(
         return label
     }
 
+    /** Moves the existing profile only after its server is available to all family devices. */
+    suspend fun moveToFamily(id: String, credentials: SshCredentials? = null) = withContext(Dispatchers.IO) {
+        check(fleet.isOwner) { "Перенести сервер может владелец семьи" }
+        val family = fleet.stored?.trust ?: error("Семья не найдена")
+        val profile = repo.current.profiles.firstOrNull { it.id == id } ?: error("Сервер не найден")
+        val config = WgQuick.parse(profile.conf)
+        val peer = config.peers.firstOrNull { it.endpoint != null } ?: error("В профиле нет адреса VPN")
+        val endpoint = checkNotNull(peer.endpoint)
+        val key = peer.publicKey.toBase64()
+        val familyId = existingFamilyServer(credentials ?: profile.ssh, endpoint, key) ?: run {
+            val ssh = credentials ?: profile.ssh ?: error("Укажите SSH-доступ к серверу")
+            check(profile.protocol == Protocol.AWG.name) { "Для семейного сервера нужен AmneziaWG 2" }
+            addFamilyServer(profile.name, ssh, endpoint, key)
+        }
+        check(fleet.manifest()?.servers?.any { it.id == familyId } == true) { "Семейный сервер не сохранился" }
+        repo.update { state ->
+            check(state.fleet?.trust == family) { "Семья изменилась во время переноса" }
+            val current = state.profiles.firstOrNull { it.id == id } ?: return@update state
+            check(current == profile) { "Профиль изменился во время переноса" }
+            state.copy(
+                profiles = state.profiles.filterNot { it.id == id },
+                activeProfile = state.activeProfile.takeUnless { it == id },
+                links = state.links.map { if (it.serverRef == id) it.copy(serverRef = familyId) else it },
+                clientPool = state.clientPool.filterNot { it.profileId == id },
+            )
+        }
+    }
+
+    data class FamilyMove(val moved: Int, val failures: List<String>)
+
+    suspend fun moveLocalServersToFamily(): FamilyMove = withContext(Dispatchers.IO) {
+        val profiles = repo.current.profiles
+        val failures = mutableListOf<String>()
+        var moved = 0
+        for (profile in profiles) {
+            try {
+                moveToFamily(profile.id)
+                if (repo.current.profiles.none { it.id == profile.id }) moved++
+                else failures += "${profile.name}: профиль изменился во время переноса"
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failures += "${profile.name}: ${e.message ?: "не удалось подключиться"}"
+            }
+        }
+        FamilyMove(moved, failures)
+    }
+
+    private fun existingFamilyServer(ssh: SshCredentials?, endpoint: String?, key: String?): String? {
+        val address = endpoint?.let(Uapi::splitEndpoint)
+        return fleet.manifest()?.servers.orEmpty().firstOrNull { server ->
+            val sameSsh = ssh != null && fleet.accessTo(server.id)?.let {
+                it.host.equals(ssh.host, ignoreCase = true) && it.port == ssh.port
+            } == true
+            val sameEndpoint = address?.let { (host, port) -> host.equals(server.host, ignoreCase = true) && port == server.port } == true
+            (sameSsh || (key != null && sameEndpoint)) && (key == null || key == server.publicKey)
+        }?.id
+    }
+
+    private suspend fun addFamilyServer(name: String, ssh: SshCredentials, endpoint: String?, key: String?): String =
+        existingFamilyServer(ssh, endpoint, key) ?: fleet.addServer(
+            name, ssh, makeMaster = false, vpnEndpoint = endpoint, expectedPublicKey = key,
+        ) {}
+
     fun makePrimary(id: String) = repo.update { s ->
         val server = s.profiles.firstOrNull { it.id == id } ?: error("Сервер не найден")
         s.copy(profiles = listOf(server) + s.profiles.filterNot { it.id == id }, activeProfile = id)
     }
 
-    fun edit(id: String, name: String, conf: String) {
+    fun edit(id: String, name: String, conf: String) = editProfile(id, name, updateProtocol = true) { conf }
+
+    fun editEndpoint(id: String, name: String, endpoint: String) = editProfile(id, name, updateProtocol = false) { profile ->
+        val (host, port) = Uapi.splitEndpoint(endpoint)
+        require(host.isNotEmpty() && host.none { it.isWhitespace() || it in "/[]@?#%" } &&
+            (':' !in host || IpPrefix.parseOrNull(host)?.isV6 == true)) { "Введите адрес сервера и порт" }
+        val config = WgQuick.parse(profile.conf)
+        val index = config.peers.indexOfFirst { it.endpoint != null }
+        require(index >= 0) { "Укажите Endpoint в конфигурации" }
+        val address = if (':' in host) "[$host]:$port" else "$host:$port"
+        if (config.peers[index].endpoint == address) profile.conf
+        else WgQuick.write(config.copy(peers = config.peers.mapIndexed { i, peer ->
+            if (i == index) peer.copy(endpoint = address) else peer
+        }))
+    }
+
+    private fun editProfile(id: String, name: String, updateProtocol: Boolean, edit: (StoredProfile) -> String) {
         val label = name.trim()
         require(label.isNotEmpty()) { "Введите название сервера" }
         repo.update { s ->
             val profile = s.profiles.firstOrNull { it.id == id } ?: error("Сервер не найден")
+            val conf = edit(profile)
             val updated = if (conf == profile.conf) profile.copy(name = label) else {
                 val config = WgQuick.parse(conf)
                 require(config.peers.any { it.endpoint != null }) { "Укажите Endpoint в конфигурации" }
-                profile.copy(name = label, conf = WgQuick.write(config), protocol = if (config.isAmnezia) "AWG" else "WIREGUARD",
+                val protocol = if (!updateProtocol) profile.protocol else if (config.isAmnezia) "AWG" else "WIREGUARD"
+                profile.copy(name = label, conf = WgQuick.write(config), protocol = protocol,
                     altPorts = emptyList(), altHosts = emptyList())
             }
             s.copy(

@@ -18,7 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Version
-        run: echo "VERSION=${GITHUB_REF_NAME#release/}" >> "$GITHUB_ENV"
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME#release/}" >> "$GITHUB_ENV"
+          echo "PN_VERSION_CODE=$((GITHUB_RUN_NUMBER + 1))" >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 21 }
       - uses: actions/setup-go@v5
@@ -39,7 +41,6 @@ jobs:
           echo "PN_KEYSTORE=$k/paramnezia.jks" >> "$GITHUB_ENV"
       - name: Build signed APK
         env:
-          PN_VERSION_CODE: ${{ github.run_number }}
           PN_VERSION_NAME: ${{ env.VERSION }}
         run: |
           ./gradlew :app:assembleRelease :releasetool:installDist
@@ -60,7 +61,7 @@ jobs:
           signer=$("$apksigner" verify --print-certs "$apk" | grep -m1 'SHA-256 digest' | awk '{print $NF}')
           releasetool/build/install/releasetool/bin/releasetool sign \
             --apk "$apk" \
-            --version-code "${{ github.run_number }}" \
+            --version-code "$PN_VERSION_CODE" \
             --version-name "$VERSION" \
             --signer-sha256 "$signer" \
             --url "${PUBLIC_BASE}/$apk" \
@@ -84,7 +85,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Version
         shell: bash
-        run: echo "VERSION=${GITHUB_REF_NAME#release/}" >> "$GITHUB_ENV"
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME#release/}" >> "$GITHUB_ENV"
+          echo "PN_VERSION_CODE=$((GITHUB_RUN_NUMBER + 1))" >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -97,7 +100,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Service, app image and installer
         env:
-          PN_VERSION_CODE: ${{ github.run_number }}
           PN_VERSION_NAME: ${{ env.VERSION }}
         run: .github/scripts/windows-build.ps1
         shell: pwsh
@@ -114,7 +116,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Version
-        run: echo "VERSION=${GITHUB_REF_NAME#release/}" >> "$GITHUB_ENV"
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME#release/}" >> "$GITHUB_ENV"
+          echo "PN_VERSION_CODE=$((GITHUB_RUN_NUMBER + 1))" >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 21 }
       - uses: gradle/actions/setup-gradle@v4
@@ -145,7 +149,7 @@ jobs:
             --apk "$exe" \
             --package net.paramnezia.windows \
             --min-sdk 0 \
-            --version-code "${{ github.run_number }}" \
+            --version-code "$PN_VERSION_CODE" \
             --version-name "$VERSION" \
             --url "${PUBLIC_BASE}/$exe" \
             --notes "$(if [ -f "docs/releases/${VERSION}.md" ]; then cat "docs/releases/${VERSION}.md"; fi)" \

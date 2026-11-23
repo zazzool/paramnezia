@@ -71,13 +71,13 @@ class DeployE2ETest {
 
             val clientKey = WgKey.generatePrivate()
             val tunnel = manager.addClient(creds, clientKey, "e2e-phone")
-            assertEquals("10.8.1.2/32", tunnel.iface.addresses.single().toString())
+            assertEquals("10.8.1.2/32", tunnel.iface.addresses.first().toString())
             assertEquals(params[AwgParam.JC], tunnel.iface.awg[AwgParam.JC])
             assertEquals(params[AwgParam.I1], tunnel.iface.awg[AwgParam.I1])
             // Same key again: idempotent, same address.
             assertEquals(tunnel.iface.addresses, manager.addClient(creds, clientKey, "e2e-phone").iface.addresses)
-            assertEquals("10.8.1.3/32", manager.addClient(creds, WgKey.generatePrivate(), "second").iface.addresses.single().toString())
-            assertEquals(setOf("10.8.1.2", "10.8.1.3"), manager.usedAddresses(creds))
+            assertEquals("10.8.1.3/32", manager.addClient(creds, WgKey.generatePrivate(), "second").iface.addresses.first().toString())
+            assertEquals(setOf("10.8.1.2", "10.8.1.3"), manager.usedAddresses(creds).filterNot { ':' in it }.toSet())
 
             // The exported vpn:// key must import back to the same tunnel.
             val reimported = AmneziaFormat.import(AmneziaFormat.export("e2e", tunnel)).single().tunnel!!
@@ -99,7 +99,7 @@ class DeployE2ETest {
             val clash = WgKey.generatePrivate().publicKey()
             assertEquals(setOf(clash.toBase64()), manager.ensurePeers(creds, listOf(ServerManager.PeerSpec(clash, "c", "10.8.1.20"))).keys)
             manager.removeClients(creds, listOf(a, b))
-            assertEquals(setOf("10.8.1.2", "10.8.1.3"), manager.usedAddresses(creds))
+            assertEquals(setOf("10.8.1.2", "10.8.1.3"), manager.usedAddresses(creds).filterNot { ':' in it }.toSet())
 
             // The server mirrors a release it already holds into the tunnel.
             val apk = ByteArray(100_000) { (it * 7).toByte() }
@@ -305,9 +305,12 @@ class DeployE2ETest {
 
     private fun handshake(tunnel: TunnelConfig, port: Int, bigPing: Int? = null) {
         val gateway = sh("docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'").trim()
+        val ipv6 = tunnel.iface.addresses.any { it.isV6 }
+        val routes = listOf(IpPrefix.parse("10.8.1.0/24")) +
+            listOfNotNull(if (ipv6) IpPrefix.parse("fd38:706e:1::/64") else null)
         val clientConf = tunnel.copy(
             iface = tunnel.iface.copy(dns = emptyList()),
-            peers = tunnel.peers.map { it.copy(endpoint = "$gateway:$port", allowedIps = listOf(IpPrefix.parse("10.8.1.0/24"))) },
+            peers = tunnel.peers.map { it.copy(endpoint = "$gateway:$port", allowedIps = routes) },
         )
         val dir = Files.createTempDirectory("pn-e2e").toFile()
         File(dir, "awg0.conf").writeText(WgQuick.write(clientConf))
@@ -317,7 +320,11 @@ class DeployE2ETest {
         )
         val size = bigPing?.let { "-s $it " } ?: ""
         val ping = sh("sleep 2; docker exec pn-e2e-client ping -c 2 -W 2 10.8.1.1 >/dev/null; docker exec pn-e2e-client ping $size-c 3 -W 2 10.8.1.1; docker exec pn-e2e-client awg show awg0", check = false)
-        sh("docker rm -f pn-e2e-client >/dev/null 2>&1 || true")
+        try {
+            if (ipv6) sh("docker exec pn-e2e-client ping6 -c 2 -W 2 fd38:706e:1::1")
+        } finally {
+            sh("docker rm -f pn-e2e-client >/dev/null 2>&1 || true")
+        }
         assertTrue("ping through tunnel failed:\n$ping", " 0% packet loss" in ping)
         assertTrue("no handshake:\n$ping", "latest handshake" in ping)
     }

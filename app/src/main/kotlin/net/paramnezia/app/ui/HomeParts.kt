@@ -100,7 +100,13 @@ fun rememberPasteKey(app: App, onDone: (String) -> Unit): () -> Unit {
         if (text.isNullOrEmpty()) onDone("Буфер обмена пуст: скопируйте ключ vpn://")
         else scope.launch {
             runCatching { app.servers.import(text) }
-                .onSuccess { onDone("Сервер добавлен") }
+                .onSuccess {
+                    onDone(when (it) {
+                        net.paramnezia.app.data.Servers.Imported.UpdatedFleet -> "Настройки семьи обновлены"
+                        is net.paramnezia.app.data.Servers.Imported.FamilyServer -> "Сервер семьи: ${it.name}"
+                        else -> "Сервер добавлен"
+                    })
+                }
                 .onFailure { onDone(it.message ?: "Это не ключ vpn:// и не конфиг") }
         }
     }

@@ -93,6 +93,9 @@ object Camouflage {
         val ports = (listOf(port) + altPorts).filter { it in 1..65535 }.distinct()
         val hosts6 = if (ipv6) altHosts.filter { ':' in it && it != host } else emptyList()
         val hosts4 = altHosts.filter { ':' !in it && it != host }
+        if (!ipv6 && ':' in host && hosts4.isNotEmpty()) {
+            return ladder(hosts4.first(), port, serverKey, altPorts, hosts4.drop(1), ipv6, obfuscated)
+        }
         val out = LinkedHashSet<Variant>()
         if (!obfuscated) {
             // Plain WireGuard: signatures mean nothing to it; only addresses and ports change.
@@ -103,11 +106,11 @@ object Camouflage {
         out += Variant(host, port, own)
         out += Variant(host, port, other)
         for (p in ports.drop(1)) out += Variant(host, p, own)
-        // Within the first round: an IPv6 address beats the last spare port.
-        val firstV6 = hosts6.firstOrNull()?.let { Variant(it, port, own) }
-        if (firstV6 != null) {
+        // Try the other address family before spending the whole round on spare ports.
+        val crossFamily = (if (':' in host) hosts4 else hosts6).firstOrNull()?.let { Variant(it, port, own) }
+        if (crossFamily != null) {
             val list = out.toMutableList()
-            list.add(minOf(ROUND - 1, list.size), firstV6)
+            list.add(minOf(ROUND - 1, list.size), crossFamily)
             out.clear(); out += list
         }
         for (h in hosts6 + hosts4) for (p in ports) out += Variant(h, p, own)

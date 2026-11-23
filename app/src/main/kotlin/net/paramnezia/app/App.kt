@@ -1,11 +1,11 @@
 package net.paramnezia.app
 
 import net.paramnezia.app.data.ServerReboot
+import net.paramnezia.deploy.FleetPublisher
 import net.paramnezia.app.data.ServerInsights
 import net.paramnezia.app.platform.Log as PLog
 import net.paramnezia.app.data.Vault
 import net.paramnezia.app.data.Cloud
-import net.paramnezia.deploy.cloud.CloudHttp
 import android.app.Application
 import android.net.VpnService
 import android.os.PowerManager
@@ -71,20 +71,7 @@ class App : Application(), TunnelHost {
     lateinit var servers: Servers; private set
     val links: Links by lazy { Links(repo, fleet, { updater }, scope) }
     /** Buying servers from hosting providers (admin). */
-    private fun directConnection(url: java.net.URL): java.net.HttpURLConnection =
-        (TunnelRuntime.directNetwork(this)?.openConnection(url) ?: url.openConnection()) as java.net.HttpURLConnection
-
-    val cloud: Cloud by lazy {
-        Cloud(repo, scope, cacheDir) { method, url, headers, body ->
-            val address = java.net.URI(url).toURL()
-            try {
-                CloudHttp.UrlTransport.send(directConnection(address), method, headers, body)
-            } catch (e: java.io.IOException) {
-                if (method != "GET") throw e
-                CloudHttp.UrlTransport.send(method, url, headers, body)
-            }
-        }
-    }
+    val cloud: Cloud by lazy { Cloud(repo, scope, cacheDir) }
     /** Reboots a server over SSH, or through its hosting provider when SSH is dead. */
     val reboots: ServerReboot by lazy { ServerReboot(repo) }
     /** What the server details screen shows (config, roles, the server's own report over SSH). */
@@ -150,10 +137,20 @@ class App : Application(), TunnelHost {
             listOfNotNull(direct?.socketFactory) + listOf(null)
         }
         specs = SpecBuilder(this, lists)
-        fleet = FleetManager(repo, net, NativeEd25519, scope, directConnection = ::directConnection) { reconnectIfUp() }
+        fleet = FleetManager(repo, net, NativeEd25519, scope) { reconnectIfUp() }
         // Every new server gets the page to share with family and friends, in the background.
         val pageOn: (net.paramnezia.core.profile.SshCredentials) -> Unit = { ssh -> scope.launch { runCatching { links.preparePage(ssh) } } }
         fleet.onServerReady = pageOn
+        fleet.onEndpointChanged = failover::markHealthy
+        FleetPublisher.githubRoute = {
+            net.direct()?.let { network ->
+                FleetPublisher.GitHubRoute(
+                    sockets = network.socketFactory,
+                    resolve = { network.getAllByName(it).toList() },
+                )
+            }
+        }
+        fleet.watchEndpointUpdates()
         servers = Servers(repo, fleet, android.os.Build.MODEL, pageOn)
 
         // DNS rules follow the settings and the lists; loading them is a one-off ~1 ms parse in Go.
@@ -179,9 +176,9 @@ class App : Application(), TunnelHost {
         }
         // Nothing below blocks the first frame: the sync job, the updater and the native library start
         // in the background.
-        scope.launch { updater.checkPeriodically() }
         scope.launch(Dispatchers.IO) {
             SyncJob.schedule(this@App)
+            launch { updater.monitorUpdates() }
             lists.checkIfDue()
         }
         // Widget: redraw on every state change; while up, refresh the counters every 30 s with the
@@ -231,7 +228,6 @@ class App : Application(), TunnelHost {
             val tunnels = member.tunnels()
             if (tunnels.isNotEmpty()) {
                 val preferred = tunnels.map { it.first }.sortedByDescending { it.id == state.activeProfile }
-                failover.updateEndpoints(preferred)
                 val chosen = failover.choose(preferred, System.currentTimeMillis()) ?: return null
                 val config = tunnels.first { it.first.id == chosen.id }.second
                 return dressed(chosen.id, chosen.name, config, camo.dress(chosen.id, config, reachOf(chosen.id)))
@@ -276,7 +272,7 @@ class App : Application(), TunnelHost {
     override suspend fun onServerUnreachable(spec: TunnelSpec): TunnelSpec? {
         val now = System.currentTimeMillis()
         noteNetwork()
-        fleet.syncIfDue(5 * 60_000L, tunnelFirst = false)
+        fleet.syncIfDue(minIntervalMs = 60_000, tunnelFirst = false)
         // First another way into the same server (signature, port, address): a blocked port or
         // fingerprint is far more common than a dead server. After a round of those, another server
         // gets its turn if there is one that is not known to be blocked.
@@ -290,13 +286,9 @@ class App : Application(), TunnelHost {
         }
         failover.markBlocked(spec.serverId, now)
         // The admin may already have moved the fleet elsewhere: look before guessing.
-        val previousEndpoint = rawConfig(spec.serverId)?.peers?.firstOrNull()?.endpoint
-        withTimeoutOrNull(25_000) { runCatching { fleet.sync() } }
+        withTimeoutOrNull(25_000) { runCatching { if (!fleet.syncRecoveryChannel()) fleet.sync() } }
         val next = currentSpec() ?: return null
-        if (next.serverId == spec.serverId) {
-            val updatedEndpoint = rawConfig(spec.serverId)?.peers?.firstOrNull()?.endpoint
-            return next.takeIf { updatedEndpoint != previousEndpoint }
-        }
+        if (next.serverId == spec.serverId) return next.takeIf { it.config.peers != spec.config.peers && !failover.isBlocked(spec.serverId, System.currentTimeMillis()) }
         Log.i(TAG, "${spec.serverName} unreachable, switching to ${next.serverName}")
         fleet.reportHealth(spec.serverId, reachable = false)
         return next

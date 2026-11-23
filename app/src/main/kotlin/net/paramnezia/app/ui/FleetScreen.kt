@@ -2,6 +2,7 @@
 
 package net.paramnezia.app.ui
 
+import net.paramnezia.app.fleet.psyncMirrorUrl
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -34,6 +35,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -87,6 +89,7 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
     var invite by remember { mutableStateOf<String?>(null) }
     var newDevice by remember { mutableStateOf(false) }
     var newServer by remember { mutableStateOf(false) }
+    var moveResult by remember { mutableStateOf<net.paramnezia.app.data.Servers.FamilyMove?>(null) }
     var buying by remember { mutableStateOf(false) }
     /** A server bought from the app was just removed from the fleet: offer to delete it at the provider. */
     var boughtRemoved by remember { mutableStateOf<CloudServerRef?>(null) }
@@ -141,15 +144,6 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                 NeedServer(onAddServer)
                 return@Column
             }
-            // Recommended: a fleet survives a blocked server; plain accounts do not.
-            FleetPitch(managed, busy) { p -> work("Семейная группа создана") { app.fleet.create(p.name, WgQuick.parse(p.conf), p.ssh!!, platform.deviceModel) } }
-            Group {
-                GroupRow(
-                    "Просто выдать ключи", subtitle = "Каждому свой ключ ссылкой или файлом, без автообновления серверов",
-                    icon = Glyph.PersonAdd, onClick = { if (!busy) accountOn = managed },
-                    trailing = { Chevron() },
-                )
-            }
             SectionTitle("Серверы") { Pill(managed.size.toString()) }
             Group {
                 for (p in managed) {
@@ -161,6 +155,15 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                 }
             }
             LocalServers(state.profiles.filter { it.ssh == null }) { details = it }
+            // Recommended: a fleet survives a blocked server; plain accounts do not.
+            FleetPitch(managed, busy) { p -> work("Семейная группа создана") { app.fleet.create(p.name, WgQuick.parse(p.conf), p.ssh!!, platform.deviceModel) } }
+            Group {
+                GroupRow(
+                    "Просто выдать ключи", subtitle = "Каждому свой ключ ссылкой или файлом, без автообновления серверов",
+                    icon = Glyph.PersonAdd, onClick = { if (!busy) accountOn = managed },
+                    trailing = { Chevron() },
+                )
+            }
             SectionTitle("Раздача")
             Group { LanShareRow("Телевизору и компьютеру рядом: приложение и ключ") { if (!busy) lanShare = true } }
             FamilyPage(state.pages[managed.first().ssh!!.host], busy, onCreate = { work { app.links.familyPage() } }, onShare = shareFamily, onOpen = openUrl)
@@ -186,6 +189,54 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
         }
         SyncStatus(fleet.lastSync, fleet.lastSyncVia)
         if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+
+        SectionTitle("Серверы") { Pill(servers.size.toString()) }
+        if (isAdmin && servers.size < 2) {
+            Hint("Добавьте резервный сервер: если основной заблокируют, устройства сами переключатся на него.", PnIcons.Warning, Brand.Amber)
+        }
+        Group {
+            servers.forEachIndexed { i, s ->
+                val actions = buildList<Pair<String, () -> Unit>> {
+                    if (isAdmin) add("Перезагрузить сервер" to { rebootOf = RebootTarget(s.name, s.host, app.fleet.accessTo(s.id)) })
+                    if (isAdmin && i > 0) add("Сделать сервером по умолчанию" to { work("${s.name} выбран по умолчанию") { app.fleet.promote(s.id, useAutomaticSelection = true) } })
+                    if (isOwner && servers.size > 1) add("Убрать сервер" to {
+                        val bought = app.cloud.serverAt(s.host)
+                        work("Сервер убран из семьи") { app.fleet.removeServer(s.id); boughtRemoved = bought }
+                    })
+                }
+                GroupRow(
+                    s.name, subtitle = "${s.host}:${s.port}" + if (s.altPorts.isNotEmpty()) " · ещё ${plural(s.altPorts.size, "порт", "порта", "портов")}" else "",
+                    icon = Glyph.Server, onClick = { details = s.id },
+                    accent = if (i == 0) Brand.Mint else MaterialTheme.colorScheme.onSurfaceVariant,
+                    badge = if (i == 0) "основной" else "резервный",
+                    trailing = { if (actions.isNotEmpty()) Overflow(busy, *actions.toTypedArray()) },
+                )
+            }
+            if (isOwner) Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
+                Row(Modifier.fillMaxWidth().padding(Space.M), horizontalArrangement = Arrangement.spacedBy(Space.S)) {
+                    FilledTonalButton(enabled = !busy, onClick = { buying = true }, modifier = Modifier.weight(1f).height(48.dp)) {
+                        Icon(Glyph.Cloud, null, Modifier.size(18.dp)); Spacer(Modifier.width(Space.S)); Text("У хостера", maxLines = 1)
+                    }
+                    OutlinedButton(enabled = !busy, onClick = { newServer = true }, modifier = Modifier.weight(1f).height(48.dp)) {
+                        Icon(Glyph.Server, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(Space.S))
+                        Text("Добавить VPS", maxLines = 1)
+                    }
+                }
+            }
+        }
+
+        if (isOwner && state.profiles.isNotEmpty()) Group {
+            GroupRow("Перенести локальные серверы в семью", subtitle = "Доступные по SSH станут резервными",
+                icon = Glyph.Server, onClick = {
+                    if (!busy) work {
+                        val result = app.servers.moveLocalServersToFamily()
+                        if (result.moved > 0) app.reconnectIfUp()
+                        moveResult = result
+                    }
+                })
+        }
+        LocalServers(state.profiles) { details = it }
 
         if (isAdmin) ActionTile(Glyph.PersonAdd, "Пригласить", "Ссылкой, файлом или QR-кодом, сразу нескольким", primary = true) {
             if (!busy) newDevice = true
@@ -219,41 +270,6 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
             }
         }
 
-        SectionTitle("Серверы") { Pill(servers.size.toString()) }
-        if (isAdmin && servers.size < 2) {
-            Hint("Добавьте резервный сервер: если основной заблокируют, устройства сами переключатся на него.", PnIcons.Warning, Brand.Amber)
-        }
-        LocalServers(state.profiles) { details = it }
-        Group {
-            servers.forEachIndexed { i, s ->
-                val actions = buildList<Pair<String, () -> Unit>> {
-                    if (isAdmin) add("Перезагрузить сервер" to { rebootOf = RebootTarget(s.name, s.host, app.fleet.accessTo(s.id)) })
-                    if (isAdmin && i > 0) add("Сделать основным" to { work("${s.name} теперь основной") { app.fleet.promote(s.id, useAutomaticSelection = true) } })
-                    if (isOwner && servers.size > 1) add("Убрать сервер" to {
-                        val bought = app.cloud.serverAt(s.host, s.id)
-                        work("Сервер убран из семьи") { app.fleet.removeServer(s.id); boughtRemoved = bought }
-                    })
-                }
-                GroupRow(
-                    s.name, subtitle = net.paramnezia.core.config.Uapi.formatEndpoint(s.host, s.port) + if (s.altPorts.isNotEmpty()) " · ещё ${plural(s.altPorts.size, "порт", "порта", "портов")}" else "",
-                    icon = Glyph.Server, onClick = { details = s.id },
-                    accent = if (i == 0) Brand.Mint else MaterialTheme.colorScheme.onSurfaceVariant,
-                    badge = if (i == 0) "основной" else "резервный",
-                    trailing = { if (actions.isNotEmpty()) Overflow(busy, *actions.toTypedArray()) },
-                )
-            }
-            if (isOwner) Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
-                Row(Modifier.fillMaxWidth().padding(Space.M), horizontalArrangement = Arrangement.spacedBy(Space.S)) {
-                    FilledTonalButton(enabled = !busy, onClick = { buying = true }, modifier = Modifier.weight(1f).height(48.dp)) {
-                        Icon(Glyph.Cloud, null, Modifier.size(18.dp)); Spacer(Modifier.width(Space.S)); Text("У хостера", maxLines = 1)
-                    }
-                    OutlinedButton(enabled = !busy, onClick = { newServer = true }, modifier = Modifier.weight(1f).height(48.dp)) {
-                        Icon(Glyph.Server, null, Modifier.size(18.dp)); Spacer(Modifier.width(Space.S)); Text("Свой VPS", maxLines = 1)
-                    }
-                }
-            }
-        }
-
         if (isAdmin) {
             SectionTitle("Раздача")
             val host = remember(fleet.manifest) { app.fleet.managedServer()?.second?.host }
@@ -280,6 +296,16 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                     onEnable = { token -> work("Резервный канал включён") { app.fleet.setReserveChannel(token) } },
                     onDisable = { work("Резервный канал отключён") { app.fleet.clearReserveChannel() } },
                     openTokenPage = { openUrl(GITHUB_TOKEN_PAGE) })
+                RecoveryMirrors(
+                    urls = fleet.recoveryMirrors.keys,
+                    fleetId = fleet.trust.fleetId,
+                    servers = manifest?.servers.orEmpty().associate { it.id to it.name },
+                    dnsServer = fleet.psyncDnsServerId,
+                    selectDns = { id -> work("Адрес опубликован для AmneziaVPN") { app.fleet.selectAmneziaDnsServer(id) } },
+                    busy = busy,
+                    add = { url, token -> work("Зеркало подключено") { app.fleet.addRecoveryMirror(url, token) } },
+                    remove = { url -> work("Зеркало отключено") { app.fleet.removeRecoveryMirror(url) } },
+                )
             }
         } else {
             if (manifest?.policy != null) {
@@ -448,13 +474,26 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
             dismissButton = { TextButton(onClick = { boughtRemoved = null }) { Text("Оставить") } },
         )
     }
+    moveResult?.let { result ->
+        AlertDialog(
+            onDismissRequest = { moveResult = null },
+            title = { Text("Серверы семьи") },
+            text = {
+                Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                    Text("Перенесено: ${result.moved}")
+                    for (failure in result.failures) Text(failure)
+                }
+            },
+            confirmButton = { TextButton(onClick = { moveResult = null }) { Text("Готово") } },
+        )
+    }
     if (newServer) {
         val form = remember { SshFormState() }
         var master by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { newServer = false },
             icon = { Icon(Glyph.Server, null) },
-            title = { Text("Свой VPS для семьи") },
+            title = { Text("Добавить резервный сервер") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("AmneziaWG установится сам, все устройства семьи получат доступ к серверу.", style = MaterialTheme.typography.bodyMedium)
@@ -467,11 +506,8 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
             },
             confirmButton = {
                 Button(enabled = form.ready, onClick = {
-                    val creds = runCatching { form.credentials() }.getOrElse {
-                        toast(it.message ?: "Некорректный адрес сервера")
-                        return@Button
-                    }
                     newServer = false
+                    val creds = form.credentials()
                     work("Сервер добавлен в семью") { app.fleet.addServer(form.name.ifBlank { creds.host }, creds, master) {} }
                 }) { Text("Развернуть") }
             },
@@ -737,6 +773,42 @@ private fun ReserveChannel(on: Boolean, error: String?, busy: Boolean, toast: (S
                         }
                     }
                     if (on) TextButton(enabled = !busy, onClick = onDisable) { Text("Отключить резервный канал") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecoveryMirrors(urls: Set<String>, fleetId: String, servers: Map<String, String>, dnsServer: String?, selectDns: (String) -> Unit, busy: Boolean, add: (String, String) -> Unit, remove: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    var url by remember { mutableStateOf("") }
+    var token by remember { mutableStateOf("") }
+    GroupRow("Резервные HTTPS-зеркала", subtitle = if (urls.isEmpty()) null else urls.size.toString(),
+        icon = Glyph.Link, onClick = { open = !open })
+    AnimatedVisibility(open) {
+        Column(Modifier.padding(Space.M), verticalArrangement = Arrangement.spacedBy(Space.S)) {
+            Text("Укажите адрес с открытым чтением и записью по токену. Выбирайте независимые площадки, доступные из сетей вашей семьи.")
+            for (item in urls) {
+                Text(item, style = MaterialTheme.typography.bodySmall)
+                TextButton(enabled = !busy, onClick = { remove(item) }) { Text("Отключить зеркало") }
+            }
+            if (psyncMirrorUrl(fleetId) in urls) {
+                Text("Выберите сервер для AmneziaVPN. Его IPv4 будет доступен по имени awg-family.psync.ru.")
+                for ((id, name) in servers) {
+                    TextButton(enabled = !busy, onClick = { selectDns(id) }) {
+                        Text(if (id == dnsServer) "$name ✓" else name)
+                    }
+                }
+            }
+            if (urls.size < 4) {
+                TextButton(enabled = !busy && psyncMirrorUrl(fleetId) !in urls, onClick = { url = psyncMirrorUrl(fleetId) }) {
+                    Text("Использовать psync.ru")
+                }
+                OutlinedTextField(url, { url = it }, singleLine = true, label = { Text("HTTPS-адрес файла") })
+                PasteField(token, { token = it }, "Токен записи", secret = true, enabled = !busy)
+                Button(enabled = !busy && url.isNotBlank() && token.isNotBlank(), onClick = { add(url, token) }) {
+                    Text("Проверить и добавить")
                 }
             }
         }

@@ -18,6 +18,7 @@ dependencies {
     api(project(":core"))
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation(libs.junit)
     testImplementation(libs.sshd.core)
     testImplementation(libs.bcprov)

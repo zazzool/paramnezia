@@ -13,6 +13,9 @@ import net.paramnezia.core.fleet.GrantBox
 import net.paramnezia.deploy.cloud.SshKeyPair
 import net.paramnezia.core.fleet.FleetDevice
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import net.paramnezia.core.fleet.FleetPolicy
 import net.paramnezia.app.platform.Http
 import net.paramnezia.core.config.TunnelConfig
@@ -28,15 +31,14 @@ import net.paramnezia.core.fleet.HealthReport
 import net.paramnezia.core.fleet.Invite
 import net.paramnezia.core.fleet.fleetServerOf
 import net.paramnezia.core.profile.SshCredentials
+import net.paramnezia.core.net.IpPrefix
 import net.paramnezia.core.profile.Protocol
 import net.paramnezia.core.config.Uapi
 import net.paramnezia.core.fleet.FleetTrust
 import kotlinx.coroutines.sync.Mutex
 import net.paramnezia.deploy.FleetPublisher
+import net.paramnezia.deploy.MemoryHostKeyStore
 import net.paramnezia.deploy.ServerManager
-import net.paramnezia.deploy.SshConnection
-import net.paramnezia.deploy.HostKeyStore
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -63,19 +65,16 @@ class FleetManager(
     private val net: Http,
     private val ed: Ed25519,
     private val scope: CoroutineScope,
-    directConnection: ((java.net.URL) -> java.net.HttpURLConnection)? = null,
-    private val verifySshAddress: (SshCredentials, HostKeyStore) -> Unit = { creds, keys ->
-        SshConnection.open(creds, keys).use { }
-    },
     /** Called when a newer manifest arrived, so the tunnel can switch servers at once. */
     private val onManifestChanged: () -> Unit,
 ) {
     private val servers = ServerManager(repo.hostKeys)
-    private val publisher = FleetPublisher(repo.hostKeys, directConnection)
+    private val publisher = FleetPublisher(repo.hostKeys)
     private val health = HealthBook()
 
     /** A server joined the fleet (deployed or bought): put the family page on it. Set by App. */
     var onServerReady: (SshCredentials) -> Unit = {}
+    var onEndpointChanged: (String) -> Unit = {}
 
     val stored: StoredFleet? get() = repo.current.fleet
 
@@ -150,8 +149,12 @@ class FleetManager(
     ): Boolean {
         val m = member() ?: return false
         val wire = FleetCrypto.unwrap(text)
+        val previousServers = m.manifest?.servers.orEmpty().associateBy { it.id }
+        val previousRotation = m.manifest?.endpointRotation
         if (!m.offer(wire)) return false
         val policy = m.manifest?.policy
+        val rotation = m.manifest?.endpointRotation?.takeIf { it != previousRotation }
+        val switchedServer = m.manifest?.servers?.firstOrNull()?.takeIf { rotation != null }
         repo.update { s ->
             val follows = s.fleet?.let { it.adminSeed == null || it.coAdmin } == true
             val applied = if (policy != null && follows) s.settings.applying(policy) else s.settings
@@ -161,7 +164,7 @@ class FleetManager(
             s.copy(
                 fleet = s.fleet?.let { it.copy(manifest = wire, ownerVersion = m.ownerVersion, serverAccess = accessChange(it.serverAccess)) },
                 settings = applied,
-                activeProfile = if (useAutomaticSelection) null else selected,
+                activeProfile = if (useAutomaticSelection || switchedServer != null) null else selected,
             )
         }
         applyGrant(m)
@@ -169,6 +172,13 @@ class FleetManager(
         // app older than 2.16 (which trust only the owner's key) get it too.
         if (m.signer != null && isOwner) scope.launch(Dispatchers.IO) {
             runCatching { val a = owner(); manifest()?.let { cur -> accept(FleetCrypto.encode(a.seal(a.nextFor(cur) { it }))) } }
+        }
+        for (server in m.manifest?.servers.orEmpty()) {
+            val previous = previousServers[server.id]
+            if (server.id == switchedServer?.id || (previous != null &&
+                    (previous.host != server.host || previous.port != server.port || previous.altHosts != server.altHosts))) {
+                onEndpointChanged(server.id)
+            }
         }
         onManifestChanged()
         return true
@@ -261,25 +271,76 @@ class FleetManager(
         scope.launch { runCatching { sync(tunnelFirst = tunnelFirst) } }
     }
 
+    /**
+     * Watch for rotations while VPN is requested, including while it is trying to recover.
+     * Poll the fast in-tunnel channel separately so a dead server cannot delay the reserve read.
+     */
+    fun watchEndpointUpdates() = scope.launch {
+        repo.state.map { state -> state.wantConnected to state.fleet?.trust }
+            .distinctUntilChanged().collectLatest { (wanted, trust) ->
+                if (!wanted || trust == null) return@collectLatest
+                coroutineScope {
+                    launch(Dispatchers.IO) {
+                        while (true) {
+                            coroutineScope {
+                                launch { net.getThroughTunnel(publisher.tunnelUrl, timeoutMs = 3_000)?.let(::offer) }
+                                launch { syncRecoveryChannel(customOnly = true) }
+                            }
+                            delay(5_000)
+                        }
+                    }
+                    launch(Dispatchers.IO) {
+                        while (true) {
+                            syncRecoveryChannel(gitHubOnly = true)
+                            delay(65_000)
+                        }
+                    }
+                }
+            }
+    }
+
+    suspend fun syncRecoveryChannel(): Boolean = syncRecoveryChannel(customOnly = false, gitHubOnly = false)
+
+    private suspend fun syncRecoveryChannel(customOnly: Boolean = false, gitHubOnly: Boolean = false): Boolean = withContext(Dispatchers.IO) {
+        val mirrors = manifest()?.mirrors.orEmpty().filter {
+            it.startsWith("https://") && (!customOnly || !isGitHubMirror(it)) && (!gitHubOnly || isGitHubMirror(it))
+        }.sortedBy { it.startsWith("https://gist.githubusercontent.com/") }
+        if (mirrors.isEmpty()) return@withContext false
+        fun acceptFrom(text: String?, via: String): Boolean {
+            if (text?.let(::offer) != true) return false
+            repo.update { s -> s.copy(fleet = s.fleet?.copy(lastSync = System.currentTimeMillis(), lastSyncVia = via)) }
+            return true
+        }
+        val results = coroutineScope {
+            mirrors.map { url -> async {
+                val body = net.fetch(url, direct = true, maxBytes = 2 shl 20, timeoutMs = 5_000).body
+                val accepted = acceptFrom(body, channelName(url))
+                accepted to (FleetCrypto.decode(body.orEmpty()) != null)
+            } }.awaitAll()
+        }
+        results.any { it.first } ||
+            (!customOnly && results.none { it.second } && acceptFrom(net.getViaTor(mirrors.first()), "tor"))
+    }
+
     /** Keep the server picker current while the app is visible, including when disconnected. */
     suspend fun syncWhileVisible(checkAddresses: suspend () -> Unit = {}) {
         val interval = 5 * 60_000L
         while (true) {
             syncIfDue(interval, tunnelFirst = false)
             checkAddresses()
-            val fleet = stored
-            if (fleet?.gistError != null && fleet.gistToken != null && isAdmin) {
-                try {
-                    publish(fleet.trust)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Log.w(TAG, "reserve publication retry failed", e)
+            val family = stored
+            if (family != null && isOwner && (family.recoveryMirrors.isNotEmpty() || family.gistToken != null)) {
+                val version = FleetCrypto.decode(family.manifest)?.version
+                if (family.gistError != null || (version != null && family.recoveryMirrors.keys.any { family.deliveredMirrorVersions[it] != version })) {
+                    withContext(Dispatchers.IO) { publishReserve(family.trust) }
                 }
             }
             delay(interval)
         }
     }
+
+    private fun isGitHubMirror(url: String): Boolean =
+        url.startsWith("https://api.github.com/gists/") || url.startsWith("https://gist.githubusercontent.com/")
 
     private fun channelName(url: String) = when {
         url == publisher.tunnelUrl -> "tunnel"
@@ -484,8 +545,7 @@ class FleetManager(
         val admin = admin() ?: return@withContext 0
         // A device with its own key that this admin cannot derive (a co-admin with a grant from before
         // 2.16) is left to the owner: adding it with the shared key would lock it out of that server.
-        val peers = m.devices.filter { !it.ownPsk || admin.pskSeed != null }
-            .map { ServerManager.PeerSpec(WgKey.fromBase64(it.publicKey), it.name, it.address.substringBefore('/'), admin.pskFor(it)) }
+        val managedDevices = m.devices.filter { !it.ownPsk || admin.pskSeed != null }
         val upgrade = f.portsChecked < SERVER_UPGRADE
         val updated = HashMap<String, Pair<FleetServer, FleetServer>>()
         var upgradeFailed = false
@@ -494,6 +554,10 @@ class FleetManager(
         val stillRevokedKeys = HashSet<String>()
         for (s in m.servers) {
             val a = access(s) ?: continue
+            val peers = managedDevices.map {
+                val address = s.peerAddresses[it.publicKey] ?: it.address
+                ServerManager.PeerSpec(WgKey.fromBase64(it.publicKey), it.name, address.substringBefore('/'), admin.pskFor(it))
+            }
             val steps = listOf(
                 "peers" to { servers.ensurePeers(a, peers).forEach { (k, why) -> Log.w(TAG, "${s.name}: peer $k: $why") } },
                 "revoked" to {
@@ -520,11 +584,20 @@ class FleetManager(
                         if ((e as? net.paramnezia.deploy.SshException)?.code != "no_container") upgradeFailed = true
                     }.getOrThrow()
                 },
+                "ipv6" to {
+                    if (!s.tunnelIpv6) servers.enableIpv6(a)
+                },
                 "ports" to {
-                    if (upgrade || s.altPorts.isEmpty()) {
+                    if (upgrade || s.altPorts.isEmpty() || !s.tunnelIpv6 || s.id in f.followServerAddress) {
                         runCatching {
                             val p = servers.ports(a, if (s.altPorts.isEmpty()) ServerManager.altPortsFor(s.port) else emptyList())
-                            val next = s.copy(altPorts = p.alt, altHosts = listOfNotNull(p.ipv6))
+                            val observed = if (!f.coAdmin && s.id in f.followServerAddress && p.publicKey == s.publicKey) {
+                                val currentIp = IpPrefix.parseOrNull(s.host)
+                                if (currentIp?.isV6 == true) p.ipv6 else p.ipv4
+                            } else null
+                            val host = observed ?: s.host
+                            val next = s.copy(host = host, altPorts = p.alt, altHosts = alternateHosts(host, p),
+                                tunnelIpv6 = p.tunnelIpv6)
                             if (next != s && p.main == s.port) updated[s.id] = s to next
                         }.onFailure { e ->
                             // Not an AmneziaWG 2 container (an older AmneziaVPN protocol): nothing to upgrade there.
@@ -558,8 +631,9 @@ class FleetManager(
             manifest()?.let { cur ->
                 accept(FleetCrypto.encode(admin.seal(admin.nextFor(cur) { mm -> mm.copy(servers = mm.servers.map { server ->
                     val (before, after) = updated[server.id] ?: return@map server
-                    if (server.host == before.host && server.port == before.port) {
-                        server.copy(altPorts = after.altPorts, altHosts = after.altHosts)
+                    if (server.host == before.host && server.port == before.port && stored?.serverAccess?.get(server.id) == f.serverAccess[server.id]) {
+                        server.copy(host = if (server.id in stored?.followServerAddress.orEmpty()) after.host else server.host,
+                            altPorts = after.altPorts, altHosts = after.altHosts, tunnelIpv6 = after.tunnelIpv6)
                     } else server
                 }) })))
             }
@@ -571,7 +645,14 @@ class FleetManager(
      * Admin: deploys a fresh VPS as a standby (or master) and registers every device on it with its
      * fixed address. Devices switch to it automatically when they need to.
      */
-    suspend fun addServer(name: String, ssh: SshCredentials, makeMaster: Boolean, onStep: (ServerManager.Step) -> Unit) = withContext(Dispatchers.IO) {
+    suspend fun addServer(
+        name: String,
+        ssh: SshCredentials,
+        makeMaster: Boolean,
+        vpnEndpoint: String? = null,
+        expectedPublicKey: String? = null,
+        onStep: (ServerManager.Step) -> Unit,
+    ): String = withContext(Dispatchers.IO) {
         val admin = owner()
         val current = manifest() ?: error("no manifest")
         val f = stored ?: error("Семья не найдена")
@@ -582,30 +663,80 @@ class FleetManager(
             }
         }
         checkNewServer()
+        val endpoint = vpnEndpoint?.let(Uapi::splitEndpoint)
         val inspection = servers.inspect(ssh)
         val protocol = inspection.awgContainer ?: run {
+            check(expectedPublicKey == null) { "На SSH-сервере не найден AmneziaWG из локального профиля" }
             servers.install(ssh, ServerManager.InstallOptions(), onStep)
             Protocol.AWG
         }
         require(protocol == Protocol.AWG) { "Для семейного сервера нужен AmneziaWG 2" }
+        val existingPorts = expectedPublicKey?.let { expected ->
+            servers.ports(ssh).also { ports ->
+                check(ports.publicKey == expected) { "Ключ VPN на SSH-сервере отличается от локального профиля" }
+            }
+        }
         val myKey = WgKey.fromBase64(f.deviceKey)
         val me = current.deviceFor(myKey.publicKey()) ?: error("admin is not a fleet member")
-        val config = servers.addClient(ssh, myKey, me.name, clientIp = me.address.substringBefore('/'), psk = admin.pskFor(me))
-        val server = withPorts(fleetServerOf(UUID.randomUUID().toString(), name, config), ssh)
-        for (d in current.devices) if (d.publicKey != me.publicKey) {
-            servers.registerPeer(ssh, WgKey.fromBase64(d.publicKey), d.name, clientIp = d.address.substringBefore('/'), psk = admin.pskFor(d))
+        val assigned = linkedMapOf<String, String>()
+        fun <T> assign(device: FleetDevice, register: (String) -> T): T =
+            try {
+                register(device.address.substringBefore('/'))
+            } catch (e: net.paramnezia.deploy.SshException) {
+                if (e.code != "address_taken") throw e
+                val reserved = servers.usedAddresses(ssh) + current.devices.map { it.address.substringBefore('/') }
+                val subnet = FleetAdmin.DEFAULT_SUBNET.network
+                val free = (2..254).asSequence().map { i ->
+                    IpPrefix.of(false, subnet + i.toBigInteger(), 32).address.hostAddress
+                }.firstOrNull { it !in reserved } ?: error("На сервере нет свободного адреса в подсети семьи")
+                register(free)
+            }
+
+        fun rememberAddress(device: FleetDevice, actual: String) {
+            val ip = IpPrefix.parse(actual)
+            require(FleetAdmin.DEFAULT_SUBNET.contains(ip) && !ip.isV6) {
+                "На сервере нет свободного адреса в подсети семьи"
+            }
+            if (ip != IpPrefix.parse(device.address)) assigned[device.publicKey] = ip.toString()
         }
+
+        val config = assign(me) { ip ->
+            servers.addClient(ssh, myKey, me.name, clientIp = ip, psk = admin.pskFor(me))
+        }
+        rememberAddress(me, config.iface.addresses.first { !it.isV6 }.address.hostAddress)
+        val raw = fleetServerOf(UUID.randomUUID().toString(), name, config)
+        val advertised = endpoint?.let { (host, port) -> raw.copy(host = host, port = port) } ?: raw
+        val server = when {
+            existingPorts == null -> withPorts(advertised, ssh)
+            existingPorts.main != advertised.port -> advertised
+            else -> advertised.copy(altPorts = existingPorts.alt, altHosts = alternateHosts(advertised.host, existingPorts),
+                tunnelIpv6 = existingPorts.tunnelIpv6)
+        }
+        for (d in current.devices) if (d.publicKey != me.publicKey) {
+            val peer = assign(d) { ip ->
+                servers.registerPeer(ssh, WgKey.fromBase64(d.publicKey), d.name, clientIp = ip, psk = admin.pskFor(d))
+            }
+            rememberAddress(d, peer.clientIp)
+        }
+        val target = server.copy(peerAddresses = assigned.toMap())
+        val occupied = servers.usedAddresses(ssh)
         // The co-admins reach the new server with their own keys too.
         f.coAdmins.takeIf { it.isNotEmpty() }?.let { list -> runCatching { servers.updateAdminKeys(ssh, list.map { it.sshPublic }) } }
-        changeServers(accessChange = { it + (server.id to ssh) }) { latest ->
-            checkNewServer()
-            check(latest.devices == current.devices && latest.admins == current.admins) {
-                "Состав семьи изменился. Повторите добавление сервера"
+        poolLock.withLock {
+            changeServers(accessChange = { it + (target.id to ssh) }) { latest ->
+                checkNewServer()
+                check(latest.devices == current.devices && latest.admins == current.admins) {
+                    "Состав семьи изменился. Повторите добавление сервера"
+                }
+                latest.copy(servers = if (makeMaster) listOf(target) + latest.servers else latest.servers + target)
             }
-            latest.copy(servers = if (makeMaster) listOf(server) + latest.servers else latest.servers + server)
+            repo.update { state -> state.copy(fleet = state.fleet?.let { f ->
+                f.copy(pool = f.pool.filterNot { it.address.substringBefore('/') in occupied })
+            }) }
         }
         onStep(ServerManager.Step.DONE)
         onServerReady(ssh)
+        target.id
     }
 
     /** Admin: makes [serverId] the master. Devices follow at their next manifest read. */
@@ -614,65 +745,96 @@ class FleetManager(
             val admin = admin() ?: error("Эта команда доступна администратору семьи")
             val current = manifest() ?: error("Семья не найдена")
             val target = current.servers.firstOrNull { it.id == serverId } ?: error("Сервер не найден")
-            if (current.servers.first().id == serverId) return@synchronized
+            if (current.servers.first().id == serverId) {
+                if (useAutomaticSelection && repo.current.activeProfile != null) {
+                    repo.update { it.copy(activeProfile = null) }
+                    onManifestChanged()
+                }
+                return@synchronized
+            }
             val next = admin.nextFor(current) { m -> m.copy(servers = listOf(target) + m.servers.filter { it.id != serverId }) }
             accept(FleetCrypto.encode(admin.seal(next)), useAutomaticSelection = useAutomaticSelection)
         }
     }
 
+    /** The same signed, encrypted manifest that members accept from the mirrors. */
+    fun addressUpdate(): String? = stored?.takeIf { isAdmin }?.manifest
+
+    fun followsAddress(serverId: String): Boolean = serverId in stored?.followServerAddress.orEmpty()
+
     /** Owner: updates the name and endpoint advertised to every member. */
-    suspend fun editServer(serverId: String, name: String, endpoint: String) = withContext(Dispatchers.IO) {
+    suspend fun editServer(
+        serverId: String,
+        name: String,
+        endpoint: String,
+        followAddress: Boolean? = null,
+        sshHost: String? = null,
+        confirmRecovery: Boolean = false,
+        expectedServer: FleetServer? = null,
+    ) = withContext(Dispatchers.IO) {
         val label = name.trim()
         require(label.isNotEmpty()) { "Введите название сервера" }
-        val (host, port) = Uapi.splitEndpoint(endpoint)
-        require(host.isNotEmpty() && host.none { it.isWhitespace() || it in "/[]@?#" }) {
+        val (rawHost, port) = Uapi.splitEndpoint(endpoint)
+        val literal = IpPrefix.parseOrNull(rawHost)
+        require(rawHost.isNotEmpty() && rawHost.none { it.isWhitespace() || it in "/[]@?#%" } &&
+            (':' !in rawHost || literal?.isV6 == true)) {
             "Введите адрес сервера и порт"
         }
-        changeServers { current ->
+        val host = literal?.toString()?.substringBefore('/') ?: rawHost
+        owner()
+        val current = manifest()?.servers?.firstOrNull { it.id == serverId } ?: error("Сервер не найден")
+        val recovery = stored ?: error("Семья не найдена")
+        val endpointChanged = current.host != host || current.port != port
+        val hasRecovery = recovery.recoveryMirrors.isNotEmpty() || (recovery.gistId != null && recovery.gistToken != null)
+        val rotate = confirmRecovery && hasRecovery && (endpointChanged || recovery.gistError != null)
+        val ssh = accessTo(serverId)
+        val newSsh = sshHost?.trim()?.removeSurrounding("[", "]")?.takeIf { it.isNotEmpty() && it != ssh?.host }?.let { address ->
+            val old = requireNotNull(ssh) { "Нет SSH-доступа к серверу" }
+            val pin = requireNotNull(repo.hostKeys.get(old.host, old.port)) { "Сначала подключитесь по текущему SSH-адресу" }
+            val known = repo.hostKeys.get(address, old.port)
+            require(known == null || known == pin) { "Ключ SSH нового адреса не совпадает" }
+            val candidate = old.copy(host = address)
+            val pinned = MemoryHostKeyStore().apply { put(address, old.port, pin) }
+            val actual = ServerManager(pinned).ports(candidate)
+            require(actual.publicKey != null && actual.publicKey == manifest()?.servers?.firstOrNull { it.id == serverId }?.publicKey) {
+                "Ключ VPN нового адреса не совпадает"
+            }
+            repo.hostKeys.put(address, old.port, pin)
+            candidate
+        }
+        if (followAddress == true) {
+            require((newSsh ?: ssh) != null) { "Для автообновления нужен SSH-доступ" }
+            require(literal != null) { "Для автообновления укажите IP-адрес VPN" }
+        }
+        changeServers(publishInBackground = !rotate, accessChange = {
+            if (newSsh == null) it else {
+                check(it[serverId] == ssh) { "SSH-адрес уже изменился" }
+                it + (serverId to newSsh)
+            }
+        }) { current ->
             require(current.servers.any { it.id == serverId }) { "Сервер не найден" }
-            current.copy(servers = current.servers.map { server ->
+            if (expectedServer != null) check(current.servers.firstOrNull { it.id == serverId } == expectedServer && followsAddress(serverId))
+              val updated = current.servers.map { server ->
                 when {
                     server.id != serverId -> server
                     server.host == host && server.port == port -> server.copy(name = label)
                     else -> server.copy(name = label, host = host, port = port, altPorts = emptyList(), altHosts = emptyList())
                 }
+            }
+            if (confirmRecovery && endpointChanged) {
+                current.copy(servers = updated.sortedByDescending { it.id == serverId }, endpointRotation = UUID.randomUUID().toString())
+            } else current.copy(servers = updated)
+        }
+        if (followAddress != null) repo.update { s ->
+            s.copy(fleet = s.fleet?.let {
+                it.copy(followServerAddress = if (followAddress) it.followServerAddress + serverId else it.followServerAddress - serverId)
             })
         }
-    }
-
-    /** Moves the same server. Check its previously pinned SSH key before sending credentials. */
-    suspend fun moveServerAddress(serverId: String, newAddress: String, expectedHost: String? = null) = withContext(Dispatchers.IO) {
-        val trust = owner().trust
-        val old = accessTo(serverId) ?: error("Для смены IP нужен SSH-доступ")
-        if (expectedHost != null && old.host != expectedHost) return@withContext
-        val host = Uapi.hostAddress(newAddress)
-        if (host == Uapi.hostAddress(old.host)) return@withContext
-        val server = manifest()?.servers?.firstOrNull { it.id == serverId } ?: error("Сервер не найден")
-        val pin = repo.hostKeys.get(old.host.trim().removeSurrounding("[", "]"), old.port) ?: error("Нет сохранённого SSH-ключа этого сервера")
-        val newAccess = old.copy(host = host)
-        val previouslyKnown = repo.hostKeys.get(host, old.port)
-        require(previouslyKnown == null || previouslyKnown == pin) { "Новый адрес уже связан с другим SSH-ключом" }
-        val pinned = object : HostKeyStore {
-            override fun get(host: String, port: Int) = pin
-            override fun put(host: String, port: Int, fingerprint: String) = error("Нужен прежний SSH-ключ")
+        if (rotate) {
+            scope.launch { runCatching { publish(recovery.trust, includeRecovery = false) } }
+            val result = publishReserve(recovery.trust)
+            result.getOrElse { error("Адрес сохранён. Резервный канал: ${it.message}. Повторите сохранение для отправки.") }
         }
-        verifySshAddress(newAccess, pinned)
-
-        synchronized(this@FleetManager) {
-            check(stored?.trust == trust && accessTo(serverId) == old) { "Сервер уже изменился. Повторите проверку" }
-            val known = repo.hostKeys.get(host, old.port)
-            require(known == null || known == pin) { "Новый адрес уже связан с другим SSH-ключом" }
-            repo.hostKeys.put(host, old.port, pin)
-            changeServers(accessChange = { it + (serverId to newAccess) }) { current ->
-                val latest = current.servers.firstOrNull { it.id == serverId }
-                check(latest == server) { "Сервер уже изменился. Повторите проверку" }
-                val alternatives = server.altHosts.filterNot { Uapi.hostAddress(it) == host || Uapi.hostAddress(it) == Uapi.hostAddress(old.host) }
-                current.copy(servers = current.servers.map {
-                    if (it.id == serverId) it.copy(host = host, altHosts = alternatives) else it
-                })
-            }
-        }
-        onServerReady(newAccess)
     }
 
     /** Owner: drops a server and publishes the removal there for devices still connected to it. */
@@ -680,8 +842,12 @@ class FleetManager(
         synchronized(this@FleetManager) {
             val removed = accessTo(serverId)
             changeServers(listOfNotNull(removed), accessChange = { it - serverId }) { current ->
+                require(current.servers.any { it.id == serverId }) { "Сервер не найден" }
                 require(current.servers.size > 1) { "В семье должен остаться хотя бы один сервер" }
                 current.copy(servers = current.servers.filter { it.id != serverId })
+            }
+            if (serverId in stored?.followServerAddress.orEmpty()) repo.update { state ->
+                state.copy(fleet = state.fleet?.let { it.copy(followServerAddress = it.followServerAddress - serverId) })
             }
         }
     }
@@ -689,6 +855,7 @@ class FleetManager(
     @Synchronized
     private fun changeServers(
         extraTargets: List<SshCredentials> = emptyList(),
+        publishInBackground: Boolean = true,
         accessChange: (Map<String, SshCredentials>) -> Map<String, SshCredentials> = { it },
         change: (FleetManifest) -> FleetManifest,
     ) {
@@ -699,7 +866,8 @@ class FleetManager(
         val serverAccess = accessChange(previousAccess)
         if (next == current && serverAccess == previousAccess) return
         val signed = FleetCrypto.encode(admin.seal(admin.next(current) { withAdmins(next, serverAccess) }))
-        accept(signed, extraTargets, accessChange = { serverAccess })
+        if (publishInBackground) accept(signed, extraTargets, accessChange = { serverAccess })
+        else check(receive(signed, accessChange = { serverAccess })) { "Настройки семьи изменились. Повторите сохранение" }
     }
 
     /**
@@ -710,11 +878,70 @@ class FleetManager(
     suspend fun setReserveChannel(token: String) = withContext(Dispatchers.IO) {
         val admin = owner()
         val f = stored ?: return@withContext
-        val gist = publisher.publishToGist(token.trim(), f.gistId, f.manifest)
-        repo.update { s -> s.copy(fleet = s.fleet?.copy(gistId = gist.id, gistToken = token.trim(), gistError = null)) }
+        val gist = recoveryPublishLock.withLock {
+            val latest = stored?.takeIf { it.trust == f.trust } ?: error("Семья изменилась")
+            publisher.publishToGist(token.trim(), latest.gistId, latest.manifest).also { channel ->
+                repo.update { s -> s.copy(fleet = s.fleet?.copy(gistId = channel.id, gistToken = token.trim(), gistError = null)) }
+            }
+        }
         val current = manifest() ?: return@withContext
-        val mirrors = current.mirrors.filter { "github" !in it } + gist.mirrors
+        val mirrors = current.mirrors.filter { !isGitHubMirror(it) } + gist.mirrors
         if (mirrors != current.mirrors) accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) { it.copy(mirrors = mirrors) })))
+    }
+
+    suspend fun selectAmneziaDnsServer(id: String) = withContext(Dispatchers.IO) {
+        recoveryPublishLock.withLock {
+            owner()
+            val f = requireNotNull(stored)
+            val server = manifest()?.servers?.firstOrNull { it.id == id } ?: error("Сервер отсутствует")
+            val url = psyncMirrorUrl(f.trust.fleetId)
+            val token = f.recoveryMirrors[url] ?: error("Сначала подключите зеркало psync.ru")
+            publisher.publishToHttpsMirror(url, token, f.manifest, server.host)
+            repo.update { s -> s.copy(fleet = s.fleet?.let {
+                if (it.trust == f.trust) it.copy(psyncDnsServerId = id) else it
+            }) }
+        }
+    }
+
+    /** Readable without credentials, writable by the owner with a bearer token. */
+    suspend fun addRecoveryMirror(address: String, token: String) = withContext(Dispatchers.IO) {
+        val url = address.trim()
+        val uri = runCatching { java.net.URI(url) }.getOrNull()
+        require(uri?.scheme == "https" && uri.host != null && uri.userInfo == null &&
+            uri.fragment == null && uri.rawQuery == null && !uri.path.isNullOrBlank()) { "Введите HTTPS-адрес файла" }
+        require(token.isNotBlank()) { "Введите токен записи" }
+        owner()
+        recoveryPublishLock.withLock {
+            synchronized(this@FleetManager) {
+                check(stored?.recoveryMirrors.orEmpty().size < 4 || url in stored?.recoveryMirrors.orEmpty()) {
+                    "Можно настроить до четырёх HTTPS-зеркал"
+                }
+            }
+            val initial = stored ?: error("Семья не найдена")
+            publisher.publishToHttpsMirror(url, token.trim(), initial.manifest)
+            synchronized(this@FleetManager) {
+                check(stored?.trust == initial.trust) { "Семья изменилась" }
+                val admin = owner()
+                val current = manifest() ?: error("Семья не найдена")
+                repo.update { s -> s.copy(fleet = s.fleet?.let {
+                    it.copy(recoveryMirrors = it.recoveryMirrors + (url to token.trim()))
+                }) }
+                if (url !in current.mirrors) accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) {
+                    it.copy(mirrors = it.mirrors + url)
+                })))
+            }
+        }
+    }
+
+    suspend fun removeRecoveryMirror(url: String) = withContext(Dispatchers.IO) {
+        recoveryPublishLock.withLock {
+            synchronized(this@FleetManager) {
+                val admin = owner()
+                val current = manifest() ?: error("Семья не найдена")
+                repo.update { s -> s.copy(fleet = s.fleet?.let { it.copy(recoveryMirrors = it.recoveryMirrors - url, deliveredMirrorVersions = it.deliveredMirrorVersions - url) }) }
+                accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) { it.copy(mirrors = it.mirrors - url) })))
+            }
+        }
     }
 
     /** Admin: turns the reserve channel off (devices stop looking there; the gist itself stays). */
@@ -722,7 +949,7 @@ class FleetManager(
         val admin = owner()
         repo.update { s -> s.copy(fleet = s.fleet?.copy(gistId = null, gistToken = null, gistError = null)) }
         val current = manifest() ?: return@withContext
-        val mirrors = current.mirrors.filter { "github" !in it }
+        val mirrors = current.mirrors.filter { !isGitHubMirror(it) }
         if (mirrors != current.mirrors) accept(FleetCrypto.encode(admin.seal(admin.nextFor(current) { it.copy(mirrors = mirrors) })))
     }
 
@@ -795,35 +1022,59 @@ class FleetManager(
         scope.launch { runCatching { publish(trust, extraTargets) }.onFailure { Log.w(TAG, "publish failed", it) } }
     }
 
-    /** Admin: pushes a manifest to every channel. Failures are fine as long as one channel works. */
     private val publishLock = Mutex()
+    private val recoveryPublishLock = Mutex()
 
-    private suspend fun publish(trust: FleetTrust, extraTargets: List<SshCredentials> = emptyList()) =
-        withContext(Dispatchers.IO) {
-            publishLock.withLock {
-                val f = stored?.takeIf { it.trust == trust } ?: return@withLock
-                val m = manifest() ?: return@withLock
-                val signed = f.manifest
-                val gist = coroutineScope {
-                    val targets = (m.servers.mapNotNull { f.serverAccess[it.id] } + extraTargets).distinct()
-                    val jobs = targets.map { a ->
-                        async {
-                            runCatching {
-                                if (!publisher.publishToServer(a, signed)) Log.w(TAG, "${a.host}: in-tunnel web server is not answering")
-                            }.onFailure { Log.w(TAG, "${a.host}: manifest publication failed", it) }
-                        }
-                    }
-                    val gistJob = f.gistToken?.let { t -> async { runCatching { publisher.publishToGist(t, f.gistId, signed) } } }
-                    jobs.awaitAll()
-                    gistJob?.await()?.also { r ->
-                        val error = r.exceptionOrNull()?.let { it.message ?: it.toString() }
-                        if (error != stored?.gistError) repo.update { s -> s.copy(fleet = s.fleet?.copy(gistError = error)) }
-                    }?.getOrNull()
+    private suspend fun publishReserve(trust: FleetTrust): Result<Unit> = recoveryPublishLock.withLock {
+        val saved = stored?.takeIf { it.trust == trust } ?: return@withLock Result.failure(IllegalStateException("Семья изменилась"))
+        val dnsUrl = psyncMirrorUrl(trust.fleetId)
+        val dnsAddress = saved.psyncDnsServerId?.let { id ->
+            val envelope = requireNotNull(FleetCrypto.decode(saved.manifest))
+            FleetCrypto.open(envelope, trust, ed, listOfNotNull(envelope.signer))
+                ?.servers?.firstOrNull { it.id == id }?.host
+        }
+        val result = coroutineScope {
+            val writes = saved.recoveryMirrors.map { (url, token) -> async {
+                runCatching<Unit> {
+                    publisher.publishToHttpsMirror(url, token, saved.manifest, dnsAddress.takeIf { url == dnsUrl })
+                    val version = requireNotNull(FleetCrypto.decode(saved.manifest)).version
+                    repo.update { state -> state.copy(fleet = state.fleet?.let {
+                        if (it.trust == trust && it.recoveryMirrors[url] == token)
+                            it.copy(deliveredMirrorVersions = it.deliveredMirrorVersions + (url to version))
+                        else it
+                    }) }
                 }
-                // The gist was deleted on GitHub and a new one was made: point the devices at it.
-                if (gist != null && gist.id != f.gistId) {
-                    repo.update { s -> s.copy(fleet = s.fleet?.copy(gistId = gist.id)) }
-                    f.gistToken?.let { setReserveChannel(it) }
+            } }.toMutableList()
+            if (saved.gistToken != null && saved.gistId != null) writes += async {
+                runCatching { publisher.publishToGist(saved.gistToken, saved.gistId, saved.manifest, createIfMissing = false); Unit }
+            }
+            val results = writes.awaitAll()
+            if (results.any { it.isSuccess }) Result.success(Unit)
+            else Result.failure(results.firstNotNullOfOrNull { it.exceptionOrNull() } ?: IllegalStateException("Резервный канал выключен"))
+        }
+        val failure = result.exceptionOrNull()?.let { it.message ?: "Ошибка доставки" }
+        repo.update { state -> state.copy(fleet = state.fleet?.let {
+            if (it.trust == trust && it.gistId == saved.gistId && it.gistToken == saved.gistToken) it.copy(gistError = failure) else it
+        }) }
+        result
+    }
+
+    /** Publish independently so a dead SSH server cannot delay the recovery channel. */
+    private suspend fun publish(trust: FleetTrust, extraTargets: List<SshCredentials> = emptyList(), includeRecovery: Boolean = true) =
+        withContext(Dispatchers.IO) {
+            coroutineScope {
+                if (includeRecovery && stored?.takeIf { it.trust == trust }?.let {
+                    it.gistToken != null || it.recoveryMirrors.isNotEmpty()
+                } == true) launch { publishReserve(trust) }
+                publishLock.withLock {
+                    val f = stored?.takeIf { it.trust == trust } ?: return@withLock
+                    val m = manifest() ?: return@withLock
+                    val targets = (m.servers.mapNotNull { f.serverAccess[it.id] } + extraTargets).distinct()
+                    targets.map { a -> async {
+                        runCatching {
+                            if (!publisher.publishToServer(a, f.manifest)) Log.w(TAG, "${a.host}: in-tunnel web server is not answering")
+                        }.onFailure { Log.w(TAG, "${a.host}: manifest publication failed", it) }
+                    } }.awaitAll()
                 }
             }
         }
@@ -834,8 +1085,11 @@ class FleetManager(
      */
     private fun withPorts(server: FleetServer, ssh: SshCredentials): FleetServer = runCatching {
         val p = servers.ports(ssh, ServerManager.altPortsFor(server.port))
-        if (p.main == server.port) server.copy(altPorts = p.alt, altHosts = listOfNotNull(p.ipv6)) else server
+        if (p.main == server.port) server.copy(altPorts = p.alt, altHosts = alternateHosts(server.host, p), tunnelIpv6 = p.tunnelIpv6) else server
     }.onFailure { Log.w(TAG, "ports of ${server.name}: ${it.message}") }.getOrDefault(server)
+
+    private fun alternateHosts(host: String, ports: ServerManager.Ports): List<String> =
+        if (':' in host) listOfNotNull(ports.ipv4) else listOfNotNull(ports.ipv6)
 
     /** Registers a device on every server, all at once; returns the failures by server id. */
     private suspend fun registerEverywhere(list: List<FleetServer>, publicKey: WgKey, name: String, address: String, psk: WgKey? = null): Map<String, Exception> =

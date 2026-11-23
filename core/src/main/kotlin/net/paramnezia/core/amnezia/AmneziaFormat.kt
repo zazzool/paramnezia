@@ -104,7 +104,7 @@ object AmneziaFormat {
             TunnelConfig(
                 TunnelConfig.Interface(
                     privateKey = WgKey.fromBase64(priv),
-                    addresses = listOf(IpPrefix.parse(clientIp.substringBefore('/') + "/32")),
+                    addresses = listOf(IpPrefix.parse(clientIp.substringBefore('/'))),
                 ),
                 listOf(
                     TunnelConfig.Peer(

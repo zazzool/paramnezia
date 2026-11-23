@@ -74,15 +74,16 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
 
     if (view == null) {
         Column(modifier.fillMaxSize().padding(Space.M)) {
-            Header("Сервер", null, onBack)
+            ServerHeader("Сервер", null, onBack)
             Hint("Этого сервера больше нет в приложении.", PnIcons.Info)
         }
         return
     }
-    LaunchedEffect(serverId, reload) {
+    LaunchedEffect(serverId, view.ssh, reload) {
+        status = null
+        statusError = null
         if (view.ssh == null) return@LaunchedEffect
         loading = true
-        statusError = null
         runCatching { app.insights.status(serverId) }
             .onSuccess { status = it }
             .onFailure { statusError = it.message ?: it.toString() }
@@ -106,19 +107,12 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
     val family = remember(repoState.fleet?.manifest) { app.fleet.manifest()?.servers.orEmpty() }
     val familyServer = family.firstOrNull { it.id == serverId }
     val canEditFamily = app.fleet.isOwner && familyServer != null
-    val canPromoteFamily = app.fleet.isAdmin && familyServer != null && family.first().id != serverId
-    val canMakeLocalPrimary = local != null && (
-        repoState.profiles.first().id != serverId ||
-            repoState.activeProfile?.let { it != serverId } == true ||
-            (repoState.fleet != null && repoState.activeProfile == null)
-        )
-    val canShare = local?.ssh?.let { ssh ->
-        app.fleet.isOwner && repoState.fleet?.serverAccess?.values.orEmpty().none {
-            it.host.equals(ssh.host, ignoreCase = true) && it.port == ssh.port
-        }
-    } == true
-    val canMove = canEditFamily && app.fleet.accessTo(serverId) != null
-    var moving by remember(serverId) { mutableStateOf(false) }
+    val familyAdmin = familyServer != null && app.fleet.isAdmin
+    val defaultOnDevice = repoState.activeProfile == serverId || (repoState.activeProfile == null &&
+        (family.firstOrNull()?.id ?: repoState.profiles.firstOrNull()?.id) == serverId)
+    val isDefault = if (familyAdmin) family.first().id == serverId && repoState.activeProfile == null else defaultOnDevice
+    val inUse = session?.serverId == serverId || defaultOnDevice
+    val canShare = local != null && app.fleet.isOwner
     var editing by remember(serverId) { mutableStateOf(false) }
     var deleting by remember(serverId) { mutableStateOf(false) }
     var sharing by remember(serverId) { mutableStateOf(false) }
@@ -132,24 +126,48 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
     }
     if (editing) {
         var name by remember { mutableStateOf(view.name) }
-        var connection by remember { mutableStateOf(local?.conf ?: view.endpoint.orEmpty()) }
+        var connection by remember { mutableStateOf(view.endpoint.orEmpty()) }
+        var rawConfig by remember { mutableStateOf(local?.conf.orEmpty()) }
+        var editConfig by remember { mutableStateOf(false) }
+        val ssh = app.fleet.accessTo(serverId)
+        var sshHost by remember { mutableStateOf(ssh?.host.orEmpty()) }
+        var followAddress by remember { mutableStateOf(app.fleet.followsAddress(serverId)) }
         AlertDialog(
             onDismissRequest = { editing = false },
             title = { Text("Редактировать сервер") },
             text = {
                 Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(Space.S)) {
                     OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("Название") })
-                    OutlinedTextField(connection, { connection = it }, singleLine = local == null,
-                        label = { Text(if (local == null) "Адрес VPN и порт" else "Конфигурация VPN") })
+                    if (editConfig) OutlinedTextField(rawConfig, { rawConfig = it }, label = { Text("Конфигурация VPN") })
+                    else OutlinedTextField(connection, { connection = it }, singleLine = true, label = { Text("Адрес VPN и порт") })
+                    if (local != null) TextButton(enabled = !busy, onClick = { editConfig = !editConfig }) {
+                        Text(if (editConfig) "Изменить адрес и порт" else "Изменить конфигурацию VPN")
+                    }
+                    if (local == null && connection.trim() != view.endpoint) {
+                        Text("При смене адреса этот сервер станет основным для семьи.")
+                        val fleet = repoState.fleet
+                        if (fleet?.gistId == null && fleet?.recoveryMirrors.isNullOrEmpty()) {
+                            Text("Устройства без связи со старыми серверами смогут получить новый адрес вручную через «Поделиться обновлением семьи».")
+                        }
+                    }
+                    if (local == null && ssh != null) {
+                        OutlinedTextField(sshHost, { sshHost = it }, singleLine = true, label = { Text("Адрес SSH") })
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.material3.Checkbox(followAddress, { followAddress = it })
+                            Text("Автоматически обновлять IP по SSH")
+                        }
+                        if (followAddress) Text("Используйте SSH-адрес, который останется доступен после смены IP VPN.")
+                    }
                 }
             },
             confirmButton = {
-                TextButton(enabled = !busy && name.isNotBlank() && connection.isNotBlank(), onClick = {
+                TextButton(enabled = !busy && name.isNotBlank() && (if (editConfig) rawConfig else connection).isNotBlank(), onClick = {
                     manage {
                         if (local != null) {
-                            app.servers.edit(serverId, name, connection)
-                            if (live != null) app.reconnectIfUp()
-                        } else app.fleet.editServer(serverId, name, connection)
+                            if (editConfig) app.servers.edit(serverId, name, rawConfig)
+                            else app.servers.editEndpoint(serverId, name, connection)
+                            if (inUse) app.reconnectIfUp()
+                        } else app.fleet.editServer(serverId, name, connection, followAddress, sshHost, confirmRecovery = true)
                         editing = false
                     }
                 }) { Text("Сохранить") }
@@ -157,44 +175,18 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
             dismissButton = { TextButton(onClick = { editing = false }) { Text("Отмена") } },
         )
     }
-    if (moving) {
-        var address by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { if (!busy) moving = false },
-            title = { Text("У сервера новый IP") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(Space.S)) {
-                    Text("Укажите новый адрес того же сервера. После проверки SSH-ключа семья получит адрес при синхронизации.")
-                    if (repoState.fleet?.gistId == null && family.size == 1) {
-                        Text("Если старый адрес уже недоступен, участникам нужен резервный канал, настроенный заранее.")
-                    }
-                    OutlinedTextField(address, { address = it }, singleLine = true, label = { Text("IPv4, IPv6 или домен") })
-                }
-            },
-            confirmButton = {
-                TextButton(enabled = !busy && address.isNotBlank(), onClick = {
-                    manage {
-                        app.fleet.moveServerAddress(serverId, address)
-                        moving = false
-                        platform.toast("Новый адрес сохранён")
-                    }
-                }) { Text(if (busy) "Проверяем…" else "Обновить адрес") }
-            },
-            dismissButton = { TextButton(enabled = !busy, onClick = { moving = false }) { Text("Отмена") } },
-        )
-    }
     if (deleting) AlertDialog(
         onDismissRequest = { deleting = false },
         title = { Text("Удалить сервер?") },
-        text = { Text(view.name) },
+        text = { Text(if (local != null) "«${view.name}» будет удалён с этого устройства." else "«${view.name}» будет удалён из списка серверов семьи.") },
         confirmButton = {
-            TextButton(onClick = {
+            TextButton(enabled = !busy, onClick = {
                 deleting = false
                 manage {
                     if (local != null) {
                         app.servers.remove(serverId)
                         if (app.serverCount() == 0) app.disconnect()
-                        else if (live != null || repoState.activeProfile == serverId) app.reconnectIfUp()
+                        else if (inUse) app.reconnectIfUp()
                     } else app.fleet.removeServer(serverId)
                     onBack()
                 }
@@ -202,21 +194,34 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
         },
         dismissButton = { TextButton(onClick = { deleting = false }) { Text("Отмена") } },
     )
-    if (sharing) AlertDialog(
-        onDismissRequest = { sharing = false },
-        title = { Text("Добавить сервер в семью?") },
-        text = { Text(view.name) },
-        confirmButton = {
-            TextButton(onClick = {
-                sharing = false
-                manage {
-                    app.fleet.addServer(view.name, checkNotNull(local?.ssh), makeMaster = false) {}
-                    platform.toast("Сервер добавлен в семью")
+    if (sharing && local != null) {
+        val form = remember { SshFormState().apply {
+            host = view.endpoint?.let { runCatching { net.paramnezia.core.config.Uapi.splitEndpoint(it).first }.getOrNull() }.orEmpty()
+        } }
+        AlertDialog(
+            onDismissRequest = { if (!busy) sharing = false },
+            title = { Text("Перенести сервер в семью?") },
+            text = {
+                Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(Space.S)) {
+                    Text("«${view.name}» станет резервным для всех устройств семьи.")
+                    if (local.ssh == null) SshFields(form, enabled = !busy, toast = platform::toast, showName = false)
                 }
-            }) { Text("Добавить") }
-        },
-        dismissButton = { TextButton(onClick = { sharing = false }) { Text("Отмена") } },
-    )
+            },
+            confirmButton = {
+                TextButton(enabled = !busy && (local.ssh != null || form.ready), onClick = {
+                    manage {
+                        app.servers.moveToFamily(serverId, if (local.ssh == null) form.credentials() else null)
+                        if (inUse) app.reconnectIfUp()
+                        platform.toast("Сервер перенесён в семью")
+                        sharing = false
+                        onBack()
+                    }
+                }) { Text("Перенести") }
+            },
+            dismissButton = { TextButton(enabled = !busy, onClick = { sharing = false }) { Text("Отмена") } },
+        )
+    }
     val config = view.config
     val protocol = ProtocolVersion.of(config)
 
@@ -224,37 +229,62 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
         modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Space.M, vertical = Space.S),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Header(view.name, listOfNotNull(view.endpoint?.let { net.paramnezia.core.config.Uapi.splitEndpoint(it).first }, view.role).joinToString(" · "), onBack) {
+        ServerHeader(view.name, listOfNotNull(view.endpoint?.substringBeforeLast(':'), view.role).joinToString(" · "), onBack) {
             if (view.ssh != null) IconButton(enabled = !loading, onClick = { reload++ }) { Icon(PnIcons.Refresh, "Обновить сведения сервера") }
         }
 
-        if (local != null || canEditFamily || canPromoteFamily) Group {
-            if (canPromoteFamily || canMakeLocalPrimary) {
-                GroupRow(
-                    "Сделать основным",
-                    subtitle = if (local == null) "Для всей семьи" else "На этом устройстве",
-                    icon = Glyph.Server,
-                    onClick = {
-                        if (!busy) manage {
-                            if (local == null) {
-                                app.fleet.promote(serverId, useAutomaticSelection = true)
-                            } else {
-                                app.servers.makePrimary(serverId)
-                                app.reconnectIfUp()
+        SectionTitle("Настройки сервера")
+        Group {
+            if (local != null || canEditFamily) {
+                GroupRow("Редактировать сервер", subtitle = "Название, адрес и порт VPN", icon = Glyph.Server,
+                    onClick = { if (!busy) editing = true })
+            } else if (familyServer != null) {
+                GroupRow("Редактирование и удаление", subtitle = "Доступно владельцу семьи")
+            }
+            GroupRow(
+                if (isDefault) "Сервер по умолчанию" else "Сделать сервером по умолчанию",
+                subtitle = if (familyAdmin) "Для семьи" else "На этом устройстве",
+                icon = Glyph.Server,
+                badge = if (isDefault) "выбран" else null,
+                onClick = if (isDefault || busy) null else {
+                    {
+                        manage {
+                            when {
+                                local != null -> {
+                                    app.servers.makePrimary(serverId)
+                                    app.reconnectIfUp()
+                                }
+                                familyAdmin -> app.fleet.promote(serverId, useAutomaticSelection = true)
+                                else -> {
+                                    app.repo.update { it.copy(activeProfile = serverId) }
+                                    app.reconnectIfUp()
+                                }
                             }
-                            platform.toast("${view.name} теперь основной")
+                            platform.toast("${view.name} выбран по умолчанию")
                         }
+                    }
+                },
+            )
+            if (local != null || canEditFamily) {
+                val lastFamilyServer = local == null && family.size == 1
+                GroupRow(
+                    "Удалить сервер",
+                    subtitle = when {
+                        lastFamilyServer -> "Сначала добавьте другой сервер в семью"
+                        local == null -> "Из списка семьи"
+                        else -> "С этого устройства"
                     },
+                    icon = Glyph.Server,
+                    accent = MaterialTheme.colorScheme.error,
+                    onClick = if (lastFamilyServer || busy) null else { { deleting = true } },
                 )
             }
-            if (local != null || canEditFamily) {
-                GroupRow("Редактировать", icon = Glyph.Server, onClick = { if (!busy) editing = true })
-            }
-            if (canMove) GroupRow("У сервера новый IP", icon = Glyph.Server, onClick = { if (!busy) moving = true })
-            if (canShare) GroupRow("Добавить в семью", icon = Glyph.Server, onClick = { if (!busy) sharing = true })
-            if (local != null || (canEditFamily && family.size > 1)) {
-                GroupRow("Удалить из списка", icon = Glyph.Server, onClick = { if (!busy) deleting = true })
-            }
+        }
+        if (familyAdmin || canShare) Group {
+            if (familyAdmin) GroupRow("Поделиться обновлением семьи", icon = Glyph.Server, onClick = {
+                app.fleet.addressUpdate()?.let { platform.shareText(it, "Обновление адреса Paramnezia") }
+            })
+            if (canShare) GroupRow("Перенести в семью", icon = Glyph.Server, onClick = { if (!busy) sharing = true })
         }
 
         // The state in one line, coloured like the power button.
@@ -357,7 +387,7 @@ private fun ServerReport(st: ServerStatus, now: Long) {
 }
 
 @Composable
-private fun Header(title: String, subtitle: String?, onBack: () -> Unit, trailing: (@Composable () -> Unit)? = null) {
+internal fun ServerHeader(title: String, subtitle: String?, onBack: () -> Unit, trailing: (@Composable () -> Unit)? = null) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(PnIcons.ArrowLeft, "Назад") }
         Column(Modifier.weight(1f)) {

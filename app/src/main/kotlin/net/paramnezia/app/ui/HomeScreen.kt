@@ -73,6 +73,7 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer:
 
     Column(modifier.fillMaxSize().padding(horizontal = Space.M + 4.dp).padding(top = Space.S, bottom = Space.M)) {
         TopBar(app, tunnel, servers, onDetails = { details = true }, onManage = { onOpen(Tab.FLEET) })
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) { UpdateAction(app.updater) }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             val dial = dialFor(maxHeight, maxWidth)
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -106,7 +107,7 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer:
     }
 }
 
-/** Title, update badge and the connection server selector. */
+/** Title and connection server selector. */
 @Composable
 private fun TopBar(app: App, tunnel: TunnelState, servers: Int, onDetails: () -> Unit, onManage: () -> Unit) {
     val state by app.repo.state.collectAsState()
@@ -114,7 +115,6 @@ private fun TopBar(app: App, tunnel: TunnelState, servers: Int, onDetails: () ->
     var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
         Wordmark(Modifier.weight(1f))
-        UpdateBadge(app, Modifier.padding(end = Space.S))
         val server = when (tunnel) { is TunnelState.Up -> tunnel.serverName; is TunnelState.Connecting -> tunnel.serverName; else -> null }
         val family = remember(state.fleet?.manifest) { app.fleet.member()?.tunnels().orEmpty().map { it.first } }
         val choices = family.map { it.id to it.name } + state.profiles.map { it.id to it.name }

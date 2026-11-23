@@ -1,24 +1,32 @@
 package net.paramnezia.app.ota
 
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import net.paramnezia.app.BuildConfig
 import net.paramnezia.app.data.Repo
 import net.paramnezia.app.platform.ReleaseSource
+import net.paramnezia.app.platform.UpdateInstaller
+import net.paramnezia.app.ui.ShareProvider
 import net.paramnezia.app.tunnel.Net
 import net.paramnezia.core.fleet.Ed25519
 import net.paramnezia.core.ota.Release
 import net.paramnezia.core.ota.ReleaseCodec
 import net.paramnezia.core.ota.UpdateChecker
+import net.paramnezia.core.ota.UpdateCheckResult
 import net.paramnezia.deploy.FleetPublisher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -30,9 +38,8 @@ import java.security.MessageDigest
  * over HTTPS from one public address ([BuildConfig.UPDATE_URL]) and, for fleet devices, from their
  * server inside the tunnel. A release counts only if the release key pinned in this build signed it.
  *
- * The app never downloads or installs APKs itself. "Download" opens the APK link in the browser;
- * the user installs it with Android's own installer, exactly as with the first install. There is no
- * REQUEST_INSTALL_PACKAGES permission and no background download (docs/PLAY-PROTECT.md).
+ * Downloads start on a user action and verify the APK against the signed release. Android's
+ * package installer handles installation and user confirmation.
  */
 class Updater(
     private val context: Context,
@@ -50,13 +57,13 @@ class Updater(
     private val _status = MutableStateFlow<Status>(Status.Idle)
     val status: StateFlow<Status> = _status
 
-    private val schedule = UpdateCheckSchedule(repo)
-
     val enabled: Boolean get() = BuildConfig.RELEASE_KEY.isNotEmpty()
 
-    private val versionCode: Long by lazy { context.packageManager.getPackageInfo(context.packageName, 0).let {
-        if (Build.VERSION.SDK_INT >= 28) it.longVersionCode else @Suppress("DEPRECATION") it.versionCode.toLong()
-    } }
+    private val versionCode: Long by lazy { versionCodeOf(context.packageManager.getPackageInfo(context.packageName, 0)) }
+
+    @Suppress("DEPRECATION")
+    private fun versionCodeOf(info: PackageInfo): Long =
+        if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
 
     /** Windows installer releases (any version counts), only to point people at them on the family page. */
     private val windowsChecker by lazy {
@@ -69,10 +76,10 @@ class Updater(
         UpdateChecker(context.packageName, versionCode, Build.VERSION.SDK_INT, listOf(BuildConfig.RELEASE_KEY), ed, ownSigner())
     }
 
-    private val restoreCache by lazy { repo.current.release?.let(::offer) }
+    val installer = UpdateInstaller(ShareProvider.updateDir(context), "apk", scope)
 
     init {
-        scope.launch(Dispatchers.IO) { restoreCache }
+        scope.launch(Dispatchers.IO) { repo.current.release?.let { offer(it) } }
     }
 
     /**
@@ -83,61 +90,126 @@ class Updater(
         (checker.best ?: checker.installed)?.let { (r, s) -> r to ReleaseCodec.encode(s) }
     }
 
-    private fun offer(text: String): Boolean = synchronized(checker) {
-        val result = checker.inspect(text)
-        val record = checker.best ?: checker.installed
-        if (result != UpdateChecker.Result.REJECTED && record != null) {
-            val (release, signed) = record
-            repo.update { it.copy(release = ReleaseCodec.encode(signed)) }
-            if (checker.best != null) _status.value = Status.Available(release)
+    /** Returns whether this channel confirmed the installed version or supplied a newer release. */
+    private fun offer(text: String): Boolean {
+        if (!enabled) return false
+        return synchronized(checker) {
+            val before = checker.installed
+            val accepted = checker.offer(text)
+            val confirmedInstalled = checker.installed !== before
+            if (accepted) {
+                val (release, signed) = checkNotNull(checker.best)
+                repo.update { it.copy(release = ReleaseCodec.encode(signed)) }
+                _status.value = Status.Available(release)
+                installer.restore(release)
+            } else if (confirmedInstalled && checker.best == null) {
+                val (_, signed) = checkNotNull(checker.installed)
+                repo.update { it.copy(release = ReleaseCodec.encode(signed)) }
+            }
+            accepted || confirmedInstalled || checker.best?.second?.let { it == ReleaseCodec.decode(text) } == true
         }
-        result != UpdateChecker.Result.REJECTED
+    }
+
+    private fun releaseUrls() = listOfNotNull(
+        BuildConfig.UPDATE_URL.takeIf { it.startsWith("https://") },
+        FleetPublisher.TUNNEL_RELEASE_URL.takeIf { inFleet() },
+    )
+
+    /** A user-initiated check only needs this device's release. */
+    suspend fun checkForUpdate(): UpdateCheckResult = withContext(Dispatchers.IO) {
+        if (!enabled) return@withContext UpdateCheckResult.UNAVAILABLE
+        val replies = coroutineScope {
+            releaseUrls().map { url ->
+                async {
+                    if (url == FleetPublisher.TUNNEL_RELEASE_URL) net.getThroughTunnel(url)
+                    else net.get(url, fresh = true, timeoutMs = 8_000)
+                }
+            }.awaitAll()
+        }
+        val confirmed = replies.filterNotNull().map(::offer).any { it }
+        when {
+            status.value is Status.Available -> UpdateCheckResult.AVAILABLE
+            confirmed -> UpdateCheckResult.UP_TO_DATE
+            else -> UpdateCheckResult.FAILED
+        }
     }
 
     /** Reads release.json from the public address and, in a fleet, from the server. A few KB. */
-    override suspend fun check() { checkNow() }
+    override suspend fun check() { schedule.check(force = true, fetch = ::fetchUpdates) }
 
-    suspend fun checkNow(): Boolean = enabled && schedule.check(force = true, fetch = ::fetch)
+    private val schedule = UpdateCheckSchedule(repo)
 
-    private suspend fun fetch(): Boolean = withContext(Dispatchers.IO) {
-        restoreCache
-        val urls = listOfNotNull(BuildConfig.UPDATE_URL.takeIf { it.startsWith("https://") },
-            FleetPublisher.TUNNEL_RELEASE_URL.takeIf { inFleet() })
+    private suspend fun fetchUpdates(): Boolean = withContext(Dispatchers.IO) {
+        if (!enabled) return@withContext false
         val windowsUrl = BuildConfig.UPDATE_URL.takeIf { it.startsWith("https://") && it.endsWith("/release.json") }
             ?.replace("/release.json", "/release-windows.json")
         val (texts, win) = coroutineScope {
-            val w = windowsUrl?.let { u -> async { net.get(u, maxBytes = 64 * 1024) } }
-            urls.map { u -> async { net.get(u, maxBytes = 64 * 1024) } }.awaitAll() to w?.await()
+            val w = windowsUrl?.let { u -> async { net.get(u) } }
+            releaseUrls().map { u -> async { net.get(u) } }.awaitAll() to w?.await()
         }
-        val verified = texts.filterNotNull().map(::offer).any { it }
-        win?.let { if (enabled) synchronized(windowsChecker) { windowsChecker.offer(it) } }
-        verified
+        val confirmed = texts.filterNotNull().map(::offer).any { it }
+        win?.let { synchronized(windowsChecker) { windowsChecker.offer(it) } }
+        confirmed
     }
 
-    suspend fun checkPeriodically() {
-        if (enabled) schedule.run(::fetch)
+    /** At most every 12 hours, from the app's own start; costs one small request. */
+    suspend fun checkIfDue() { schedule.check(fetch = ::fetchUpdates) }
+
+    suspend fun monitorUpdates() { if (enabled) schedule.run(::fetchUpdates) }
+
+
+    fun downloadUpdate() {
+        val release = (status.value as? Status.Available)?.release ?: return
+        installer.download(release) { read ->
+            release.publicApkUrls().distinct().any { url ->
+                currentCoroutineContext().ensureActive()
+                net.download(url, null, read) == true || net.direct()?.let {
+                    currentCoroutineContext().ensureActive()
+                    net.download(url, it, read)
+                } == true
+            } || (inFleet() && net.downloadThroughTunnel("${FleetPublisher.TUNNEL_APK_MIRROR}/${release.sha256}", read))
+        }
     }
 
-    /** The user's tap: opens the APK link in the browser. Returns false if there is nothing to open. */
-    fun openDownload(): Boolean {
-        val release = (status.value as? Status.Available)?.release ?: return false
-        val url = release.publicApkUrls().firstOrNull()
-            ?: (FleetPublisher.TUNNEL_APK_MIRROR + "/" + release.sha256).takeIf { inFleet() }
-            ?: return false
-        return runCatching {
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        }.isSuccess
+    suspend fun installUpdate(): String? {
+        val release = (status.value as? Status.Available)?.release ?: return "Обновление недоступно"
+        return installer.install(release) { file ->
+            val archive = runCatching { context.packageManager.getPackageArchiveInfo(file.absolutePath, signingFlags()) }.getOrNull()
+            val expectedSigner = ownSigner()
+            if (archive == null || archive.packageName != context.packageName || versionCodeOf(archive) != release.versionCode ||
+                expectedSigner.isEmpty() || signerOf(archive) != expectedSigner
+            ) return@install "APK не совпадает с установленной Paramnezia"
+            val allowed = context.packageManager.canRequestPackageInstalls()
+            val intent = if (allowed) {
+                val uri = ShareProvider.updateUri(context, file)
+                Intent(Intent.ACTION_VIEW).setDataAndType(uri, ShareProvider.APK_TYPE)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    .apply { clipData = ClipData.newRawUri("Paramnezia", uri) }
+            } else {
+                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.fromParts("package", context.packageName, null))
+            }
+            runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.fold(
+                onSuccess = { if (allowed) null else "Разрешите установку для Paramnezia, вернитесь и нажмите «Установить»" },
+                onFailure = { "Не удалось открыть установку Android" },
+            )
+        }
     }
 
     @Suppress("DEPRECATION")
+    private fun signingFlags(): Int =
+        if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+
+    @Suppress("DEPRECATION")
+    private fun signerOf(info: PackageInfo): String {
+        val sig = if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners?.singleOrNull()
+        else info.signatures?.singleOrNull()
+        return sig?.let {
+            MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).joinToString("") { byte -> "%02x".format(byte) }
+        }.orEmpty()
+    }
+
     private fun ownSigner(): String = runCatching {
-        val pm = context.packageManager
-        val sig = if (Build.VERSION.SDK_INT >= 28) {
-            pm.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES).signingInfo?.apkContentsSigners?.firstOrNull()
-        } else {
-            pm.getPackageInfo(context.packageName, PackageManager.GET_SIGNATURES).signatures?.firstOrNull()
-        } ?: return@runCatching ""
-        MessageDigest.getInstance("SHA-256").digest(sig.toByteArray()).joinToString("") { "%02x".format(it) }
+        signerOf(context.packageManager.getPackageInfo(context.packageName, signingFlags()))
     }.getOrDefault("")
 
     private companion object {

@@ -8,10 +8,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,10 +29,12 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.ui.unit.sp
+import net.paramnezia.app.platform.UpdateInstaller
+import net.paramnezia.core.ota.Release
 import net.paramnezia.app.App
 import net.paramnezia.app.data.UiMode
 import net.paramnezia.tunnel.TunnelRuntime
+import net.paramnezia.app.ota.Updater
 
 /**
  * One button for follower devices: servers, routing, updates and failover are handled by the fleet.
@@ -36,11 +42,42 @@ import net.paramnezia.tunnel.TunnelRuntime
  */
 @OptIn(ExperimentalFoundationApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
+fun SimpleScreen(
+    app: App,
+    modifier: Modifier,
+    onConnect: () -> Unit,
+    backHandler: @Composable (Boolean, () -> Unit) -> Unit = { _, _ -> },
+) {
     val tunnel by TunnelRuntime.state.collectAsState()
     var askFull by remember { mutableStateOf(false) }
     var details by remember { mutableStateOf(false) }
+    var serverList by remember { mutableStateOf(false) }
+    var selectedServer by remember { mutableStateOf<String?>(null) }
     val servers = rememberServerCount(app)
+    backHandler(serverList) {
+        if (selectedServer != null) selectedServer = null else serverList = false
+    }
+    selectedServer?.let { id ->
+        ServerScreen(app, id, modifier) { selectedServer = null }
+        return
+    }
+    if (serverList) {
+        val state by app.repo.state.collectAsState()
+        val entries = remember(state.profiles, state.fleet?.manifest) { app.insights.views() }
+        Column(
+            modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Space.M),
+        ) {
+            ServerHeader("Серверы", null, onBack = { serverList = false })
+            if (entries.isEmpty()) Text("Серверов пока нет")
+            else Group {
+                entries.forEach { server ->
+                    GroupRow(server.name, subtitle = server.endpoint, badge = server.role, icon = Glyph.Server,
+                        onClick = { selectedServer = server.id }, trailing = { Icon(PnIcons.ChevronRight, null) })
+                }
+            }
+        }
+        return
+    }
     val health by TunnelRuntime.health.collectAsState()
     val p = protection(tunnel, servers, health)
     val platform = LocalUiPlatform.current
@@ -52,8 +89,9 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally) {
         Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
             Wordmark(Modifier.weight(1f).combinedClickable(onClick = {}, onLongClick = { askFull = true }))
-            UpdateBadge(app)
+            UpdateAction(app.updater)
         }
+        if (servers > 0) TextButton(onClick = { serverList = true }) { Text("Серверы") }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             val button = buttonFor(maxHeight, maxWidth, 232.dp)
             if (p == Protection.NO_SERVER) {
@@ -78,7 +116,14 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
     }
 
     if (details) {
-        androidx.compose.material3.ModalBottomSheet(onDismissRequest = { details = false }) { DetailsSheet(app, tunnel) }
+        androidx.compose.material3.ModalBottomSheet(onDismissRequest = { details = false }) {
+            if (app.fleet.stored != null) {
+                androidx.compose.material3.TextButton(onClick = { details = false; paste() }) {
+                    Text("Вставить обновление семьи")
+                }
+            }
+            DetailsSheet(app, tunnel)
+        }
     }
 
     if (askFull) {
@@ -89,5 +134,44 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
             confirmButton = { TextButton(onClick = { askFull = false; app.repo.update { it.copy(uiMode = UiMode.FULL) } }) { Text("Показать") } },
             dismissButton = { TextButton(onClick = { askFull = false }) { Text("Отмена") } },
         )
+    }
+}
+
+
+/** The same update entry point in both modes and application settings. */
+@Composable
+fun UpdateAction(updater: Updater) {
+    val update by updater.status.collectAsState()
+    val delivery by updater.installer.state.collectAsState()
+    val checking by updater.installer.checking.collectAsState()
+    val installing by updater.installer.installing.collectAsState()
+    val notice by updater.installer.notice.collectAsState()
+    val platform = LocalUiPlatform.current
+    LaunchedEffect(notice) {
+        notice?.let {
+            if (updater.installer.dismissNotice(it)) platform.toast(it)
+        }
+    }
+    val release: Release? = (update as? Updater.Status.Available)?.release
+    val state = delivery
+    when {
+        state is UpdateInstaller.State.Downloading -> {
+            OutlinedButton(onClick = updater.installer::cancel) { Text("Отмена · ${state.percent}%", maxLines = 1) }
+        }
+        release != null && (state as? UpdateInstaller.State.Ready)?.release == release -> {
+            Button(enabled = !installing, onClick = { updater.installer.startInstall(updater::installUpdate) }) {
+                Text(if (installing) "Проверяем файл…" else "Установить", maxLines = 1)
+            }
+        }
+        release != null -> {
+            Button(enabled = !installing, onClick = updater::downloadUpdate) {
+                Text(if (state is UpdateInstaller.State.Failed) "Повторить загрузку" else "Обновить ${release.versionName}", maxLines = 1)
+            }
+        }
+        else -> {
+            OutlinedButton(enabled = !checking, onClick = { updater.installer.check(updater::checkForUpdate) }) {
+                Text(if (checking) "Проверяем…" else "Обновления", maxLines = 1)
+            }
+        }
     }
 }

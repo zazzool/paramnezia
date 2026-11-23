@@ -27,7 +27,14 @@ class ServerManager(private val hostKeys: HostKeyStore) {
     )
 
     /** The ports a server answers on and its IPv6 address, if clients can reach it there. */
-    data class Ports(val main: Int, val alt: List<Int>, val ipv6: String?)
+    data class Ports(
+        val main: Int,
+        val alt: List<Int>,
+        val ipv6: String?,
+        val ipv4: String?,
+        val publicKey: String?,
+        val tunnelIpv6: Boolean,
+    )
 
     enum class Step { CHECK, DOCKER, IMAGE, RUN, CONFIGURE, START, FIREWALL, DONE }
 
@@ -80,6 +87,7 @@ class ServerManager(private val hostKeys: HostKeyStore) {
             }
             r.error?.let { throw SshException(it, "Install failed: $it\n${r.stderr.takeLast(2000)}") }
             if (r.exitCode != 0) throw SshException("install_failed", "Install failed (${r.exitCode}): ${r.stderr.takeLast(2000)}")
+            runCatching { enableIpv6(ssh) }
             // Throughput tuning is a bonus: a server without it still works.
             runCatching { ssh.run(script("tune.sh"), env = mapOf("CONTAINER" to Protocol.AWG.amneziaContainer), timeoutMs = 60_000) }
         }
@@ -200,8 +208,16 @@ class ServerManager(private val hostKeys: HostKeyStore) {
             r.error?.let { throw SshException(it, "Ports: $it ${r.stderr.takeLast(500)}") }
             val main = r.results["port"]?.toIntOrNull() ?: throw SshException("ports_failed", "Ports: ${r.stderr.takeLast(500)}")
             val alt = r.results["alt_ports"].orEmpty().split(',').mapNotNull { it.trim().toIntOrNull() }.filter { it != main }
-            Ports(main, alt, r.results["ipv6"]?.trim()?.takeIf { ':' in it })
+            Ports(main, alt, r.results["ipv6"]?.trim()?.takeIf { ':' in it },
+                r.results["ipv4"], r.results["server_pub"], r.results["tunnel_ipv6"] == "1")
         }
+
+    fun enableIpv6(creds: SshCredentials) = SshConnection.open(creds, hostKeys).use { enableIpv6(it) }
+
+    private fun enableIpv6(ssh: SshConnection) {
+        val result = ssh.run(script("ipv6.sh"), env = mapOf("CONTAINER" to Protocol.AWG.amneziaContainer), timeoutMs = 60_000)
+        if (result.exitCode != 0) throw SshException("ipv6_failed", result.stderr.takeLast(500))
+    }
 
     /** What the server is and does right now (info.sh); read-only, one connection, a second or two. */
     fun status(creds: SshCredentials, protocol: Protocol = Protocol.AWG): ServerStatus =
@@ -266,7 +282,7 @@ class ServerManager(private val hostKeys: HostKeyStore) {
         }
 
         internal fun script(name: String): String =
-            ServerManager::class.java.getResourceAsStream("/net/paramnezia/deploy/$name")!!.bufferedReader().use { it.readText().replace("\r\n", "\n") }
+            ServerManager::class.java.getResourceAsStream("/net/paramnezia/deploy/$name")!!.bufferedReader().readText()
 
         /** `10.8.1.0` → `10.8.1.1`: the server takes the first address of its subnet. */
         internal fun firstHost(subnet: String): String {
@@ -294,16 +310,14 @@ class ServerManager(private val hostKeys: HostKeyStore) {
             awg.remove(AwgParam.CONTENT_PADDING_ADDITION)
             val port = lines["listenport"]?.toIntOrNull() ?: throw SshException("bad_server_config", "Server config has no ListenPort")
             val isAwg3 = AwgParam.HEADER_PROTECTION_KEY in awg
+            val endpointHost = if (host.contains(':')) "[$host]" else host
             val ip = results["client_ip"] ?: throw SshException("bad_server_reply", "Server did not return a client address")
-            val ipv6 = results["client_ipv6"]?.let { IpPrefix.parse("$it/128") }
-            val resolvers = if (ipv6 != null && dns == listOf("1.1.1.1", "1.0.0.1")) {
-                listOf("2606:4700:4700::1111", "2606:4700:4700::1001") + dns
-            } else dns
             val tunnel = TunnelConfig(
                 TunnelConfig.Interface(
                     privateKey = clientPrivateKey,
-                    addresses = listOf(IpPrefix.parse("$ip/32")) + listOfNotNull(ipv6),
-                    dns = resolvers,
+                    addresses = listOf(IpPrefix.parse("$ip/32")) +
+                        listOfNotNull(results["client_ipv6"]?.let(IpPrefix::parse)),
+                    dns = dns,
                     mtu = mtu,
                     awg = awg,
                 ),
@@ -312,7 +326,7 @@ class ServerManager(private val hostKeys: HostKeyStore) {
                         publicKey = WgKey.fromBase64(results["server_pub"] ?: throw SshException("bad_server_reply", "No server key")),
                         presharedKey = results["psk"]?.takeIf { it.isNotBlank() }?.let(WgKey::fromBase64),
                         allowedIps = listOf(IpPrefix.ANY_V4, IpPrefix.ANY_V6),
-                        endpoint = net.paramnezia.core.config.Uapi.formatEndpoint(host, port),
+                        endpoint = "$endpointHost:$port",
                         // A jittered keepalive is an AmneziaWG 3 feature; older peers need a plain number.
                         persistentKeepalive = keepalive ?: if (isAwg3) "25-35" else "25",
                     ),

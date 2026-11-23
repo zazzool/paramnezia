@@ -34,6 +34,8 @@ data class FleetManifest(
     val grants: List<SealedGrant> = emptyList(),
     /** The owner's own device (WireGuard public key), so co-admins cannot remove it. */
     val ownerDevice: String? = null,
+    /** Unique identifier of the owner's last deliberate switch to a new endpoint. */
+    val endpointRotation: String? = null,
 ) {
     fun deviceFor(publicKey: WgKey): FleetDevice? = devices.firstOrNull { it.publicKey == publicKey.toBase64() }
 }
@@ -71,7 +73,9 @@ data class FleetServer(
     val altPorts: List<Int> = emptyList(),
     /** Other addresses of the same server, typically its IPv6 address (since 2.16). */
     val altHosts: List<String> = emptyList(),
-    val ipv6Tunnel: Boolean = false,
+    val tunnelIpv6: Boolean = false,
+    /** Addresses assigned on this VPS when a pre-existing peer owns the family's usual address. */
+    val peerAddresses: Map<String, String> = emptyMap(),
 )
 
 @Serializable
@@ -93,17 +97,14 @@ data class FleetDevice(
  */
 fun FleetServer.tunnelFor(device: FleetDevice, privateKey: WgKey, psk: WgKey? = null): TunnelConfig {
     require(privateKey.publicKey().toBase64() == device.publicKey) { "Key does not belong to ${device.name}" }
+    val address = peerAddresses[device.publicKey] ?: device.address
     val awgParams = LinkedHashMap<AwgParam, String>()
     for ((k, v) in awg) AwgParam.fromConfKey(k)?.let { awgParams[it] = v }
-    val address = IpPrefix.parse(device.address)
-    val v6 = if (ipv6Tunnel && !address.isV6) {
-        val prefix = IpPrefix.parse("fd42:706e:1::/64")
-        IpPrefix.of(true, prefix.network + address.network, 128)
-    } else null
     return TunnelConfig(
         TunnelConfig.Interface(
             privateKey = privateKey,
-            addresses = listOf(address) + listOfNotNull(v6),
+            addresses = listOf(IpPrefix.parse(address)) +
+                listOfNotNull(if (tunnelIpv6) managedIpv6Address(address) else null),
             dns = dns,
             mtu = mtu,
             awg = awgParams,
@@ -113,18 +114,27 @@ fun FleetServer.tunnelFor(device: FleetDevice, privateKey: WgKey, psk: WgKey? = 
                 publicKey = WgKey.fromBase64(publicKey),
                 presharedKey = (if (device.ownPsk) psk else null) ?: presharedKey?.let(WgKey::fromBase64),
                 allowedIps = listOf(IpPrefix.ANY_V4, IpPrefix.ANY_V6),
-                endpoint = net.paramnezia.core.config.Uapi.formatEndpoint(host, port),
+                endpoint = if (host.contains(':')) "[$host]:$port" else "$host:$port",
                 persistentKeepalive = keepalive,
             ),
         ),
     )
 }
 
+/** Managed servers derive a unique IPv6 host address from each peer's IPv4 host address. */
+fun managedIpv6Address(address: String): IpPrefix? {
+    val ipv4 = IpPrefix.parse(address.substringBefore('/'))
+    if (ipv4.isV6) return null
+    val value = ipv4.network.toLong()
+    return IpPrefix.parse("fd38:706e:1::${(value ushr 16).toString(16)}:${(value and 0xffff).toString(16)}/128")
+}
+
 /** Turns a server's client config (from a deploy or an imported key) into a fleet server entry. */
 fun fleetServerOf(id: String, name: String, tunnel: TunnelConfig): FleetServer {
     val peer = tunnel.peers.first()
     val endpoint = peer.endpoint ?: throw ConfigException("Server config has no endpoint")
-    val (host, port) = net.paramnezia.core.config.Uapi.splitEndpoint(endpoint)
+    val host = endpoint.substringBeforeLast(':').removePrefix("[").removeSuffix("]")
+    val port = endpoint.substringAfterLast(':').toInt()
     return FleetServer(
         id = id, name = name, host = host, port = port,
         publicKey = peer.publicKey.toBase64(),
@@ -133,6 +143,6 @@ fun fleetServerOf(id: String, name: String, tunnel: TunnelConfig): FleetServer {
         dns = tunnel.iface.dns.ifEmpty { listOf("1.1.1.1", "1.0.0.1") },
         mtu = tunnel.iface.mtu ?: 1280,
         keepalive = peer.persistentKeepalive ?: "25",
-        ipv6Tunnel = tunnel.iface.addresses.any { it.isV6 },
+        tunnelIpv6 = tunnel.iface.addresses.any { it.isV6 && IpPrefix.parse("fd38:706e:1::/64").contains(it) },
     )
 }

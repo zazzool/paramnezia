@@ -205,7 +205,10 @@ class Cloud(
                     val ip = (if (':' in old.host) instance.ipv6 ?: instance.ipv4 else instance.ipv4 ?: instance.ipv6)
                         ?.let(Uapi::hostAddress) ?: continue
                     if (ref.host?.let(Uapi::hostAddress) == ip) continue
-                    fleet.moveServerAddress(id, ip, expectedHost = old.host)
+                    val server = fleet.manifest()?.servers?.firstOrNull { it.id == id } ?: continue
+                    if (!fleet.followsAddress(id) || Uapi.hostAddress(server.host) != Uapi.hostAddress(old.host)) continue
+                    fleet.editServer(id, server.name, Uapi.formatEndpoint(ip, server.port), sshHost = ip,
+                        confirmRecovery = true, expectedServer = server)
                     if (fleet.accessTo(id)?.host == ip) updateServer(ref) { it.copy(host = ip) }
                 } catch (e: CancellationException) {
                     throw e

@@ -27,6 +27,13 @@ case "$CLIENT_PSK" in
   *) [ "${#CLIENT_PSK}" -eq 44 ] || { echo "::error::bad_psk"; exit 1; } ;;
 esac
 
+v6_address() {
+  local a b c d
+  IFS=. read -r a b c d <<< "$1"
+  printf 'fd38:706e:1::%x:%x/128' "$(( (a<<8) + b ))" "$(( (c<<8) + d ))"
+}
+v6_enabled() { grep -q '^Address = .*fd38:706e:1::1/64' "$CONF"; }
+
 if grep -q "^PublicKey = $CLIENT_PUB\$" "$CONF"; then
   ip=$(awk -v k="$CLIENT_PUB" '$1=="PublicKey"&&$3==k{f=1;next} f&&$1=="AllowedIPs"{split($3,a,"/");print a[1];exit}' "$CONF")
   # A peer that has to have its own key (a family device) but still has another: give it the right one.
@@ -57,7 +64,9 @@ EOF
   ip="$(( (n>>24)&255 )).$(( (n>>16)&255 )).$(( (n>>8)&255 )).$(( n&255 ))"
   [ -n "$CLIENT_IP" ] && ip=$CLIENT_IP
   psk=${CLIENT_PSK:-$(cat wireguard_psk.key)}
-  printf '[Peer]\nPublicKey = %s\nPresharedKey = %s\nAllowedIPs = %s/32\n\n' "$CLIENT_PUB" "$psk" "$ip" >> "$CONF"
+  allowed="$ip/32"
+  if v6_enabled; then allowed="$allowed, $(v6_address "$ip")"; fi
+  printf '[Peer]\nPublicKey = %s\nPresharedKey = %s\nAllowedIPs = %s\n\n' "$CLIENT_PUB" "$psk" "$allowed" >> "$CONF"
   "$BIN" syncconf "$IFACE" <("$BIN-quick" strip "/opt/amnezia/awg/$CONF")
 
   [ -s clientsTable ] || echo "[]" > clientsTable
@@ -74,25 +83,8 @@ EOF
   mv clientsTable.new clientsTable
 fi
 
-# Paramnezia derives a unique IPv6 address from each peer's stable IPv4 address.
-# Only advertise it if forwarding and the installed container NAT rule are active.
-if grep -q '^Address = fd42:706e:1::1/64$' "$CONF" &&
-   [ "$(cat /proc/sys/net/ipv6/conf/all/forwarding)" = 1 ] &&
-   ip6tables -t nat -S POSTROUTING 2>/dev/null | grep -q 'fd42:706e:1::/64 .*MASQUERADE'; then
-  IFS=. read -r a b c d <<< "$ip"
-  ip6=$(printf 'fd42:706e:1::%x:%x' "$((a * 256 + b))" "$((c * 256 + d))")
-  if ! awk -v k="$CLIENT_PUB" -v v="$ip6/128" '
-      /^\[Peer\]/{f=0} $1=="PublicKey"&&$3==k{f=1} f&&$1=="AllowedIPs"&&index($0,v){found=1}
-      END{exit !found}' "$CONF"; then
-    awk -v k="$CLIENT_PUB" -v v="$ip6/128" '
-      /^\[Peer\]/{f=0} $1=="PublicKey"&&$3==k{f=1}
-      f&&$1=="AllowedIPs"{print $0 ", " v; next} {print}' "$CONF" > "$CONF.new" && mv "$CONF.new" "$CONF"
-    "$BIN" syncconf "$IFACE" <("$BIN-quick" strip "/opt/amnezia/awg/$CONF")
-  fi
-  echo "::result::client_ipv6=$ip6"
-fi
-
 echo "::result::client_ip=$ip"
+if v6_enabled; then echo "::result::client_ipv6=$(v6_address "$ip")"; fi
 echo "::result::server_pub=$(cat wireguard_server_public_key.key)"
 # The key of this very peer: its own, or the shared one.
 peer_psk=$(awk -v k="$CLIENT_PUB" '$1=="[Peer]"{f=0} $1=="PublicKey"&&$3==k{f=1} f&&$1=="PresharedKey"{print $3;exit}' "$CONF")

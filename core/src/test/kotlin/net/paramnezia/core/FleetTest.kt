@@ -33,8 +33,8 @@ class FleetTest {
         val outerOnly = v6.tunnelFor(member, key)
         assertEquals("[2001:db8::42]:41000", outerOnly.peers.single().endpoint)
         assertEquals(listOf("10.8.1.2/32"), outerOnly.iface.addresses.map { it.toString() })
-        val dual = v6.copy(ipv6Tunnel = true).tunnelFor(member, key)
-        assertEquals(listOf("10.8.1.2/32", "fd42:706e:1::a08:102/128"), dual.iface.addresses.map { it.toString() })
+        val dual = v6.copy(tunnelIpv6 = true).tunnelFor(member, key)
+        assertEquals(listOf(outerOnly.iface.addresses.first(), net.paramnezia.core.fleet.managedIpv6Address(member.address)), dual.iface.addresses)
     }
 
     @Test

@@ -35,6 +35,21 @@ class ServerConfigTest {
     }
 
     @Test
+    fun dualStackClientConfigUsesHostRoutesAndBracketedEndpoint() {
+        val key = WgKey.generatePrivate()
+        val ipv6 = net.paramnezia.core.fleet.managedIpv6Address("10.8.1.7/32")!!
+        val t = ServerManager.clientConfig(
+            "ListenPort = 41234",
+            mapOf("client_ip" to "10.8.1.7", "client_ipv6" to ipv6.toString(),
+                "server_pub" to key.publicKey().toBase64()),
+            key, "2001:db8::5", listOf("1.1.1.1"), 1280, null,
+        )
+        assertEquals(listOf("10.8.1.7/32", "fd38:706e:1::a08:107/128"), t.iface.addresses.map { it.toString() })
+        assertEquals("[2001:db8::5]:41234", t.peers.single().endpoint)
+        assertEquals(listOf("0.0.0.0/0", "::/0"), t.peers.single().allowedIps.map { it.toString() })
+    }
+
+    @Test
     fun serversNoLongerShareOneSignature() {
         val seen = (1..40).map { ObfuscationProfile.AWG_3.generate() }
         for (p in seen) {

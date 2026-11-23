@@ -23,8 +23,6 @@ import net.paramnezia.app.net.Visibility
 import net.paramnezia.app.ui.LocalUiPlatform
 import net.paramnezia.app.ui.PnTheme
 import net.paramnezia.app.ui.ThemePicker
-import net.paramnezia.app.ui.UpdateCard
-import net.paramnezia.core.ota.Release
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -73,7 +71,6 @@ object Screenshots {
             dark = d
             renderAll(out)
             picker(out)
-            updates(out)
         }
         println("screenshots in ${out.absolutePath}")
     }
@@ -111,7 +108,7 @@ object Screenshots {
     /** «Раздать по Wi-Fi» with a TV asking for settings. */
     private fun lanShare(out: File) {
         val home = Files.createTempDirectory("pn-shot").toFile()
-        val app = App(StateFile(home), ServiceClient("""\\.\pipe\paramnezia-none"""), File(home, "cache").apply { mkdirs() }, "DESKTOP-PC", {})
+        val app = App(StateFile(home), ServiceClient("""\\.\pipe\paramnezia-none"""), File(home, "cache").apply { mkdirs() }, "DESKTOP-PC")
         app.repo.update { adminState() }
         val apk = LanFile("paramnezia-2.11.0.apk", LanFile.APK_MIME, 6_700_000, "2.11.0") { ByteArray(0).inputStream() }
         app.lan.preview(LanHub.Sharing(
@@ -139,7 +136,7 @@ object Screenshots {
     private fun shot(out: File, name: String, state: AppState, tab: Tab, prepare: (App) -> Unit = {}) {
         TunnelRuntime.set(TunnelState.Down)
         val home = Files.createTempDirectory("pn-shot").toFile()
-        val app = App(StateFile(home), ServiceClient("""\\.\pipe\paramnezia-none"""), File(home, "cache").apply { mkdirs() }, "DESKTOP-PC", {})
+        val app = App(StateFile(home), ServiceClient("""\\.\pipe\paramnezia-none"""), File(home, "cache").apply { mkdirs() }, "DESKTOP-PC")
         app.repo.update { state }
         if (state.cloud.tokens.isNotEmpty()) writeCatalogs(File(home, "cache"))
         prepare(app)
@@ -176,25 +173,6 @@ object Screenshots {
         repeat(10) { scene.render(it * 50_000_000L) }
         val image = scene.render(600_000_000L)
         File(out, if (dark) "windows-dark-theme-picker.png" else "windows-theme-picker.png").writeBytes(image.encodeToData(EncodedImageFormat.PNG)!!.bytes)
-        scene.close()
-    }
-
-    private fun updates(out: File) {
-        val release = Release("net.paramnezia.windows", 26, "2.18.3", 0, "1".repeat(64), 45_000_000,
-            notes = "- Проверка обновлений повторяется после сбоя связи.\n- Можно прочитать список изменений перед загрузкой.")
-        val scene = ImageComposeScene(width = (W * SCALE).toInt(), height = (375 * SCALE).toInt(), density = Density(SCALE)) {
-            PnTheme(dark) {
-                Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
-                    Column(Modifier.padding(16.dp)) {
-                        UpdateCard("2.18.2", true, release, "22.11.2026, 11:20", false, null, {}, {})
-                    }
-                }
-            }
-        }
-        repeat(10) { scene.render(it * 50_000_000L) }
-        val image = scene.render(600_000_000L)
-        File(out, if (dark) "windows-dark-updates.png" else "windows-updates.png")
-            .writeBytes(image.encodeToData(EncodedImageFormat.PNG)!!.bytes)
         scene.close()
     }
 

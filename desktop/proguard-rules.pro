@@ -28,6 +28,16 @@
 -keepnames class kotlinx.coroutines.CoroutineExceptionHandler
 
 -dontwarn kotlinx.coroutines.debug.**
+# OkHttp detects these optional TLS adapters at runtime. Windows uses the bundled JDK's JSSE.
+-dontwarn android.net.http.X509TrustManagerExtensions
+-dontwarn android.net.ssl.SSLSockets
+-dontwarn android.os.Build
+-dontwarn android.os.Build$VERSION
+-dontwarn android.security.NetworkSecurityPolicy
+-dontwarn android.util.Log
+-dontwarn org.bouncycastle.jsse.**
+-dontwarn org.conscrypt.**
+-dontwarn org.openjsse.**
 -dontnote **
 # Shrink only: obfuscation and optimisation save little here and make field reports unreadable.
 -dontobfuscate

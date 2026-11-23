@@ -59,12 +59,14 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
             runCatching { block() }
                 .onSuccess {
                     toast(when (it) {
+                        Servers.Imported.UpdatedFleet -> "Настройки семьи обновлены"
                         Servers.Imported.JoinedFleet -> "Устройство добавлено в семью"
+                        is Servers.Imported.FamilyServer -> "Сервер семьи: ${it.name}"
                         is Servers.Imported.Profiles -> "Добавлено: ${it.names.joinToString()}"
                     })
                     text = ""; manual = false
                     onDone()
-                    if (connectAfter) onConnect()
+                    if (connectAfter && it !is Servers.Imported.FamilyServer) onConnect()
                 }
                 .onFailure {
                     val msg = it.message ?: "Не удалось импортировать"
@@ -137,7 +139,7 @@ fun AddScreen(app: App, modifier: Modifier, pending: String?, onConsumed: () -> 
 
         // 2. An admin: a server of their own, bought in the app or an existing VPS.
         Spacer(Modifier.height(Space.S))
-        SectionTitle("Свой сервер")
+        SectionTitle(if (app.fleet.isOwner) "Резервный сервер семьи" else "Свой сервер")
         DeployCard(app, toast, onDone)
         Spacer(Modifier.height(Space.M))
     }

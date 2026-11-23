@@ -33,6 +33,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import net.paramnezia.app.App
+import net.paramnezia.app.BuildConfig
 import net.paramnezia.app.data.BatteryMode
 import net.paramnezia.app.data.Settings
 import net.paramnezia.app.data.UiMode
@@ -117,7 +118,14 @@ fun SettingsScreen(app: App, modifier: Modifier, toast: (String) -> Unit) {
         }
 
         HorizontalDivider()
-        AppUpdates(app)
+        Text("Обновления", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        if (app.updater.enabled) {
+            Text("Paramnezia скачает и проверит обновление. Установку нужно подтвердить в Android.", style = MaterialTheme.typography.bodySmall)
+            UpdateAction(app.updater)
+        } else {
+            Text("Эта сборка без ключа релизов: проверка обновлений выключена.", style = MaterialTheme.typography.bodySmall)
+        }
+        Text("Версия ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", style = MaterialTheme.typography.bodySmall)
     }
 }
 
