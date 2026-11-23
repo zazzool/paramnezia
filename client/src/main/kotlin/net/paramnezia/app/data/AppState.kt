@@ -15,6 +15,7 @@ data class AppState(
     val hostKeys: Map<String, String> = emptyMap(),
     /** Newest verified app release (SignedRelease wire form). */
     val release: String? = null,
+    val windowsRelease: String? = null,
     /** When release.json was last read (Updater.checkIfDue). */
     val lastUpdateCheck: Long = 0,
     /** The user wants the tunnel up (restored after an update). */
@@ -212,10 +213,11 @@ data class CloudServerRef(
     val provider: String,
     val serverId: String,
     val name: String,
-    /** Public IPv4, once known. */
+    /** Last public address observed from the provider. */
     val host: String? = null,
     val createdAt: Long,
     val price: String = "",
+    val fleetServerId: String? = null,
 )
 
 @Serializable

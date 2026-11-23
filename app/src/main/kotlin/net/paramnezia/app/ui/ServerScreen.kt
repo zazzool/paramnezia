@@ -117,6 +117,8 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
             it.host.equals(ssh.host, ignoreCase = true) && it.port == ssh.port
         }
     } == true
+    val canMove = canEditFamily && app.fleet.accessTo(serverId) != null
+    var moving by remember(serverId) { mutableStateOf(false) }
     var editing by remember(serverId) { mutableStateOf(false) }
     var deleting by remember(serverId) { mutableStateOf(false) }
     var sharing by remember(serverId) { mutableStateOf(false) }
@@ -153,6 +155,32 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
                 }) { Text("Сохранить") }
             },
             dismissButton = { TextButton(onClick = { editing = false }) { Text("Отмена") } },
+        )
+    }
+    if (moving) {
+        var address by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { if (!busy) moving = false },
+            title = { Text("У сервера новый IP") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(Space.S)) {
+                    Text("Укажите новый адрес того же сервера. После проверки SSH-ключа семья получит адрес при синхронизации.")
+                    if (repoState.fleet?.gistId == null && family.size == 1) {
+                        Text("Если старый адрес уже недоступен, участникам нужен резервный канал, настроенный заранее.")
+                    }
+                    OutlinedTextField(address, { address = it }, singleLine = true, label = { Text("IPv4, IPv6 или домен") })
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = !busy && address.isNotBlank(), onClick = {
+                    manage {
+                        app.fleet.moveServerAddress(serverId, address)
+                        moving = false
+                        platform.toast("Новый адрес сохранён")
+                    }
+                }) { Text(if (busy) "Проверяем…" else "Обновить адрес") }
+            },
+            dismissButton = { TextButton(enabled = !busy, onClick = { moving = false }) { Text("Отмена") } },
         )
     }
     if (deleting) AlertDialog(
@@ -196,7 +224,7 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
         modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Space.M, vertical = Space.S),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Header(view.name, listOfNotNull(view.endpoint?.substringBeforeLast(':'), view.role).joinToString(" · "), onBack) {
+        Header(view.name, listOfNotNull(view.endpoint?.let { net.paramnezia.core.config.Uapi.splitEndpoint(it).first }, view.role).joinToString(" · "), onBack) {
             if (view.ssh != null) IconButton(enabled = !loading, onClick = { reload++ }) { Icon(PnIcons.Refresh, "Обновить сведения сервера") }
         }
 
@@ -222,6 +250,7 @@ fun ServerScreen(app: App, serverId: String, modifier: Modifier, onBack: () -> U
             if (local != null || canEditFamily) {
                 GroupRow("Редактировать", icon = Glyph.Server, onClick = { if (!busy) editing = true })
             }
+            if (canMove) GroupRow("У сервера новый IP", icon = Glyph.Server, onClick = { if (!busy) moving = true })
             if (canShare) GroupRow("Добавить в семью", icon = Glyph.Server, onClick = { if (!busy) sharing = true })
             if (local != null || (canEditFamily && family.size > 1)) {
                 GroupRow("Удалить из списка", icon = Glyph.Server, onClick = { if (!busy) deleting = true })

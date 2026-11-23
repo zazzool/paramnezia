@@ -102,7 +102,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         // Admin: the daily server check runs while the admin is looking at the app, not in the background.
         app.scope.launch { app.healServers() }
-        fleetSync = app.scope.launch { app.fleet.syncWhileVisible() }
+        fleetSync = app.scope.launch { app.fleet.syncWhileVisible { app.cloud.syncFleetAddresses(app.fleet) } }
     }
 
     override fun onStop() {

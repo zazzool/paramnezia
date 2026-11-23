@@ -225,7 +225,7 @@ object TunnelRuntime {
             for (la in lp.linkAddresses) {
                 IpPrefix.parseOrNull("${la.address.hostAddress?.substringBefore('%')}/${la.prefixLength}")?.let(prefixes::add)
             }
-            for (d in lp.dnsServers) if (d is Inet4Address) d.hostAddress?.let(dns::add)
+            for (d in lp.dnsServers) d.hostAddress?.let(dns::add)
         }
         LocalNetwork(RoutePlanner.extraLan(prefixes), dns.distinct())
     }.getOrDefault(LocalNetwork(emptyList(), emptyList()))

@@ -24,8 +24,8 @@ import java.util.concurrent.atomic.AtomicLong
  */
 object LinkProbe {
     /** Hosts that answer on 53 and 443 everywhere and are never in the "Russian direct" lists. */
-    val TCP_TARGETS = listOf("1.1.1.1", "8.8.8.8", "9.9.9.9")
-    val DNS_TARGETS = listOf("1.1.1.1", "8.8.8.8", "9.9.9.9")
+    val TCP_TARGETS = listOf("1.1.1.1", "2606:4700:4700::1111", "8.8.8.8")
+    val DNS_TARGETS = TCP_TARGETS
 
     /** Makes the probe's sockets; override to bind them to a network. */
     open class Sockets {
@@ -38,7 +38,7 @@ object LinkProbe {
 
     /** Round trip of the first answer in ms, or null when nothing came back within [timeoutMs]. */
     fun run(dns: List<String>, tcp: List<String> = TCP_TARGETS, timeoutMs: Long = 2_500, sockets: Sockets = Sockets()): Long? = runAt(
-        dns.mapNotNull(::literal).filter { it.address.size == 4 }.distinct().take(4).map { InetSocketAddress(it, 53) },
+        dns.mapNotNull(::literal).distinct().take(4).map { InetSocketAddress(it, 53) },
         tcp.mapNotNull(::literal).distinct().take(3).map { InetSocketAddress(it, 443) },
         timeoutMs, sockets,
     )

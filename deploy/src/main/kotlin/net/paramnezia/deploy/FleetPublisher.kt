@@ -15,7 +15,10 @@ import java.net.URL
  * Puts a signed fleet manifest where devices look for it. Mirrors are untrusted by design: the
  * manifest is encrypted and signed, so any static host will do.
  */
-class FleetPublisher(private val hostKeys: HostKeyStore) {
+class FleetPublisher(
+    private val hostKeys: HostKeyStore,
+    private val directConnection: ((URL) -> HttpURLConnection)? = null,
+) {
 
     /** In-tunnel URL every Paramnezia server answers on (the server is always .1 of the subnet). */
     val tunnelUrl = TUNNEL_FLEET_URL
@@ -100,7 +103,13 @@ class FleetPublisher(private val hostKeys: HostKeyStore) {
             putJsonObject("files") { putJsonObject("fleet.json") { put("content", manifest) } }
         }.toString()
         if (gistId != null) {
-            val (code, text) = github(token, "https://api.github.com/gists/$gistId", "PATCH", body)
+            val url = "https://api.github.com/gists/$gistId"
+            val (code, text) = try {
+                github(token, url, "PATCH", body)
+            } catch (e: java.io.IOException) {
+                val direct = directConnection ?: throw e
+                github(token, url, "PATCH", body, direct)
+            }
             if (code in 200..299) return gistOf(text) ?: Gist(gistId, "-")
             if (code != 404) throw SshException("gist_failed", gistError(code))
         }
@@ -120,8 +129,15 @@ class FleetPublisher(private val hostKeys: HostKeyStore) {
         else -> "GitHub ответил $code"
     }
 
-    private fun github(token: String, url: String, method: String, body: String): Pair<Int, String> {
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+    private fun github(
+        token: String,
+        url: String,
+        method: String,
+        body: String,
+        open: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection },
+    ): Pair<Int, String> {
+        val conn = open(URL(url)).apply {
+            instanceFollowRedirects = false
             // Android's HttpURLConnection speaks PATCH; the desktop JDK one does not.
             runCatching { requestMethod = method }.onFailure {
                 requestMethod = "POST"

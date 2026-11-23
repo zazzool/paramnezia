@@ -124,7 +124,8 @@ class CloudzyProvider(token: String, transport: CloudHttp.Transport = CloudHttp.
             else -> CloudServer.State.PENDING
         }
         val ip = o.str("ipAddress")?.takeIf { it.isNotBlank() && it.count { c -> c == '.' } == 3 }
-        return CloudServer(id, state, ip, o.str("failureReason") ?: o.str("state").orEmpty())
+        val ipv6 = o.str("ipAddress")?.takeIf { ':' in it }
+        return CloudServer(id, state, ip, o.str("failureReason") ?: o.str("state").orEmpty(), ipv6)
     }
 
     companion object {

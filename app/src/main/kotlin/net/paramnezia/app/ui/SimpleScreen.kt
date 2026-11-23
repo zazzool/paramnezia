@@ -25,15 +25,10 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Surface
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.sp
 import net.paramnezia.app.App
 import net.paramnezia.app.data.UiMode
 import net.paramnezia.tunnel.TunnelRuntime
-import net.paramnezia.app.ota.Updater
 
 /**
  * One button for follower devices: servers, routing, updates and failover are handled by the fleet.
@@ -45,7 +40,6 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
     val tunnel by TunnelRuntime.state.collectAsState()
     var askFull by remember { mutableStateOf(false) }
     var details by remember { mutableStateOf(false) }
-    val update by app.updater.status.collectAsState()
     val servers = rememberServerCount(app)
     val health by TunnelRuntime.health.collectAsState()
     val p = protection(tunnel, servers, health)
@@ -58,11 +52,7 @@ fun SimpleScreen(app: App, modifier: Modifier, onConnect: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally) {
         Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
             Wordmark(Modifier.weight(1f).combinedClickable(onClick = {}, onLongClick = { askFull = true }))
-            (update as? Updater.Status.Available)?.let { u ->
-                Surface(shape = CircleShape, color = Brand.Violet, modifier = Modifier.clip(CircleShape).tactile { app.updater.openDownload() }) {
-                    FitText("${u.release.versionName} ↓", MaterialTheme.typography.labelLarge, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), color = Color.White)
-                }
-            }
+            UpdateBadge(app)
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             val button = buttonFor(maxHeight, maxWidth, 232.dp)

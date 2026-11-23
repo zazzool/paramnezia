@@ -52,6 +52,8 @@ if [ -n "$want" ]; then
   for b in $(bindings); do args="$args -p $b"; done
   for p in $want; do args="$args -p $p:$lp/udp"; done
   nets=$($D inspect -f '{{range $n, $_ := .NetworkSettings.Networks}}{{$n}} {{end}}' "$C")
+  primary_net=$($D inspect -f '{{.HostConfig.NetworkMode}}' "$C")
+  if [ "$primary_net" = pn-dualstack ]; then args="$args --network $primary_net"; fi
 
   $D rename "$C" "$C-pnold" >/dev/null || fail "rename_failed"
   restore() {
@@ -65,6 +67,7 @@ if [ -n "$want" ]; then
   $D run $args "$img" >/dev/null 2>&1 || restore "run_failed"
   for n in $nets; do
     [ "$n" = "bridge" ] && continue
+    [ "$n" = pn-dualstack ] && [ "$primary_net" = "$n" ] && continue
     $D network connect "$n" "$C" >/dev/null 2>&1 || true
   done
   up=""

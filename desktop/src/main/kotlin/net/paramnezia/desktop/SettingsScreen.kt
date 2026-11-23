@@ -1,5 +1,6 @@
 package net.paramnezia.desktop
 
+import net.paramnezia.app.ui.AppUpdates
 import net.paramnezia.app.ui.ScreenTitle
 import net.paramnezia.app.ui.ThemePicker
 import androidx.compose.foundation.clickable
@@ -34,11 +35,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.paramnezia.app.App
-import net.paramnezia.app.BuildConfig
 import net.paramnezia.app.data.BatteryMode
 import net.paramnezia.app.data.Settings
 import net.paramnezia.app.data.UiMode
-import net.paramnezia.app.ota.Updater
 
 /**
  * Settings on Windows: the same routing, privacy and interface choices as on Android (so a fleet
@@ -50,7 +49,6 @@ import net.paramnezia.app.ota.Updater
 fun SettingsScreen(app: App, platform: DesktopUiPlatform, modifier: Modifier, toast: (String) -> Unit, askService: Boolean = true) {
     val state by app.repo.state.collectAsState()
     val s = state.settings
-    val scope = rememberCoroutineScope()
     var autostart by remember { mutableStateOf(Autostart.enabled()) }
     var service by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
@@ -125,19 +123,7 @@ fun SettingsScreen(app: App, platform: DesktopUiPlatform, modifier: Modifier, to
         }
 
         HorizontalDivider()
-        Section("Обновления")
-        if (app.updater.enabled) {
-            Hint("Раз в 12 часов приложение проверяет, есть ли новая версия, подписанная ключом релизов. Установщик скачивает браузер по вашему нажатию.")
-            OutlinedButton(onClick = {
-                scope.launch {
-                    app.updater.check()
-                    if (app.updater.status.value is Updater.Status.Available) app.updater.openDownload() else toast("Установлена последняя версия")
-                }
-            }) { Text("Проверить обновления") }
-        } else {
-            Hint("Эта сборка без ключа релизов: проверка обновлений выключена.")
-        }
-        Text("Версия ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) для Windows", style = MaterialTheme.typography.bodySmall)
+        AppUpdates(app)
     }
 }
 

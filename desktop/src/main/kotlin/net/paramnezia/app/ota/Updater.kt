@@ -43,6 +43,8 @@ class Updater(
     private val _status = MutableStateFlow<Status>(Status.Idle)
     val status: StateFlow<Status> = _status
 
+    private val schedule = UpdateCheckSchedule(repo)
+
     val enabled: Boolean get() = BuildConfig.RELEASE_KEY.isNotEmpty()
 
     private val checker = UpdateChecker(PACKAGE, BuildConfig.VERSION_CODE, Int.MAX_VALUE, listOf(BuildConfig.RELEASE_KEY), ed)
@@ -60,48 +62,62 @@ class Updater(
         override suspend fun check() = this@Updater.check()
     }
 
+    private val restoreCache by lazy {
+        val stored = repo.current
+        stored.release?.let(::offerAndroid)
+        stored.windowsRelease?.let(::offer)
+    }
+
     init {
-        scope.launch(Dispatchers.IO) { repo.current.release?.let { offerAndroid(it) } }
+        scope.launch(Dispatchers.IO) { restoreCache }
     }
 
-    private fun offer(text: String) {
-        if (!enabled) return
-        synchronized(windowsShare) { windowsShare.offer(text) }
-        val accepted = synchronized(checker) { checker.offer(text) }
-        if (accepted) _status.value = Status.Available(checker.best!!.first)
+    private fun offer(text: String): Boolean {
+        synchronized(windowsShare) {
+            if (windowsShare.offer(text)) {
+                repo.update { it.copy(windowsRelease = ReleaseCodec.encode(windowsShare.best!!.second)) }
+            }
+        }
+        return synchronized(checker) {
+            val result = checker.inspect(text)
+            if (result == UpdateChecker.Result.NEW) _status.value = Status.Available(checker.best!!.first)
+            result != UpdateChecker.Result.REJECTED
+        }
     }
 
-    private fun offerAndroid(text: String) {
-        if (!enabled) return
-        val accepted = synchronized(androidChecker) { androidChecker.offer(text) }
-        if (accepted) repo.update { it.copy(release = ReleaseCodec.encode(androidChecker.best!!.second)) }
+    private fun offerAndroid(text: String) = synchronized(androidChecker) {
+        if (androidChecker.offer(text)) {
+            repo.update { it.copy(release = ReleaseCodec.encode(androidChecker.best!!.second)) }
+        }
     }
 
     /** Reads both release files from GitHub Releases (and Android's from the fleet server). A few KB. */
-    suspend fun check() = withContext(Dispatchers.IO) {
-        if (!enabled) return@withContext
+    suspend fun check() { checkNow() }
+
+    suspend fun checkNow(): Boolean = enabled && schedule.check(force = true, fetch = ::fetch)
+
+    private suspend fun fetch(): Boolean = withContext(Dispatchers.IO) {
+        restoreCache
         val inFleet = repo.current.fleet != null
         val (win, androids) = coroutineScope {
-            val w = async { net.get(BuildConfig.UPDATE_URL) }
+            val w = async { net.get(BuildConfig.UPDATE_URL, maxBytes = 64 * 1024) }
             val a = listOfNotNull(BuildConfig.ANDROID_UPDATE_URL, FleetPublisher.TUNNEL_RELEASE_URL.takeIf { inFleet })
-                .map { u -> async { net.get(u) } }
+                .map { u -> async { net.get(u, maxBytes = 64 * 1024) } }
             w.await() to a.awaitAll()
         }
-        win?.let(::offer)
         androids.filterNotNull().forEach(::offerAndroid)
-        repo.update { it.copy(lastUpdateCheck = System.currentTimeMillis()) }
+        win?.let(::offer) == true
     }
 
-    suspend fun checkIfDue() {
-        if (System.currentTimeMillis() - repo.current.lastUpdateCheck >= 12 * 3600_000L) runCatching { check() }
+    suspend fun checkPeriodically() {
+        if (enabled) schedule.run(::fetch)
     }
 
     /** The user's click: opens the installer link in the browser. False if there is nothing to open. */
     fun openDownload(): Boolean {
         val release = (status.value as? Status.Available)?.release ?: return false
         val url = release.publicApkUrls().firstOrNull() ?: return false
-        openUrl(url)
-        return true
+        return runCatching { openUrl(url) }.isSuccess
     }
 
     companion object {

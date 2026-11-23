@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import net.paramnezia.app.data.Cloud
+import net.paramnezia.deploy.cloud.CloudHttp
 import net.paramnezia.app.data.Repo
 import net.paramnezia.app.data.Servers
 import net.paramnezia.app.data.StoredProfile
@@ -71,10 +72,23 @@ class App(
     val lists = ListUpdates(File(cacheDir, "bypass"), asset, net, BuildConfig.RELEASE_KEY, ed, ListUpdates.urlFor(BuildConfig.ANDROID_UPDATE_URL))
     val specs = SpecBuilder(lists::text, lists::version)
     val tunnel = TunnelEngine(client, specs, this, scope)
-    val fleet: FleetManager = FleetManager(repo, net, ed, scope) { reconnectIfUp() }
+    val fleet: FleetManager = FleetManager(repo, net, ed, scope, directConnection = ::directConnection) { reconnectIfUp() }
     val updater = Updater(repo, net, ed, scope, openUrl)
     val links: Links by lazy { Links(repo, fleet, { updater.android }, scope) }
-    val cloud: Cloud by lazy { Cloud(repo, scope, cacheDir) }
+    private fun directConnection(url: java.net.URL): java.net.HttpURLConnection =
+        (net.directProxy()?.let { url.openConnection(it) } ?: url.openConnection()) as java.net.HttpURLConnection
+
+    val cloud: Cloud by lazy {
+        Cloud(repo, scope, cacheDir) { method, url, headers, body ->
+            val address = java.net.URI(url).toURL()
+            try {
+                CloudHttp.UrlTransport.send(directConnection(address), method, headers, body)
+            } catch (e: java.io.IOException) {
+                if (method != "GET") throw e
+                CloudHttp.UrlTransport.send(method, url, headers, body)
+            }
+        }
+    }
     /** Reboots a server over SSH, or through its hosting provider when SSH is dead. */
     val reboots: ServerReboot by lazy { ServerReboot(repo) }
     /** What the server details screen shows (config, roles, the server's own report over SSH). */
@@ -119,8 +133,8 @@ class App(
                     runCatching { fleet.sharePolicy(settings) }.onFailure { Log.w(TAG, "share policy", it) }
                 }
         }
+        scope.launch { updater.checkPeriodically() }
         scope.launch(Dispatchers.IO) {
-            updater.checkIfDue()
             lists.checkIfDue()
             // The tunnel was on when the app last closed (or Windows restarted): bring it back.
             if (repo.current.wantConnected) tunnel.start()
@@ -194,6 +208,7 @@ class App(
             val tunnels = member.tunnels()
             if (tunnels.isNotEmpty()) {
                 val preferred = tunnels.map { it.first }.sortedByDescending { it.id == state.activeProfile }
+                failover.updateEndpoints(preferred)
                 val chosen = failover.choose(preferred, System.currentTimeMillis()) ?: return null
                 val config = tunnels.first { it.first.id == chosen.id }.second
                 return dressed(chosen.id, chosen.name, camo.dress(chosen.id, config, reachOf(chosen.id)))
@@ -249,9 +264,13 @@ class App(
 
     override suspend fun onServerUnreachable(spec: TunnelSpec): TunnelSpec? {
         failover.markBlocked(spec.serverId, System.currentTimeMillis())
+        val previousEndpoint = rawConfig(spec.serverId)?.peers?.firstOrNull()?.endpoint
         withTimeoutOrNull(25_000) { runCatching { fleet.sync() } }
         val next = currentSpec() ?: return null
-        if (next.serverId == spec.serverId) return null
+        if (next.serverId == spec.serverId) {
+            val updatedEndpoint = rawConfig(spec.serverId)?.peers?.firstOrNull()?.endpoint
+            return next.takeIf { updatedEndpoint != previousEndpoint }
+        }
         Log.i(TAG, "${spec.serverName} unreachable, switching to ${next.serverName}")
         fleet.reportHealth(spec.serverId, reachable = false)
         return next

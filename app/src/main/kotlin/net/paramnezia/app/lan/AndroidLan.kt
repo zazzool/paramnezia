@@ -97,7 +97,7 @@ class AndroidLan(private val context: Context) : LanPlatform {
 
     @Suppress("DEPRECATION")
     private fun hostOf(info: NsdServiceInfo): java.net.InetAddress? =
-        if (Build.VERSION.SDK_INT >= 34) info.hostAddresses.firstOrNull { it is Inet4Address } ?: info.hostAddresses.firstOrNull()
+        if (Build.VERSION.SDK_INT >= 34) info.hostAddresses.firstOrNull { it is Inet4Address } ?: info.hostAddresses.firstOrNull { !it.isLinkLocalAddress }
         else info.host
 
     private companion object {

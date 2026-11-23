@@ -50,6 +50,8 @@ class Updater(
     private val _status = MutableStateFlow<Status>(Status.Idle)
     val status: StateFlow<Status> = _status
 
+    private val schedule = UpdateCheckSchedule(repo)
+
     val enabled: Boolean get() = BuildConfig.RELEASE_KEY.isNotEmpty()
 
     private val versionCode: Long by lazy { context.packageManager.getPackageInfo(context.packageName, 0).let {
@@ -67,8 +69,10 @@ class Updater(
         UpdateChecker(context.packageName, versionCode, Build.VERSION.SDK_INT, listOf(BuildConfig.RELEASE_KEY), ed, ownSigner())
     }
 
+    private val restoreCache by lazy { repo.current.release?.let(::offer) }
+
     init {
-        scope.launch(Dispatchers.IO) { repo.current.release?.let { offer(it) } }
+        scope.launch(Dispatchers.IO) { restoreCache }
     }
 
     /**
@@ -79,42 +83,39 @@ class Updater(
         (checker.best ?: checker.installed)?.let { (r, s) -> r to ReleaseCodec.encode(s) }
     }
 
-    private fun offer(text: String): Boolean {
-        if (!enabled) return false
-        val accepted = synchronized(checker) {
-            val before = checker.installed
-            checker.offer(text).also { if (!it && checker.installed !== before && checker.best == null) remember() }
+    private fun offer(text: String): Boolean = synchronized(checker) {
+        val result = checker.inspect(text)
+        val record = checker.best ?: checker.installed
+        if (result != UpdateChecker.Result.REJECTED && record != null) {
+            val (release, signed) = record
+            repo.update { it.copy(release = ReleaseCodec.encode(signed)) }
+            if (checker.best != null) _status.value = Status.Available(release)
         }
-        if (!accepted) return false
-        val (release, signed) = checker.best!!
-        repo.update { it.copy(release = ReleaseCodec.encode(signed)) }
-        _status.value = Status.Available(release)
-        return true
-    }
-
-    private fun remember() {
-        checker.installed?.let { (_, s) -> repo.update { it.copy(release = ReleaseCodec.encode(s)) } }
+        result != UpdateChecker.Result.REJECTED
     }
 
     /** Reads release.json from the public address and, in a fleet, from the server. A few KB. */
-    override suspend fun check(): Unit = withContext(Dispatchers.IO) {
-        if (!enabled) return@withContext
+    override suspend fun check() { checkNow() }
+
+    suspend fun checkNow(): Boolean = enabled && schedule.check(force = true, fetch = ::fetch)
+
+    private suspend fun fetch(): Boolean = withContext(Dispatchers.IO) {
+        restoreCache
         val urls = listOfNotNull(BuildConfig.UPDATE_URL.takeIf { it.startsWith("https://") },
             FleetPublisher.TUNNEL_RELEASE_URL.takeIf { inFleet() })
         val windowsUrl = BuildConfig.UPDATE_URL.takeIf { it.startsWith("https://") && it.endsWith("/release.json") }
             ?.replace("/release.json", "/release-windows.json")
         val (texts, win) = coroutineScope {
-            val w = windowsUrl?.let { u -> async { net.get(u) } }
-            urls.map { u -> async { net.get(u) } }.awaitAll() to w?.await()
+            val w = windowsUrl?.let { u -> async { net.get(u, maxBytes = 64 * 1024) } }
+            urls.map { u -> async { net.get(u, maxBytes = 64 * 1024) } }.awaitAll() to w?.await()
         }
-        texts.filterNotNull().forEach { offer(it) }
+        val verified = texts.filterNotNull().map(::offer).any { it }
         win?.let { if (enabled) synchronized(windowsChecker) { windowsChecker.offer(it) } }
-        repo.update { it.copy(lastUpdateCheck = System.currentTimeMillis()) }
+        verified
     }
 
-    /** At most every 12 hours, from the app's own start; costs one small request. */
-    suspend fun checkIfDue() {
-        if (System.currentTimeMillis() - repo.current.lastUpdateCheck >= 12 * 3600_000L) runCatching { check() }
+    suspend fun checkPeriodically() {
+        if (enabled) schedule.run(::fetch)
     }
 
     /** The user's tap: opens the APK link in the browser. Returns false if there is nothing to open. */

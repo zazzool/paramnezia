@@ -74,6 +74,24 @@ EOF
   mv clientsTable.new clientsTable
 fi
 
+# Paramnezia derives a unique IPv6 address from each peer's stable IPv4 address.
+# Only advertise it if forwarding and the installed container NAT rule are active.
+if grep -q '^Address = fd42:706e:1::1/64$' "$CONF" &&
+   [ "$(cat /proc/sys/net/ipv6/conf/all/forwarding)" = 1 ] &&
+   ip6tables -t nat -S POSTROUTING 2>/dev/null | grep -q 'fd42:706e:1::/64 .*MASQUERADE'; then
+  IFS=. read -r a b c d <<< "$ip"
+  ip6=$(printf 'fd42:706e:1::%x:%x' "$((a * 256 + b))" "$((c * 256 + d))")
+  if ! awk -v k="$CLIENT_PUB" -v v="$ip6/128" '
+      /^\[Peer\]/{f=0} $1=="PublicKey"&&$3==k{f=1} f&&$1=="AllowedIPs"&&index($0,v){found=1}
+      END{exit !found}' "$CONF"; then
+    awk -v k="$CLIENT_PUB" -v v="$ip6/128" '
+      /^\[Peer\]/{f=0} $1=="PublicKey"&&$3==k{f=1}
+      f&&$1=="AllowedIPs"{print $0 ", " v; next} {print}' "$CONF" > "$CONF.new" && mv "$CONF.new" "$CONF"
+    "$BIN" syncconf "$IFACE" <("$BIN-quick" strip "/opt/amnezia/awg/$CONF")
+  fi
+  echo "::result::client_ipv6=$ip6"
+fi
+
 echo "::result::client_ip=$ip"
 echo "::result::server_pub=$(cat wireguard_server_public_key.key)"
 # The key of this very peer: its own, or the shared one.

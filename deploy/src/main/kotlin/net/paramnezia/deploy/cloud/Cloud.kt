@@ -177,7 +177,7 @@ data class CloudPlan(
     }
 }
 
-data class CloudServer(val id: String, val state: State, val ipv4: String?, val detail: String = "") {
+data class CloudServer(val id: String, val state: State, val ipv4: String?, val detail: String = "", val ipv6: String? = null) {
     enum class State { PENDING, READY, FAILED, GONE }
 }
 
@@ -221,18 +221,23 @@ class CloudHttp(
     }
 
     object UrlTransport : Transport {
-        override fun send(method: String, url: String, headers: Map<String, String>, body: String?): Pair<Int, String> {
-            val c = URL(url).openConnection() as HttpURLConnection
-            c.requestMethod = method
-            c.connectTimeout = 20_000
-            c.readTimeout = 60_000
-            c.instanceFollowRedirects = false
-            for ((k, v) in headers) c.setRequestProperty(k, v)
-            if (body != null) { c.doOutput = true; c.outputStream.use { it.write(body.toByteArray()) } }
-            val code = c.responseCode
-            val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
-            c.disconnect()
-            return code to text
+        override fun send(method: String, url: String, headers: Map<String, String>, body: String?): Pair<Int, String> =
+            send(URL(url).openConnection() as HttpURLConnection, method, headers, body)
+
+        fun send(c: HttpURLConnection, method: String, headers: Map<String, String>, body: String?): Pair<Int, String> {
+            try {
+                c.requestMethod = method
+                c.connectTimeout = 20_000
+                c.readTimeout = 60_000
+                c.instanceFollowRedirects = false
+                for ((k, v) in headers) c.setRequestProperty(k, v)
+                if (body != null) { c.doOutput = true; c.outputStream.use { it.write(body.toByteArray()) } }
+                val code = c.responseCode
+                val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+                return code to text
+            } finally {
+                c.disconnect()
+            }
         }
     }
 

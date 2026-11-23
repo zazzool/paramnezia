@@ -47,7 +47,7 @@ class Servers(
         }
         val added = if (t.contains("[Interface]", ignoreCase = true)) {
             val cfg = WgQuick.parse(t)
-            val host = cfg.peers.firstOrNull()?.endpoint?.substringBeforeLast(':') ?: "server"
+            val host = cfg.peers.firstOrNull()?.endpoint?.let { net.paramnezia.core.config.Uapi.splitEndpoint(it).first } ?: "server"
             listOf(StoredProfile(UUID.randomUUID().toString(), host, WgQuick.write(cfg), if (cfg.isAmnezia) "AWG" else "WIREGUARD"))
         } else {
             AmneziaFormat.import(AmneziaKey.decode(t)).mapNotNull { p ->

@@ -1,6 +1,10 @@
 package net.paramnezia.app.lan
 
+import net.paramnezia.core.config.Uapi
+import net.paramnezia.core.net.IpPrefix
+import java.math.BigInteger
 import java.net.Inet4Address
+import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.NetworkInterface
 
@@ -9,13 +13,13 @@ import java.net.NetworkInterface
  * mobile data or virtual adapters, so the share is reachable from the home network only.
  */
 object LanNet {
-    data class Lan(val interfaceName: String, val address: Inet4Address, val prefix: Int) {
-        val host: String get() = address.hostAddress
+    data class Lan(val interfaceName: String, val address: InetAddress, val prefix: Int) {
+        val host: String get() = address.hostAddress.substringBefore('%')
+        private val network = IpPrefix.of(address is Inet6Address, BigInteger(1, address.address), prefix)
+
         fun contains(other: InetAddress): Boolean {
-            if (other !is Inet4Address) return false
-            val p = prefix.coerceIn(8, 32)
-            val mask = if (p == 32) -1 else (-1 shl (32 - p))
-            return (toInt(address) and mask) == (toInt(other) and mask)
+            if (address.address.size != other.address.size) return false
+            return network.contains(IpPrefix.of(other is Inet6Address, BigInteger(1, other.address), network.bits))
         }
     }
 
@@ -30,9 +34,11 @@ object LanNet {
             .filter { !skipName.containsMatchIn(it.name) && !skipDisplay.containsMatchIn(it.displayName.orEmpty()) }
             .flatMap { ni ->
                 ni.interfaceAddresses.asSequence().mapNotNull { ia ->
-                    val a = ia.address as? Inet4Address ?: return@mapNotNull null
+                    val a = ia.address
                     if (!usable(a)) return@mapNotNull null
-                    Lan(ni.name, a, ia.networkPrefixLength.toInt().takeIf { it in 1..32 } ?: 24)
+                    val prefix = ia.networkPrefixLength.toInt()
+                    if (a is Inet6Address && prefix !in 64..128) return@mapNotNull null
+                    Lan(ni.name, a, if (a is Inet6Address) prefix else prefix.takeIf { it in 8..32 } ?: 24)
                 }
             }
             .sortedBy { if (preferName.containsMatchIn(it.interfaceName)) 0 else 1 }
@@ -40,26 +46,26 @@ object LanNet {
             .toList()
     }.getOrDefault(emptyList())
 
-    /** A private IPv4 address a neighbour can reach: 10/8, 172.16/12, 192.168/16 (not link-local, not CGNAT). */
-    fun usable(a: Inet4Address): Boolean = a.isSiteLocalAddress && !a.isLoopbackAddress
+    /** Private IPv4 or unscoped IPv6 on a physical network. */
+    fun usable(a: InetAddress): Boolean = when (a) {
+        is Inet4Address -> a.isSiteLocalAddress && !a.isLoopbackAddress
+        is Inet6Address -> !a.isLinkLocalAddress && !a.isLoopbackAddress && !a.isAnyLocalAddress && !a.isMulticastAddress
+        else -> false
+    }
 
     /** True for a client in one of our local networks (or this device itself). */
     fun isNeighbour(remote: InetAddress, lans: List<Lan> = interfaces()): Boolean =
         remote.isLoopbackAddress || lans.any { it.contains(remote) }
 
-    fun shortAddress(host: String, port: Int) = if (port == 80) host else "$host:$port"
+    fun shortAddress(host: String, port: Int) = if (port == 80) Uapi.urlHost(host) else Uapi.formatEndpoint(host, port)
 
-    /** "192.168.1.5", "192.168.1.5:8080", "http://192.168.1.5:8080/" → host and port; null if not an address. */
+    /** Accepts IPv4, domains and bare IPv6. With an explicit IPv6 port, brackets are required. */
     fun parseAddress(text: String): Pair<String, Int>? {
         val t = text.trim().removePrefix("http://").removePrefix("https://").substringBefore('/').trim()
-        if (t.isEmpty()) return null
-        val host = t.substringBefore(':')
-        val port = t.substringAfter(':', "").let { if (it.isEmpty()) 80 else it.toIntOrNull() } ?: return null
-        if (port !in 1..65535) return null
-        if (!host.matches(Regex("[0-9]{1,3}(\\.[0-9]{1,3}){3}")) && !host.matches(Regex("[A-Za-z0-9.-]+"))) return null
-        if (host.split('.').let { parts -> parts.size == 4 && parts.all { it.toIntOrNull() != null } && parts.any { it.toInt() > 255 } }) return null
-        return host to port
+        return runCatching {
+            if ((t.startsWith("[") && t.substringAfter(']', "").startsWith(":")) ||
+                (!t.startsWith("[") && t.count { it == ':' } == 1)
+            ) Uapi.splitEndpoint(t) else Uapi.hostAddress(t) to 80
+        }.getOrNull()
     }
-
-    private fun toInt(a: Inet4Address): Int = a.address.fold(0) { acc, b -> (acc shl 8) or (b.toInt() and 0xff) }
 }

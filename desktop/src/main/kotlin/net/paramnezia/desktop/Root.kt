@@ -64,7 +64,7 @@ fun Root(app: App, platform: DesktopUiPlatform, incoming: MutableSharedFlow<Stri
     LaunchedEffect(Unit) {
         // As on Android when the app opens: the admin's daily server check, a fleet sync if due.
         app.scope.launch { app.healServers() }
-        app.fleet.syncWhileVisible()
+        app.fleet.syncWhileVisible { app.cloud.syncFleetAddresses(app.fleet) }
     }
     // Counters for the home screen, only while the window is open.
     LaunchedEffect(Unit) {

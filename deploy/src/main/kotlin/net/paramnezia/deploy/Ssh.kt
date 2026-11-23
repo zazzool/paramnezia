@@ -100,6 +100,11 @@ class SshConnection private constructor(private val client: SshClient) : Closeab
          * one quiet retry is cheaper than a failed operation the admin has to start again.
          */
         fun open(creds: SshCredentials, hostKeys: HostKeyStore): SshConnection {
+            val normalized = creds.copy(host = creds.host.trim().removeSurrounding("[", "]"))
+            return openNormalized(normalized, hostKeys)
+        }
+
+        private fun openNormalized(creds: SshCredentials, hostKeys: HostKeyStore): SshConnection {
             // A key that cannot be read fails at once, before any network traffic.
             val key = creds.privateKey.takeIf { it.isNotBlank() }?.let {
                 try { SshKeys.parse(it, creds.passphrase) } catch (e: SshKeyException) { throw SshException(e.code, e.message ?: "Bad key", e) }

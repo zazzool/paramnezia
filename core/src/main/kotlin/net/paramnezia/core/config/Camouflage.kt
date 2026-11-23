@@ -45,7 +45,7 @@ object Camouflage {
     /** One way to reach a server: address, port, first packets. */
     data class Variant(val host: String, val port: Int, val mimic: Mimic) {
         val id: String get() = "${mimic.id}@${endpoint()}"
-        fun endpoint(): String = if (':' in host) "[$host]:$port" else "$host:$port"
+        fun endpoint(): String = Uapi.formatEndpoint(host, port)
     }
 
     /** What a tunnel pads: [start] for the first [afterMs] of a flow, then [steady]. UAPI ranges. */

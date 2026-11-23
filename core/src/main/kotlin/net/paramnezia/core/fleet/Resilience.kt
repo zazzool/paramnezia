@@ -13,9 +13,20 @@ class FailoverPolicy(
     private val retryBlockedAfterMs: Long = 6 * 3_600_000L,
 ) {
     private val blockedAt = HashMap<String, Long>()
+    private var endpoints = emptyMap<String, Pair<String, Int>>()
 
+    @Synchronized
+    fun updateEndpoints(servers: List<FleetServer>) {
+        val current = servers.associate { it.id to (it.host to it.port) }
+        for ((id, endpoint) in endpoints) if (current[id] != endpoint) blockedAt.remove(id)
+        endpoints = current
+    }
+
+    @Synchronized
     fun markBlocked(serverId: String, now: Long) { blockedAt[serverId] = now }
+    @Synchronized
     fun markHealthy(serverId: String) { blockedAt.remove(serverId) }
+    @Synchronized
     fun isBlocked(serverId: String, now: Long) = blockedAt[serverId]?.let { now - it < retryBlockedAfterMs } == true
 
     /** True when the current server should be given up on. */
@@ -23,6 +34,7 @@ class FailoverPolicy(
         networkValidated && connectedForMs >= deadAfterMs && (lastHandshakeAgeMs == null || lastHandshakeAgeMs >= deadAfterMs)
 
     /** First server in manifest order that is not currently considered blocked; falls back to the master. */
+    @Synchronized
     fun choose(servers: List<FleetServer>, now: Long): FleetServer? =
         servers.firstOrNull { !isBlocked(it.id, now) } ?: servers.firstOrNull()
 }

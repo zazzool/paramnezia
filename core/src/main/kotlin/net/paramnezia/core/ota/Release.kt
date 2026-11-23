@@ -88,20 +88,28 @@ class UpdateChecker(
     var installed: Pair<Release, SignedRelease>? = null
         private set
 
+    enum class Result { REJECTED, CURRENT, NEW }
+
     /** Offers a release from any channel. Returns true if it became the new best candidate. */
-    fun offer(text: String): Boolean {
-        val signed = ReleaseCodec.decode(text) ?: return false
-        val r = ReleaseCodec.open(signed, pinnedKeys, ed) ?: return false
-        if (r.packageName != packageName) return false
-        if (!r.sha256.matches(HEX64)) return false
-        if (r.versionCode == installedVersionCode && sameSigner(r)) { installed = r to signed; return false }
-        if (r.versionCode <= installedVersionCode) return false
-        if (r.minSdk > sdkInt) return false
-        if (!sameSigner(r)) return false
+    fun offer(text: String): Boolean = inspect(text) == Result.NEW
+
+    /** Distinguishes a successful check from an invalid or stale response. */
+    fun inspect(text: String): Result {
+        val signed = ReleaseCodec.decode(text) ?: return Result.REJECTED
+        val r = ReleaseCodec.open(signed, pinnedKeys, ed) ?: return Result.REJECTED
+        if (r.packageName != packageName || !r.sha256.matches(HEX64) || r.size <= 0 ||
+            r.versionCode < installedVersionCode || r.minSdk > sdkInt || !sameSigner(r)
+        ) return Result.REJECTED
         val current = best?.first
-        if (current != null && current.versionCode >= r.versionCode) return false
+        if (current != null && r.versionCode <= current.versionCode) {
+            return if (r == current) Result.CURRENT else Result.REJECTED
+        }
+        if (r.versionCode == installedVersionCode) {
+            installed = r to signed
+            return Result.CURRENT
+        }
         best = r to signed
-        return true
+        return Result.NEW
     }
 
     private fun sameSigner(r: Release) =

@@ -1,6 +1,9 @@
 package net.paramnezia.app.fleet
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
+import net.paramnezia.core.profile.SshCredentials
 import net.paramnezia.app.data.AppState
 import net.paramnezia.app.data.Repo
 import net.paramnezia.app.data.StoredFleet
@@ -32,13 +35,21 @@ class FleetServersTest {
         val original = admin.next(firstVersion) { it.copy(devices = it.devices + member, mirrors = listOf(mirror)) }
         val second = first.copy(id = "second", name = "Backup", host = "second.example", altPorts = listOf(443))
         val added = admin.next(original) { it.copy(servers = it.servers + second) }
-        val ownerRepo = memoryRepo(AppState(fleet = StoredFleet(
+        val access = SshCredentials(second.host)
+        val fingerprint = "SHA256:test-pin"
+        val ownerRepo = memoryRepo(AppState(hostKeys = mapOf("${access.host}:${access.port}" to fingerprint), fleet = StoredFleet(
             admin.trust, ownerKey.toBase64(), owner.name, FleetCrypto.encode(admin.seal(added)),
             adminSeed = Base64.getEncoder().encodeToString(admin.signingSeed),
+            serverAccess = mapOf(second.id to access),
         )))
         val memberRepo = memoryRepo(AppState())
         val network = ManifestNetwork()
-        val ownerManager = FleetManager(ownerRepo, network, ed, this) {}
+        // Keep publication off the network. The fake mirror below serves each signed revision.
+        val ownerScope = CoroutineScope(Job().apply { cancel() })
+        val ownerManager = FleetManager(ownerRepo, network, ed, ownerScope, verifySshAddress = { ssh, keys ->
+            assertEquals("2001:db8::2", ssh.host)
+            assertEquals(fingerprint, keys.get(ssh.host, ssh.port))
+        }) {}
         var updates = 0
         val memberManager = FleetManager(memberRepo, network, ed, this) { updates++ }
         assertTrue(memberManager.join(admin.invite(original, member, memberKey), member.name))
@@ -63,13 +74,23 @@ class FleetServersTest {
         assertTrue(server.altPorts.isEmpty())
         assertEquals("backup.example:8443", tunnel.peers.single().endpoint)
 
+        ownerManager.moveServerAddress(second.id, "[2001:db8::2]")
+        assertEquals("2001:db8::2", ownerManager.accessTo(second.id)?.host)
+        assertEquals(fingerprint, ownerRepo.hostKeys.get("2001:db8::2", access.port))
+        network.mirror = ownerManager.stored!!.manifest
+        assertTrue(memberManager.sync())
+        val (moved, movedTunnel) = memberManager.member()!!.tunnels().first()
+        assertEquals(second.id, moved.id)
+        assertEquals(second.publicKey, moved.publicKey)
+        assertEquals("[2001:db8::2]:8443", movedTunnel.peers.single().endpoint)
+
         ownerManager.removeServer(second.id)
         network.mirror = ownerManager.stored!!.manifest
         assertTrue(memberManager.sync())
         assertEquals(listOf("first"), memberManager.member()!!.tunnels().map { it.first.id })
         assertNull(memberRepo.current.activeProfile)
         assertFalse(memberManager.sync())
-        assertEquals(5, updates)
+        assertEquals(6, updates)
     }
 
     private fun memoryRepo(state: AppState): Repo = Repo(object : StateStore {

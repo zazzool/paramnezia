@@ -1,7 +1,7 @@
 package net.paramnezia.core.config
 
 import net.paramnezia.core.crypto.WgKey
-import java.net.Inet6Address
+import net.paramnezia.core.net.IpPrefix
 import java.net.InetAddress
 
 /** Builds the amneziawg-go IPC ("UAPI") configuration string from a [TunnelConfig]. */
@@ -35,26 +35,43 @@ object Uapi {
         }
     }
 
+    fun formatEndpoint(host: String, port: Int): String = "${urlHost(host)}:$port"
+
+    /** A literal host as it appears in a URL, or a hostname as supplied. */
+    fun urlHost(host: String): String = host.removeSurrounding("[", "]").let {
+        if (':' in it) "[$it]" else it
+    }
+
+    fun hostAddress(input: String): String {
+        val host = input.trim().removeSurrounding("[", "]")
+        val literal = IpPrefix.parseOrNull(host)?.takeIf { '/' !in host }
+        if (literal != null) return literal.toString().substringBefore('/')
+        if (!host.matches(Regex("[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?\\.?")) ||
+            host.all { it.isDigit() || it == '.' } || ".." in host
+        ) throw ConfigException("Некорректный адрес сервера")
+        return host.lowercase()
+    }
+
     /** Splits `host:port` / `[v6]:port` into its parts. */
     fun splitEndpoint(endpoint: String): Pair<String, Int> {
         val e = endpoint.trim()
         val (host, port) = if (e.startsWith("[")) {
             val close = e.indexOf(']')
-            if (close < 0) throw ConfigException("Invalid endpoint: $endpoint")
-            e.substring(1, close) to e.substring(close + 1).removePrefix(":")
+            if (close < 0 || e.getOrNull(close + 1) != ':') throw ConfigException("Invalid endpoint: $endpoint")
+            e.substring(1, close) to e.substring(close + 2)
         } else {
             val colon = e.lastIndexOf(':')
             if (colon < 0) throw ConfigException("Endpoint has no port: $endpoint")
             e.substring(0, colon) to e.substring(colon + 1)
         }
         val p = port.toIntOrNull()?.takeIf { it in 1..65535 } ?: throw ConfigException("Invalid endpoint port: $endpoint")
-        return host to p
+        return hostAddress(host) to p
     }
 
     private fun resolveEndpoint(endpoint: String, resolve: (String) -> InetAddress): String {
         val (host, port) = splitEndpoint(endpoint)
         val addr = resolve(host)
-        return if (addr is Inet6Address) "[${addr.hostAddress.substringBefore('%')}]:$port" else "${addr.hostAddress}:$port"
+        return formatEndpoint(addr.hostAddress.substringBefore('%'), port)
     }
 
     private fun StringBuilder.line(k: String, v: String) {

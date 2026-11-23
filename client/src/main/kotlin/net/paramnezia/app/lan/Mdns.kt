@@ -42,6 +42,7 @@ import kotlin.random.Random
 class Mdns(private val serviceType: String, private val interfaces: () -> List<LanNet.Lan> = LanNet::interfaces) {
     private val type = "$serviceType.local"
     private val group: InetAddress = InetAddress.getByName(GROUP)
+    private val groupV6: InetAddress = InetAddress.getByName("ff02::fb")
 
     // --- advertising ------------------------------------------------------------------------------
 
@@ -91,7 +92,7 @@ class Mdns(private val serviceType: String, private val interfaces: () -> List<L
             Out(type, TYPE_PTR, ttl, target = name),
             Out(name, TYPE_SRV, ttl, cacheFlush = true, target = host, port = port),
             Out(name, TYPE_TXT, ttl, cacheFlush = true, raw = txtData(txt)),
-        ) + lans.map { Out(host, TYPE_A, ttl, cacheFlush = true, raw = it.address.address) }
+        ) + lans.map { Out(host, if (it.address.address.size == 16) TYPE_AAAA else TYPE_A, ttl, cacheFlush = true, raw = it.address.address) }
 
         /** Prober: three probes 250 ms apart (the first after 0–250 ms), asking for our name with our SRV as the proposal. */
         fun probe() {
@@ -251,11 +252,11 @@ class Mdns(private val serviceType: String, private val interfaces: () -> List<L
                     TYPE_SRV -> if (r.data.size >= 7) {
                         if (r.ttl == 0) srv.remove(r.name.lowercase()) else srv[r.name.lowercase()] = Entry(r.target.lowercase() to r.port, until, r.ttl, now)
                     }
-                    TYPE_A -> if (r.data.size == 4) {
+                    TYPE_A, TYPE_AAAA -> if (r.data.size == if (r.type == TYPE_A) 4 else 16) {
                         val ip = InetAddress.getByAddress(r.data).hostAddress
                         val m = a.getOrPut(r.name.lowercase()) { ConcurrentHashMap() }
                         // Cache-flush (RFC 6762 §10.2): other addresses of this host older than a second are stale.
-                        if (r.cacheFlush) m.entries.removeIf { it.key != ip && now - it.value.at > 1_000 }
+                        if (r.cacheFlush) m.entries.removeIf { it.key != ip && (':' in it.key) == (':' in ip) && now - it.value.at > 1_000 }
                         if (r.ttl == 0) m.remove(ip) else m[ip] = Entry(Unit, until, r.ttl, now)
                     }
                 }
@@ -292,17 +293,22 @@ class Mdns(private val serviceType: String, private val interfaces: () -> List<L
         s.bind(InetSocketAddress(PORT))
         s.timeToLive = 255
         var joined = 0
-        for (lan in lans) {
+        for (lan in lans.distinctBy { it.interfaceName to it.address.address.size }) {
             val nif = NetworkInterface.getByInetAddress(lan.address) ?: continue
-            runCatching { s.joinGroup(InetSocketAddress(group, PORT), nif); joined++ }.onFailure { Log.w(TAG, "join on ${lan.host}: ${it.message}") }
+            val destination = if (lan.address.address.size == 16) groupV6 else group
+            runCatching { s.joinGroup(InetSocketAddress(destination, PORT), nif); joined++ }.onFailure { Log.w(TAG, "join on ${lan.host}: ${it.message}") }
         }
         if (joined == 0) { s.close(); null } else s
     }.onFailure { Log.w(TAG, "mDNS socket: ${it.message}") }.getOrNull()
 
     private fun send(socket: MulticastSocket, lans: List<LanNet.Lan>, msg: ByteArray) {
-        for (lan in lans) runCatching {
-            NetworkInterface.getByInetAddress(lan.address)?.let { socket.networkInterface = it }
-            socket.send(DatagramPacket(msg, msg.size, group, PORT))
+        for (lan in lans.distinctBy { it.interfaceName to it.address.address.size }) runCatching {
+            val nif = NetworkInterface.getByInetAddress(lan.address) ?: return@runCatching
+            socket.networkInterface = nif
+            val destination = if (lan.address.address.size == 16) {
+                java.net.Inet6Address.getByAddress(null, groupV6.address, nif)
+            } else group
+            socket.send(DatagramPacket(msg, msg.size, destination, PORT))
         }
     }
 
@@ -426,7 +432,7 @@ class Mdns(private val serviceType: String, private val interfaces: () -> List<L
         const val PROBE_WAIT_MS = 250L
         const val RESPONSE_MIN_MS = 20L
         const val RESPONSE_MAX_MS = 115L
-        const val TYPE_A = 1; const val TYPE_PTR = 12; const val TYPE_TXT = 16; const val TYPE_SRV = 33; const val TYPE_ANY = 255
+        const val TYPE_A = 1; const val TYPE_AAAA = 28; const val TYPE_PTR = 12; const val TYPE_TXT = 16; const val TYPE_SRV = 33; const val TYPE_ANY = 255
         const val CLASS_IN = 1
 
         fun u16(b: ByteArray, p: Int) = ((b[p].toInt() and 0xFF) shl 8) or (b[p + 1].toInt() and 0xFF)

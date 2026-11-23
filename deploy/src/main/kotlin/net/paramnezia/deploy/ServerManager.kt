@@ -266,7 +266,7 @@ class ServerManager(private val hostKeys: HostKeyStore) {
         }
 
         internal fun script(name: String): String =
-            ServerManager::class.java.getResourceAsStream("/net/paramnezia/deploy/$name")!!.bufferedReader().readText()
+            ServerManager::class.java.getResourceAsStream("/net/paramnezia/deploy/$name")!!.bufferedReader().use { it.readText().replace("\r\n", "\n") }
 
         /** `10.8.1.0` → `10.8.1.1`: the server takes the first address of its subnet. */
         internal fun firstHost(subnet: String): String {
@@ -294,13 +294,16 @@ class ServerManager(private val hostKeys: HostKeyStore) {
             awg.remove(AwgParam.CONTENT_PADDING_ADDITION)
             val port = lines["listenport"]?.toIntOrNull() ?: throw SshException("bad_server_config", "Server config has no ListenPort")
             val isAwg3 = AwgParam.HEADER_PROTECTION_KEY in awg
-            val endpointHost = if (host.contains(':')) "[$host]" else host
             val ip = results["client_ip"] ?: throw SshException("bad_server_reply", "Server did not return a client address")
+            val ipv6 = results["client_ipv6"]?.let { IpPrefix.parse("$it/128") }
+            val resolvers = if (ipv6 != null && dns == listOf("1.1.1.1", "1.0.0.1")) {
+                listOf("2606:4700:4700::1111", "2606:4700:4700::1001") + dns
+            } else dns
             val tunnel = TunnelConfig(
                 TunnelConfig.Interface(
                     privateKey = clientPrivateKey,
-                    addresses = listOf(IpPrefix.parse("$ip/32")),
-                    dns = dns,
+                    addresses = listOf(IpPrefix.parse("$ip/32")) + listOfNotNull(ipv6),
+                    dns = resolvers,
                     mtu = mtu,
                     awg = awg,
                 ),
@@ -309,7 +312,7 @@ class ServerManager(private val hostKeys: HostKeyStore) {
                         publicKey = WgKey.fromBase64(results["server_pub"] ?: throw SshException("bad_server_reply", "No server key")),
                         presharedKey = results["psk"]?.takeIf { it.isNotBlank() }?.let(WgKey::fromBase64),
                         allowedIps = listOf(IpPrefix.ANY_V4, IpPrefix.ANY_V6),
-                        endpoint = "$endpointHost:$port",
+                        endpoint = net.paramnezia.core.config.Uapi.formatEndpoint(host, port),
                         // A jittered keepalive is an AmneziaWG 3 feature; older peers need a plain number.
                         persistentKeepalive = keepalive ?: if (isAwg3) "25-35" else "25",
                     ),

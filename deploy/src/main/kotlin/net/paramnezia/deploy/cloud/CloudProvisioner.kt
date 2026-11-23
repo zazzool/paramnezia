@@ -83,7 +83,7 @@ class CloudProvisioner(
         var s = first
         while (true) {
             when (s.state) {
-                CloudServer.State.READY -> if (s.ipv4 != null) return s.ipv4!!
+                CloudServer.State.READY -> (s.ipv4 ?: s.ipv6)?.let { return it }
                 CloudServer.State.FAILED -> throw CloudException("create_failed", "Хостер не смог создать сервер: ${s.detail}")
                 CloudServer.State.GONE -> throw CloudException("create_failed", "Сервер удалён у хостера")
                 CloudServer.State.PENDING -> {}

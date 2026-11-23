@@ -36,7 +36,7 @@ class SshFormState {
     fun credentials(): SshCredentials {
         val key = SshPaste.isPrivateKey(secret)
         return SshCredentials(
-            host.trim(), port.toIntOrNull()?.takeIf { it in 1..65535 } ?: 22, user.trim().ifBlank { "root" },
+            net.paramnezia.core.config.Uapi.hostAddress(host), port.toIntOrNull()?.takeIf { it in 1..65535 } ?: 22, user.trim().ifBlank { "root" },
             password = if (key) "" else secret, privateKey = if (key) secret.trim() else "",
         )
     }
@@ -73,7 +73,7 @@ fun SshFields(state: SshFormState, enabled: Boolean, toast: (String) -> Unit, sh
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Hint("Скопируйте письмо хостера целиком и нажмите «Вставить»: адрес, логин, пароль и порт заполнятся сами.", PnIcons.Info)
         PasteField(
-            state.host, { state.host = it.trim() }, "IP или домен сервера",
+            state.host, { state.host = it.trim() }, "IPv4, IPv6 или домен сервера",
             placeholder = "203.0.113.10", keyboardType = KeyboardType.Uri, enabled = enabled,
             onEmptyClipboard = emptyClipboard,
             onPaste = { text ->

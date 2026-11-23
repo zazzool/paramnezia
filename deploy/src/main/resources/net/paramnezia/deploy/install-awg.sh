@@ -66,6 +66,19 @@ DOCKERFILE
 $SUDO docker build --pull -q -t "$CONTAINER" "$FOLDER" >/dev/null || fail "docker_build_failed"
 
 step run
+# Use a dual-stack bridge only when the VPS has an IPv6 default route. Docker handles the bridge's
+# IPv6 egress, while the container translates the tunnel's ULA subnet onto that bridge.
+network_args=""
+tunnel_v6=""
+if ip -6 route show default | grep -q '^default '; then
+  if $SUDO docker network inspect pn-dualstack >/dev/null 2>&1 || \
+     $SUDO docker network create --driver bridge --ipv6 --subnet fd42:706e:2::/64 pn-dualstack >/dev/null; then
+    if [ "$($SUDO docker network inspect -f '{{.EnableIPv6}}' pn-dualstack)" = true ]; then
+      network_args="--network pn-dualstack"
+      tunnel_v6="fd42:706e:1"
+    fi
+  fi
+fi
 if ! $SUDO docker network ls --format '{{.Name}}' | grep -qx amnezia-dns-net; then
   $SUDO docker network create --driver bridge --subnet=172.29.172.0/24 \
     --opt com.docker.network.bridge.name=amn0 amnezia-dns-net >/dev/null
@@ -82,7 +95,7 @@ done
 # --init gives the container a tiny PID 1 that reaps zombies, which dumb-init does in AmneziaVPN's image.
 # shellcheck disable=SC2086
 $SUDO docker run -d --init --log-driver none --restart always --privileged \
-  --cap-add=NET_ADMIN --cap-add=SYS_MODULE \
+  --cap-add=NET_ADMIN --cap-add=SYS_MODULE $network_args \
   -p "$AWG_PORT:$AWG_PORT/udp" $extra -v /lib/modules:/lib/modules \
   --sysctl="net.ipv4.conf.all.src_valid_mark=1" \
   --name "$CONTAINER" "$CONTAINER" >/dev/null || fail "docker_run_failed"
@@ -90,7 +103,7 @@ $SUDO docker network connect amnezia-dns-net "$CONTAINER" >/dev/null 2>&1 || tru
 
 step configure
 # Values go in through the environment, never through shell quoting.
-$SUDO docker exec -i -e "AWG_PORT=$AWG_PORT" -e "AWG_SUBNET=$AWG_SUBNET" -e "AWG_CIDR=$AWG_CIDR" -e "AWG_PARAMS=$AWG_PARAMS" "$CONTAINER" bash -s <<'CONFIGURE'
+$SUDO docker exec -i -e "AWG_PORT=$AWG_PORT" -e "AWG_SUBNET=$AWG_SUBNET" -e "AWG_CIDR=$AWG_CIDR" -e "AWG_PARAMS=$AWG_PARAMS" -e "TUNNEL_V6=$tunnel_v6" "$CONTAINER" bash -s <<'CONFIGURE'
 set -eu
 mkdir -p /opt/amnezia/awg
 cd /opt/amnezia/awg
@@ -103,6 +116,7 @@ awg genpsk > wireguard_psk.key
   echo "[Interface]"
   echo "PrivateKey = $priv"
   echo "Address = $AWG_SUBNET/$AWG_CIDR"
+  if [ -n "$TUNNEL_V6" ]; then echo "Address = $TUNNEL_V6::1/64"; fi
   echo "ListenPort = $AWG_PORT"
   # AmneziaVPN keeps I1-I5 commented out in the server config; servers ignore them.
   printf '%s\n' "$AWG_PARAMS" | sed -E 's/^(I[1-5] = )/# \1/'
@@ -125,6 +139,17 @@ iptables -A FORWARD -i awg0 -o eth1 -s $AWG_SUBNET/$AWG_CIDR -j ACCEPT
 iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
 iptables -t nat -A POSTROUTING -s $AWG_SUBNET/$AWG_CIDR -o eth0 -j MASQUERADE
 iptables -t nat -A POSTROUTING -s $AWG_SUBNET/$AWG_CIDR -o eth1 -j MASQUERADE
+if [ -n "$tunnel_v6" ]; then
+  sysctl -qw net.ipv6.conf.all.forwarding=1
+  # Resolve the egress interface on each boot, including after Docker recreates the container.
+  dev=\$(ip -6 route show default | awk '/^default /{for(i=1;i<NF;i++)if(\$i=="dev"){print \$(i+1);exit}}')
+  if [ -n "\$dev" ]; then
+    ip6tables -A FORWARD -i awg0 -o "\$dev" -s $tunnel_v6::/64 -j ACCEPT
+    ip6tables -A FORWARD -i "\$dev" -o awg0 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    ip6tables -t nat -C POSTROUTING -s $tunnel_v6::/64 -o "\$dev" -j MASQUERADE 2>/dev/null ||
+      ip6tables -t nat -A POSTROUTING -s $tunnel_v6::/64 -o "\$dev" -j MASQUERADE
+  fi
+fi
 # Paramnezia fleet manifest, reachable only through the tunnel.
 mkdir -p /opt/amnezia/paramnezia/www
 if command -v httpd >/dev/null 2>&1; then httpd -p $AWG_SUBNET:8080 -h /opt/amnezia/paramnezia/www; fi

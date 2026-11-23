@@ -172,7 +172,19 @@ class ParamneziaVpnService : VpnService() {
      */
     private suspend fun resolve(name: String): InetAddress = withTimeout(RESOLVE_TIMEOUT_MS) {
         suspendCancellableCoroutine<InetAddress> { c ->
-            Thread({ val r = runCatching { InetAddress.getByName(name) }; if (c.isActive) c.resumeWith(r) }, "pn-resolve")
+            Thread({
+                val result = runCatching {
+                    val network = TunnelRuntime.directNetwork(this@ParamneziaVpnService)
+                    val cm = getSystemService(android.net.ConnectivityManager::class.java)
+                    val routes = network?.let { cm.getLinkProperties(it)?.routes }.orEmpty()
+                    val addresses = network?.getAllByName(name) ?: InetAddress.getAllByName(name)
+                    val hasV6 = routes.any { it.isDefaultRoute && it.destination.address is java.net.Inet6Address }
+                    val hasV4 = routes.any { it.isDefaultRoute && it.destination.address is java.net.Inet4Address }
+                    if (hasV6 && !hasV4) addresses.firstOrNull { it is java.net.Inet6Address } ?: addresses.first()
+                    else addresses.first()
+                }
+                if (c.isActive) c.resumeWith(result)
+            }, "pn-resolve")
                 .apply { isDaemon = true; start() }
         }
     }

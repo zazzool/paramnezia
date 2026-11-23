@@ -60,6 +60,16 @@ class OtaTest {
         assertEquals(listOf("https://github.com/zazzool/paramnezia/releases/download/v9/a.apk"), c.installed!!.first.publicApkUrls())
     }
 
+    @Test fun classifiesChecksWithoutAcceptingStaleOrConflictingMetadata() {
+        val c = checker()
+        assertEquals(UpdateChecker.Result.CURRENT, c.inspect(signed(release(5))))
+        assertEquals(UpdateChecker.Result.NEW, c.inspect(signed(release(8))))
+        assertEquals(UpdateChecker.Result.CURRENT, c.inspect(signed(release(8))))
+        assertEquals(UpdateChecker.Result.REJECTED, c.inspect(signed(release(7))))
+        assertEquals(UpdateChecker.Result.REJECTED, c.inspect(signed(release(8).copy(sha256 = "1".repeat(64)))))
+        assertEquals(UpdateChecker.Result.REJECTED, c.inspect(signed(release(9).copy(size = 0))))
+    }
+
     @Test fun verifiesDownloadedBytes() {
         val r = release(6)
         val out = ByteArrayOutputStream()

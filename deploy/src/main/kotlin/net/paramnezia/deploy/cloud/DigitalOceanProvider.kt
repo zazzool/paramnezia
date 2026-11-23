@@ -98,12 +98,14 @@ class DigitalOceanProvider(token: String, transport: CloudHttp.Transport = Cloud
         val id = o.str("id") ?: throw CloudException("bad_reply", "DigitalOcean не вернул id сервера")
         val status = o.str("status").orEmpty()
         val ip = o["networks"].obj()?.get("v4").arr().mapNotNull { it.obj() }.firstOrNull { it.str("type") == "public" }?.str("ip_address")
+        val ipv6 = o["networks"].obj()?.get("v6").arr().mapNotNull { it.obj() }
+            .firstOrNull { it.str("type") == "public" }?.str("ip_address")
         val state = when (status) {
-            "active" -> if (ip != null) CloudServer.State.READY else CloudServer.State.PENDING
+            "active" -> if ((ip != null || ipv6 != null)) CloudServer.State.READY else CloudServer.State.PENDING
             "archive" -> CloudServer.State.GONE
             else -> CloudServer.State.PENDING
         }
-        return CloudServer(id, state, ip, status)
+        return CloudServer(id, state, ip, status, ipv6)
     }
 
     companion object {

@@ -24,7 +24,7 @@ object SshPaste {
 
     // Labels hosters use in their e-mails and panels, Russian and English. Order matters: the more
     // specific label first ("ssh port" before "port").
-    private val HOST_LABELS = listOf("ip-адрес", "ip адрес", "ipv4", "ip address", "ip", "адрес сервера", "адрес", "хост", "host", "hostname", "server", "сервер")
+    private val HOST_LABELS = listOf("ip-адрес", "ip адрес", "ipv4", "ipv6", "ip address", "ip", "адрес сервера", "адрес", "хост", "host", "hostname", "server", "сервер")
     private val USER_LABELS = listOf("имя пользователя", "пользователь", "логин", "login", "username", "user")
     private val PASS_LABELS = listOf("root password", "root-пароль", "пароль root", "пароль", "password", "pass", "pwd")
     private val PORT_LABELS = listOf("ssh port", "ssh-порт", "порт ssh", "порт", "port")
@@ -111,7 +111,7 @@ object SshPaste {
         } else if (rest.count { it == ':' } == 1) {
             host = rest.substringBefore(':'); port = rest.substringAfter(':').toIntOrNull() ?: return null
         } else host = rest
-        val ok = IPV4.matches(host) || HOSTNAME.matches(host) || (host.count { it == ':' } >= 2 && IPV6.matches(host))
+        val ok = IPV4.matches(host) || HOSTNAME.matches(host) || (host.count { it == ':' } >= 2 && IPV6.matches(host) && net.paramnezia.core.net.IpPrefix.parseOrNull(host)?.isV6 == true)
         if (!ok) return null
         if (port != null && port !in 1..65535) return null
         return Triple(user, host, port)

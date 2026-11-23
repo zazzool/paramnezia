@@ -34,6 +34,9 @@ import net.paramnezia.core.fleet.FleetTrust
 import kotlinx.coroutines.sync.Mutex
 import net.paramnezia.deploy.FleetPublisher
 import net.paramnezia.deploy.ServerManager
+import net.paramnezia.deploy.SshConnection
+import net.paramnezia.deploy.HostKeyStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -60,11 +63,15 @@ class FleetManager(
     private val net: Http,
     private val ed: Ed25519,
     private val scope: CoroutineScope,
+    directConnection: ((java.net.URL) -> java.net.HttpURLConnection)? = null,
+    private val verifySshAddress: (SshCredentials, HostKeyStore) -> Unit = { creds, keys ->
+        SshConnection.open(creds, keys).use { }
+    },
     /** Called when a newer manifest arrived, so the tunnel can switch servers at once. */
     private val onManifestChanged: () -> Unit,
 ) {
     private val servers = ServerManager(repo.hostKeys)
-    private val publisher = FleetPublisher(repo.hostKeys)
+    private val publisher = FleetPublisher(repo.hostKeys, directConnection)
     private val health = HealthBook()
 
     /** A server joined the fleet (deployed or bought): put the family page on it. Set by App. */
@@ -255,10 +262,21 @@ class FleetManager(
     }
 
     /** Keep the server picker current while the app is visible, including when disconnected. */
-    suspend fun syncWhileVisible() {
+    suspend fun syncWhileVisible(checkAddresses: suspend () -> Unit = {}) {
         val interval = 5 * 60_000L
         while (true) {
             syncIfDue(interval, tunnelFirst = false)
+            checkAddresses()
+            val fleet = stored
+            if (fleet?.gistError != null && fleet.gistToken != null && isAdmin) {
+                try {
+                    publish(fleet.trust)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "reserve publication retry failed", e)
+                }
+            }
             delay(interval)
         }
     }
@@ -622,6 +640,41 @@ class FleetManager(
         }
     }
 
+    /** Moves the same server. Check its previously pinned SSH key before sending credentials. */
+    suspend fun moveServerAddress(serverId: String, newAddress: String, expectedHost: String? = null) = withContext(Dispatchers.IO) {
+        val trust = owner().trust
+        val old = accessTo(serverId) ?: error("Для смены IP нужен SSH-доступ")
+        if (expectedHost != null && old.host != expectedHost) return@withContext
+        val host = Uapi.hostAddress(newAddress)
+        if (host == Uapi.hostAddress(old.host)) return@withContext
+        val server = manifest()?.servers?.firstOrNull { it.id == serverId } ?: error("Сервер не найден")
+        val pin = repo.hostKeys.get(old.host.trim().removeSurrounding("[", "]"), old.port) ?: error("Нет сохранённого SSH-ключа этого сервера")
+        val newAccess = old.copy(host = host)
+        val previouslyKnown = repo.hostKeys.get(host, old.port)
+        require(previouslyKnown == null || previouslyKnown == pin) { "Новый адрес уже связан с другим SSH-ключом" }
+        val pinned = object : HostKeyStore {
+            override fun get(host: String, port: Int) = pin
+            override fun put(host: String, port: Int, fingerprint: String) = error("Нужен прежний SSH-ключ")
+        }
+        verifySshAddress(newAccess, pinned)
+
+        synchronized(this@FleetManager) {
+            check(stored?.trust == trust && accessTo(serverId) == old) { "Сервер уже изменился. Повторите проверку" }
+            val known = repo.hostKeys.get(host, old.port)
+            require(known == null || known == pin) { "Новый адрес уже связан с другим SSH-ключом" }
+            repo.hostKeys.put(host, old.port, pin)
+            changeServers(accessChange = { it + (serverId to newAccess) }) { current ->
+                val latest = current.servers.firstOrNull { it.id == serverId }
+                check(latest == server) { "Сервер уже изменился. Повторите проверку" }
+                val alternatives = server.altHosts.filterNot { Uapi.hostAddress(it) == host || Uapi.hostAddress(it) == Uapi.hostAddress(old.host) }
+                current.copy(servers = current.servers.map {
+                    if (it.id == serverId) it.copy(host = host, altHosts = alternatives) else it
+                })
+            }
+        }
+        onServerReady(newAccess)
+    }
+
     /** Owner: drops a server and publishes the removal there for devices still connected to it. */
     suspend fun removeServer(serverId: String) = withContext(Dispatchers.IO) {
         synchronized(this@FleetManager) {
@@ -642,8 +695,9 @@ class FleetManager(
         val admin = owner()
         val current = manifest() ?: error("Семья не найдена")
         val next = change(current)
-        if (next == current) return
-        val serverAccess = accessChange(stored?.serverAccess.orEmpty())
+        val previousAccess = stored?.serverAccess.orEmpty()
+        val serverAccess = accessChange(previousAccess)
+        if (next == current && serverAccess == previousAccess) return
         val signed = FleetCrypto.encode(admin.seal(admin.next(current) { withAdmins(next, serverAccess) }))
         accept(signed, extraTargets, accessChange = { serverAccess })
     }

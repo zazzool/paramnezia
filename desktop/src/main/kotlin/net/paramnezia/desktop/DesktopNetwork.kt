@@ -1,5 +1,6 @@
 package net.paramnezia.desktop
 
+import net.paramnezia.core.net.IpPrefix
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.NetworkInterface
@@ -27,7 +28,10 @@ internal object DesktopNetwork {
                         val net = if (bits == 0) 0L else raw and (0xFFFFFFFFL shl (32 - bits)) and 0xFFFFFFFFL
                         parts += "%d.%d.%d.%d/%d".format(net shr 24 and 0xFF, net shr 16 and 0xFF, net shr 8 and 0xFF, net and 0xFF, bits)
                     }
-                    is Inet6Address -> if (!a.isLinkLocalAddress && !a.isLoopbackAddress && (a.address[0].toInt() and 0xfe) != 0xfc) v6 = true
+                    is Inet6Address -> if (!a.isLinkLocalAddress && !a.isLoopbackAddress) {
+                        if ((a.address[0].toInt() and 0xfe) != 0xfc) v6 = true
+                        IpPrefix.parseOrNull("${a.hostAddress.substringBefore('%')}/${ia.networkPrefixLength}")?.let { parts += it.toString() }
+                    }
                 }
             }
         }

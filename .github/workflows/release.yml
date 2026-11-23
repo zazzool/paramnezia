@@ -53,18 +53,6 @@ jobs:
             || { echo "::error::PN_RELEASE_SEED in keys/release-keys.enc does not match gradle.properties (docs/RELEASE.md)"; exit 1; }
       - name: Audit the APK (Play Protect rules, docs/PLAY-PROTECT.md)
         run: bash .github/scripts/apk-audit.sh "paramnezia-${VERSION}.apk" --release
-      - name: GitHub release
-        env: { GH_TOKEN: "${{ github.token }}" }
-        run: |
-          notes=""
-          [ -f "docs/releases/${VERSION}.md" ] && notes="--notes-file docs/releases/${VERSION}.md"
-          # Re-running a failed release: the release may already exist.
-          gh release view "$VERSION" >/dev/null 2>&1 || gh release create "$VERSION" --target "$GITHUB_SHA" --title "Paramnezia $VERSION" ${notes:---generate-notes}
-          gh release upload "$VERSION" "paramnezia-${VERSION}.apk" --clobber
-          # The same bytes under a fixed name: releases/latest/download/paramnezia.apk is always the
-          # newest APK (the family page on the servers links it).
-          cp "paramnezia-${VERSION}.apk" paramnezia.apk
-          gh release upload "$VERSION" paramnezia.apk --clobber
       - name: Sign release.json
         run: |
           apk="paramnezia-${VERSION}.apk"
@@ -76,12 +64,17 @@ jobs:
             --version-name "$VERSION" \
             --signer-sha256 "$signer" \
             --url "${PUBLIC_BASE}/$apk" \
+            --notes "$(if [ -f "docs/releases/${VERSION}.md" ]; then cat "docs/releases/${VERSION}.md"; fi)" \
             --out release.json
         env: { PUBLIC_BASE: "https://github.com/${{ github.repository }}/releases/download/${{ env.VERSION }}" }
         shell: bash
-      - name: Attach release.json to the GitHub release
-        env: { GH_TOKEN: "${{ github.token }}" }
-        run: gh release upload "$VERSION" release.json --clobber
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paramnezia-android
+          path: |
+            paramnezia-${{ env.VERSION }}.apk
+            release.json
+          if-no-files-found: error
 
   # Paramnezia for Windows (docs/WINDOWS.md): the installer next to the APK, and its own signed
   # release-windows.json (package net.paramnezia.windows) that the Windows app checks.
@@ -114,8 +107,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: paramnezia-windows, path: desktop/build/installer/*.exe }
 
-  windows-publish:
+  publish:
     needs: [release, windows]
+    concurrency: paramnezia-publish-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -126,6 +120,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - uses: actions/download-artifact@v4
         with: { name: paramnezia-windows, path: win }
+      - uses: actions/download-artifact@v4
+        with: { name: paramnezia-android, path: android }
       - name: Open the release key
         env:
           PN_KEYS_PASSWORD: ${{ secrets.PN_KEYS_PASSWORD }}
@@ -137,7 +133,7 @@ jobs:
             echo "::add-mask::$value"
             echo "$name=$value" >> "$GITHUB_ENV"
           done < "$k/release.env"
-      - name: Upload the installer and sign release-windows.json
+      - name: Sign the Windows manifest and publish both platforms
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLIC_BASE: "https://github.com/${{ github.repository }}/releases/download/${{ env.VERSION }}"
@@ -145,10 +141,6 @@ jobs:
           ./gradlew -Pparamnezia.jvmOnly=true --no-configuration-cache :releasetool:installDist
           exe="Paramnezia-Setup-${VERSION#v}.exe"
           cp "win/$exe" "$exe"
-          gh release upload "$VERSION" "$exe" --clobber
-          # Fixed name for releases/latest/download/Paramnezia-Setup.exe (the family page links it).
-          cp "$exe" Paramnezia-Setup.exe
-          gh release upload "$VERSION" Paramnezia-Setup.exe --clobber
           releasetool/build/install/releasetool/bin/releasetool sign \
             --apk "$exe" \
             --package net.paramnezia.windows \
@@ -156,5 +148,30 @@ jobs:
             --version-code "${{ github.run_number }}" \
             --version-name "$VERSION" \
             --url "${PUBLIC_BASE}/$exe" \
+            --notes "$(if [ -f "docs/releases/${VERSION}.md" ]; then cat "docs/releases/${VERSION}.md"; fi)" \
             --out release-windows.json
-          gh release upload "$VERSION" release-windows.json --clobber
+          apk="paramnezia-${VERSION}.apk"
+          cp "android/$apk" paramnezia.apk
+          cp "$exe" Paramnezia-Setup.exe
+          cp android/release.json release.json
+
+          if state=$(gh release view "$VERSION" --json isDraft --jq '.isDraft | tostring'); then
+            if [ "$state" != true ]; then
+              echo "$VERSION is already published"
+              exit 0
+            fi
+          else
+            args=(--generate-notes)
+            notes="docs/releases/${VERSION}.md"
+            if [ -f "$notes" ]; then args=(--notes-file "$notes"); fi
+            gh release create "$VERSION" --draft --target "$GITHUB_SHA" --title "Paramnezia $VERSION" "${args[@]}"
+          fi
+          gh release upload "$VERSION" "android/$apk" paramnezia.apk release.json \
+            "$exe" Paramnezia-Setup.exe release-windows.json --clobber
+          latest=$(gh release view --json tagName --jq .tagName)
+          newest=$(printf '%s\n' "$latest" "$VERSION" | sort -V | tail -1)
+          if [ "$newest" = "$VERSION" ]; then
+            gh release edit "$VERSION" --draft=false --latest
+          else
+            gh release edit "$VERSION" --draft=false --latest=false
+          fi

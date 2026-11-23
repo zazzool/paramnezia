@@ -66,6 +66,8 @@ for s in $($D inspect -f '{{range $k, $v := .HostConfig.Sysctls}}{{$k}}={{$v}} {
 for m in $($D inspect -f '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}}:{{.Destination}} {{end}}{{end}}' "$C"); do args="$args -v $m"; done
 for b in $($D inspect -f '{{range $p, $b := .HostConfig.PortBindings}}{{range $b}}{{.HostPort}}:{{$p}} {{end}}{{end}}' "$C"); do args="$args -p $b"; done
 nets=$($D inspect -f '{{range $n, $_ := .NetworkSettings.Networks}}{{$n}} {{end}}' "$C")
+primary_net=$($D inspect -f '{{.HostConfig.NetworkMode}}' "$C")
+if [ "$primary_net" = pn-dualstack ]; then args="$args --network $primary_net"; fi
 
 echo "::step::switch"
 $D rename "$C" "$C-pnold" >/dev/null || fail "rename_failed"
@@ -81,6 +83,7 @@ $D create $args "$IMG" >/dev/null 2>&1 || restore "create_failed"
 $D cp "$tmp/." "$C:/opt/amnezia/" >/dev/null 2>&1 || restore "copy_failed"
 for n in $nets; do
   [ "$n" = "bridge" ] && continue
+  [ "$n" = pn-dualstack ] && [ "$primary_net" = "$n" ] && continue
   $D network connect "$n" "$C" >/dev/null 2>&1 || true
 done
 $D start "$C" >/dev/null 2>&1 || restore "start_failed"

@@ -100,12 +100,18 @@ class HetznerProvider(token: String, transport: CloudHttp.Transport = CloudHttp.
         val id = o.str("id") ?: throw CloudException("bad_reply", "Hetzner не вернул id сервера")
         val status = o.str("status").orEmpty()
         val ip = o["public_net"].obj()?.get("ipv4").obj()?.str("ip")?.takeIf { it.isNotBlank() }
+        val prefix = o["public_net"].obj()?.get("ipv6").obj()?.str("ip")
+            ?.let(net.paramnezia.core.net.IpPrefix::parseOrNull)
+        val ipv6 = prefix?.takeIf { it.isV6 }?.let {
+            val address = if (it.length == 64) it.network + java.math.BigInteger.ONE else it.network
+            net.paramnezia.core.net.IpPrefix.of(true, address, 128).toString().substringBefore('/')
+        }
         val state = when (status) {
-            "running" -> if (ip != null) CloudServer.State.READY else CloudServer.State.PENDING
+            "running" -> if ((ip != null || ipv6 != null)) CloudServer.State.READY else CloudServer.State.PENDING
             "deleting" -> CloudServer.State.GONE
             else -> CloudServer.State.PENDING
         }
-        return CloudServer(id, state, ip, status)
+        return CloudServer(id, state, ip, status, ipv6)
     }
 
     companion object {

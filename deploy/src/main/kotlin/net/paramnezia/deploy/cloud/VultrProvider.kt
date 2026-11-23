@@ -107,12 +107,13 @@ class VultrProvider(token: String, transport: CloudHttp.Transport = CloudHttp.Ur
         val id = o.str("id") ?: throw CloudException("bad_reply", "Vultr не вернул id сервера")
         val status = o.str("status").orEmpty()
         val ip = o.str("main_ip")?.takeIf { it.isNotBlank() && it != "0.0.0.0" }
+        val ipv6 = o.str("v6_main_ip")?.takeIf { ':' in it && it != "::" }
         val state = when {
-            status == "active" && o.str("power_status") == "running" && ip != null -> CloudServer.State.READY
+            status == "active" && o.str("power_status") == "running" && (ip != null || ipv6 != null) -> CloudServer.State.READY
             status in setOf("suspended", "closed") -> CloudServer.State.FAILED
             else -> CloudServer.State.PENDING
         }
-        return CloudServer(id, state, ip, status)
+        return CloudServer(id, state, ip, status, ipv6)
     }
 
     companion object {

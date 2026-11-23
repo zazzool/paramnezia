@@ -135,3 +135,23 @@ func TestProbeAnswersOnDNSAndGivesUpQuietly(t *testing.T) {
 	}
 	_ = binary.BigEndian
 }
+
+func TestProbeIPv6DNS(t *testing.T) {
+	conn, err := net.ListenUDP("udp6", &net.UDPAddr{IP: net.IPv6loopback})
+	if err != nil {
+		t.Skipf("IPv6 loopback unavailable: %v", err)
+	}
+	defer conn.Close()
+	go func() {
+		buf := make([]byte, 512)
+		n, from, err := conn.ReadFromUDP(buf)
+		if err == nil && n >= 12 {
+			buf[2] |= 0x80
+			conn.WriteToUDP(buf[:n], from)
+		}
+	}()
+	address := conn.LocalAddr().(*net.UDPAddr).AddrPort()
+	if _, ok := ProbeAt([]netip.AddrPort{address}, nil, time.Second, nil); !ok {
+		t.Fatal("IPv6 DNS probe did not receive the response")
+	}
+}

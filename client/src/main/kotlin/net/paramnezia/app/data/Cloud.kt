@@ -1,6 +1,12 @@
 package net.paramnezia.app.data
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import net.paramnezia.app.fleet.FleetManager
+import net.paramnezia.app.platform.Log
+import net.paramnezia.core.config.Uapi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -12,11 +18,13 @@ import net.paramnezia.deploy.ServerManager
 import net.paramnezia.deploy.SshException
 import net.paramnezia.deploy.cloud.CloudCatalog
 import net.paramnezia.deploy.cloud.CloudException
+import net.paramnezia.deploy.cloud.CloudHttp
 import net.paramnezia.deploy.cloud.CloudPlan
 import net.paramnezia.deploy.cloud.CloudProvider
 import net.paramnezia.deploy.cloud.CloudProviders
 import net.paramnezia.deploy.cloud.CloudProvisioner
 import net.paramnezia.deploy.cloud.CloudRegion
+import net.paramnezia.deploy.cloud.CloudServer
 import net.paramnezia.deploy.cloud.SshKeyPair
 import java.io.File
 
@@ -27,7 +35,12 @@ import java.io.File
  * A purchase runs in the application scope, not the screen's: leaving the screen or turning the
  * phone does not abandon a server that is already being paid for. [job] shows its progress.
  */
-class Cloud(private val repo: Repo, private val scope: CoroutineScope, private val cacheDir: File? = null) {
+class Cloud(
+    private val repo: Repo,
+    private val scope: CoroutineScope,
+    private val cacheDir: File? = null,
+    private val addressTransport: CloudHttp.Transport = CloudHttp.UrlTransport,
+) {
 
     /** A provider's catalog as the picker sees it: shown at once from the cache, refreshed behind. */
     data class Catalog(val data: CloudCatalog? = null, val loading: Boolean = false, val error: String? = null)
@@ -97,8 +110,8 @@ class Cloud(private val repo: Repo, private val scope: CoroutineScope, private v
 
     fun hasToken(provider: String) = repo.current.cloud.tokens[provider] != null
 
-    private fun open(provider: String): CloudProvider =
-        CloudProviders.open(provider, repo.current.cloud.tokens[provider] ?: throw CloudException("no_token", "Нет токена"))
+    private fun open(provider: String, transport: CloudHttp.Transport = CloudHttp.UrlTransport): CloudProvider =
+        CloudProviders.open(provider, repo.current.cloud.tokens[provider] ?: throw CloudException("no_token", "Нет токена"), transport)
 
     /** Checks [token] with the provider and keeps it. */
     suspend fun saveToken(provider: String, token: String) = withContext(Dispatchers.IO) {
@@ -171,7 +184,45 @@ class Cloud(private val repo: Repo, private val scope: CoroutineScope, private v
     fun dismissJob() { _job.value = null }
 
     /** The bought server behind [host], if it was bought from the app. */
-    fun serverAt(host: String): CloudServerRef? = repo.current.cloud.servers.lastOrNull { it.host == host }
+    fun serverAt(host: String, fleetServerId: String? = null): CloudServerRef? =
+        repo.current.cloud.servers.lastOrNull { (fleetServerId != null && it.fleetServerId == fleetServerId) || it.host == host }
+
+    private val addressCheck = Mutex()
+
+    /** Matches old purchases by SSH host once, then follows the provider's server ID. */
+    suspend fun syncFleetAddresses(fleet: FleetManager) = withContext(Dispatchers.IO) {
+        addressCheck.withLock {
+            if (!fleet.isOwner) return@withLock
+            for (ref in repo.current.cloud.servers) {
+                val access = fleet.stored?.serverAccess.orEmpty()
+                val id = ref.fleetServerId ?: access.entries.singleOrNull { it.value.host == ref.host }?.key ?: continue
+                val old = access[id] ?: continue
+                if (!hasToken(ref.provider)) continue
+                if (ref.fleetServerId == null) updateServer(ref) { it.copy(fleetServerId = id) }
+                try {
+                    val instance = open(ref.provider, addressTransport).get(ref.serverId)
+                    if (instance.id != ref.serverId || instance.state != CloudServer.State.READY) continue
+                    val ip = (if (':' in old.host) instance.ipv6 ?: instance.ipv4 else instance.ipv4 ?: instance.ipv6)
+                        ?.let(Uapi::hostAddress) ?: continue
+                    if (ref.host?.let(Uapi::hostAddress) == ip) continue
+                    fleet.moveServerAddress(id, ip, expectedHost = old.host)
+                    if (fleet.accessTo(id)?.host == ip) updateServer(ref) { it.copy(host = ip) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("PnCloud", "Не удалось обновить адрес сервера ${ref.name}", e)
+                }
+            }
+        }
+    }
+
+    private fun updateServer(ref: CloudServerRef, change: (CloudServerRef) -> CloudServerRef) {
+        repo.update { s ->
+            s.copy(cloud = s.cloud.copy(servers = s.cloud.servers.map {
+                if (it.provider == ref.provider && it.serverId == ref.serverId) change(it) else it
+            }))
+        }
+    }
 
     /** Destroys a bought server at the provider (billing stops) and forgets it. */
     suspend fun delete(ref: CloudServerRef) = withContext(Dispatchers.IO) {

@@ -12,7 +12,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/windows/tunnel/winipcfg"
@@ -360,23 +359,16 @@ func physicalNetwork(ours winipcfg.LUID) bool {
 // pinTo makes probe sockets leave through the tunnel adapter (IP_UNICAST_IF), whatever the routes
 // say: a probe must prove the tunnel, never the physical network.
 func pinTo(luid winipcfg.LUID) linkwatch.Control {
-	row, err := luid.IPInterface(windows.AF_INET)
-	if err != nil {
-		return nil
-	}
-	index := row.InterfaceIndex
 	return func(network, address string, c syscall.RawConn) error {
-		var serr error
-		err := c.Control(func(fd uintptr) {
-			// IP_UNICAST_IF takes the index in network byte order for IPv4.
-			be := (index&0xff)<<24 | (index&0xff00)<<8 | (index&0xff0000)>>8 | index>>24
-			serr = windows.Setsockopt(windows.Handle(fd), windows.IPPROTO_IP, ipUnicastIf, (*byte)(unsafe.Pointer(&be)), 4)
-		})
+		v6 := strings.HasSuffix(network, "6")
+		family := winipcfg.AddressFamily(windows.AF_INET)
+		if v6 {
+			family = windows.AF_INET6
+		}
+		row, err := luid.IPInterface(family)
 		if err != nil {
 			return err
 		}
-		return serr
+		return bindToInterface(c, v6, row.InterfaceIndex)
 	}
 }
-
-const ipUnicastIf = 31

@@ -4,6 +4,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -23,6 +24,16 @@ class LanShareTest {
     @After fun stop() = server.stop()
 
     private fun peer() = LanPeer("Pixel", "127.0.0.1", server.port)
+
+    @Test
+    fun ipv6LanAddressesUseBracketsAndMatchOnlyTheirSubnet() {
+        assertEquals("fd00::2" to 8080, LanNet.parseAddress("http://[fd00::2]:8080/"))
+        assertEquals("fd00::2" to 80, LanNet.parseAddress("fd00::2"))
+        assertEquals("[fd00::2]:8080", LanNet.shortAddress("fd00::2", 8080))
+        val lan = LanNet.Lan("test", java.net.InetAddress.getByName("fd00::2"), 64)
+        assertTrue(lan.contains(java.net.InetAddress.getByName("fd00::3")))
+        assertFalse(lan.contains(java.net.InetAddress.getByName("fd01::3")))
+    }
 
     @Test fun infoPageAndFiles() = runBlocking {
         server.start(listOf(0))

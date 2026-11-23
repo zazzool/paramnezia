@@ -86,10 +86,17 @@ func isLocalName(name string) bool {
 	}
 }
 
-// SetLocalServers sets the resolvers of the local network (the router), IPv4 only, for all
+// SetLocalServers sets the resolvers of the local network (the router) for all
 // tunnels; empty when the device is not on a home network. Effective for the next query.
 func SetLocalServers(servers []string) {
-	list := parseServers(servers, true)
+	list := parseServers(servers)
+	safe := list[:0]
+	for _, addr := range list {
+		if !addr.IP.IsLinkLocalUnicast() || addr.Zone != "" {
+			safe = append(safe, addr)
+		}
+	}
+	list = safe
 	localServers.Store(&list)
 	localGen.Add(1)
 }
@@ -158,13 +165,13 @@ type forwarder struct {
 
 func newForwarder(conn *net.UDPConn, servers []string) *forwarder {
 	f := &forwarder{conn: conn, waiting: map[uint16]*pending{}, nextID: uint16(time.Now().UnixNano())}
-	f.servers = parseServers(servers, false)
+	f.servers = parseServers(servers)
 	go f.readLoop()
 	return f
 }
 
-// parseServers reads "ip" or "ip:port" entries; onlyV4 drops IPv6 ones (the sockets are udp4).
-func parseServers(servers []string, onlyV4 bool) []*net.UDPAddr {
+// parseServers reads a literal IP or a host-and-port pair.
+func parseServers(servers []string) []*net.UDPAddr {
 	var out []*net.UDPAddr
 	for _, s := range servers {
 		s = strings.TrimSpace(s)
@@ -177,9 +184,6 @@ func parseServers(servers []string, onlyV4 bool) []*net.UDPAddr {
 			continue
 		}
 		ap = netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port())
-		if onlyV4 && !ap.Addr().Is4() {
-			continue
-		}
 		out = append(out, net.UDPAddrFromAddrPort(ap))
 	}
 	return out
@@ -428,7 +432,7 @@ type dnsTun struct {
 // NewTun wraps dev. direct is a UDP socket that bypasses the VPN (Android: protected by the app;
 // Windows: the direct resolvers are routed outside the tunnel), or nil to resolve everything in it.
 func NewTun(dev tun.Device, cfg Config, direct *net.UDPConn) (tun.Device, error) {
-	tunnelConn, err := net.ListenUDP("udp4", nil)
+	tunnelConn, err := net.ListenUDP("udp", nil)
 	if err != nil {
 		return nil, err
 	}

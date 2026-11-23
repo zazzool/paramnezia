@@ -43,7 +43,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import net.paramnezia.app.App
-import net.paramnezia.app.ota.Updater
 import net.paramnezia.tunnel.TunnelRuntime
 import net.paramnezia.tunnel.TunnelState
 import net.paramnezia.tunnel.TunnelStats
@@ -111,17 +110,11 @@ fun HomeScreen(app: App, modifier: Modifier, onConnect: () -> Unit, onAddServer:
 @Composable
 private fun TopBar(app: App, tunnel: TunnelState, servers: Int, onDetails: () -> Unit, onManage: () -> Unit) {
     val state by app.repo.state.collectAsState()
-    val update by app.updater.status.collectAsState()
     val health by TunnelRuntime.health.collectAsState()
     var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
         Wordmark(Modifier.weight(1f))
-        (update as? Updater.Status.Available)?.let { u ->
-            Surface(shape = CircleShape, color = Brand.Violet, modifier = Modifier.clip(CircleShape).tactile { app.updater.openDownload() }) {
-                FitText("${u.release.versionName} ↓", MaterialTheme.typography.labelLarge, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), color = Color.White)
-            }
-            Spacer(Modifier.width(Space.S))
-        }
+        UpdateBadge(app, Modifier.padding(end = Space.S))
         val server = when (tunnel) { is TunnelState.Up -> tunnel.serverName; is TunnelState.Connecting -> tunnel.serverName; else -> null }
         val family = remember(state.fleet?.manifest) { app.fleet.member()?.tunnels().orEmpty().map { it.first } }
         val choices = family.map { it.id to it.name } + state.profiles.map { it.id to it.name }

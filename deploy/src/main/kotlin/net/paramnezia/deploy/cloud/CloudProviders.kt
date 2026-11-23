@@ -11,12 +11,12 @@ object CloudProviders {
 
     fun info(id: String): ProviderInfo? = all.firstOrNull { it.id == id }
 
-    fun open(id: String, token: String): CloudProvider = when (id) {
-        CloudzyProvider.INFO.id -> CloudzyProvider(token.trim())
-        TimewebProvider.INFO.id -> TimewebProvider(token.trim())
-        VultrProvider.INFO.id -> VultrProvider(token.trim())
-        HetznerProvider.INFO.id -> HetznerProvider(token.trim())
-        DigitalOceanProvider.INFO.id -> DigitalOceanProvider(token.trim())
+    fun open(id: String, token: String, transport: CloudHttp.Transport = CloudHttp.UrlTransport): CloudProvider = when (id) {
+        CloudzyProvider.INFO.id -> CloudzyProvider(token.trim(), transport)
+        TimewebProvider.INFO.id -> TimewebProvider(token.trim(), transport)
+        VultrProvider.INFO.id -> VultrProvider(token.trim(), transport)
+        HetznerProvider.INFO.id -> HetznerProvider(token.trim(), transport)
+        DigitalOceanProvider.INFO.id -> DigitalOceanProvider(token.trim(), transport)
         else -> throw CloudException("unknown_provider", "Неизвестный хостер $id")
     }
 

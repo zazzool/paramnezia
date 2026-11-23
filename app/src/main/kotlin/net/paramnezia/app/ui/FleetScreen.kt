@@ -230,12 +230,12 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
                     if (isAdmin) add("Перезагрузить сервер" to { rebootOf = RebootTarget(s.name, s.host, app.fleet.accessTo(s.id)) })
                     if (isAdmin && i > 0) add("Сделать основным" to { work("${s.name} теперь основной") { app.fleet.promote(s.id, useAutomaticSelection = true) } })
                     if (isOwner && servers.size > 1) add("Убрать сервер" to {
-                        val bought = app.cloud.serverAt(s.host)
+                        val bought = app.cloud.serverAt(s.host, s.id)
                         work("Сервер убран из семьи") { app.fleet.removeServer(s.id); boughtRemoved = bought }
                     })
                 }
                 GroupRow(
-                    s.name, subtitle = "${s.host}:${s.port}" + if (s.altPorts.isNotEmpty()) " · ещё ${plural(s.altPorts.size, "порт", "порта", "портов")}" else "",
+                    s.name, subtitle = net.paramnezia.core.config.Uapi.formatEndpoint(s.host, s.port) + if (s.altPorts.isNotEmpty()) " · ещё ${plural(s.altPorts.size, "порт", "порта", "портов")}" else "",
                     icon = Glyph.Server, onClick = { details = s.id },
                     accent = if (i == 0) Brand.Mint else MaterialTheme.colorScheme.onSurfaceVariant,
                     badge = if (i == 0) "основной" else "резервный",
@@ -467,8 +467,11 @@ fun FleetScreen(app: App, modifier: Modifier, toast: (String) -> Unit, onAddServ
             },
             confirmButton = {
                 Button(enabled = form.ready, onClick = {
+                    val creds = runCatching { form.credentials() }.getOrElse {
+                        toast(it.message ?: "Некорректный адрес сервера")
+                        return@Button
+                    }
                     newServer = false
-                    val creds = form.credentials()
                     work("Сервер добавлен в семью") { app.fleet.addServer(form.name.ifBlank { creds.host }, creds, master) {} }
                 }) { Text("Развернуть") }
             },

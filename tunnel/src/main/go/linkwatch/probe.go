@@ -12,7 +12,7 @@ import (
 )
 
 // Targets answer on 53 and 443 everywhere and are never in the "Russian direct" lists.
-var Targets = []string{"1.1.1.1", "8.8.8.8", "9.9.9.9"}
+var Targets = []string{"1.1.1.1", "2606:4700:4700::1111", "8.8.8.8"}
 
 // query is "." IN NS with recursion desired: tiny, cacheable, answered by every resolver.
 var query = []byte{0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1}
@@ -45,31 +45,46 @@ func ProbeAt(dns, tcp []netip.AddrPort, timeout time.Duration, control Control) 
 			}
 		}(a)
 	}
-	if len(dns) > 0 {
-		lc := net.ListenConfig{Control: control}
-		if pc, err := lc.ListenPacket(ctx, "udp4", ":0"); err == nil {
-			defer pc.Close()
-			id := uint16(start.UnixNano())
-			q := append([]byte(nil), query...)
-			binary.BigEndian.PutUint16(q, id)
-			for _, a := range dns {
-				pc.WriteTo(q, net.UDPAddrFromAddrPort(a))
+	for _, v6 := range []bool{false, true} {
+		var targets []netip.AddrPort
+		for _, addr := range dns {
+			if addr.Addr().Is6() == v6 {
+				targets = append(targets, addr)
 			}
-			pc.SetReadDeadline(start.Add(timeout))
-			go func() {
-				buf := make([]byte, 512)
-				for {
-					n, _, err := pc.ReadFrom(buf)
-					if err != nil {
-						return
-					}
-					if n >= 12 && binary.BigEndian.Uint16(buf) == id && buf[2]&0x80 != 0 {
-						won <- struct{}{}
-						return
-					}
-				}
-			}()
 		}
+		if len(targets) == 0 {
+			continue
+		}
+		network := "udp4"
+		if v6 {
+			network = "udp6"
+		}
+		lc := net.ListenConfig{Control: control}
+		pc, err := lc.ListenPacket(ctx, network, ":0")
+		if err != nil {
+			continue
+		}
+		defer pc.Close()
+		id := uint16(start.UnixNano())
+		q := append([]byte(nil), query...)
+		binary.BigEndian.PutUint16(q, id)
+		for _, addr := range targets {
+			pc.WriteTo(q, net.UDPAddrFromAddrPort(addr))
+		}
+		pc.SetReadDeadline(start.Add(timeout))
+		go func() {
+			buf := make([]byte, 512)
+			for {
+				n, _, err := pc.ReadFrom(buf)
+				if err != nil {
+					return
+				}
+				if n >= 12 && binary.BigEndian.Uint16(buf) == id && buf[2]&0x80 != 0 {
+					won <- struct{}{}
+					return
+				}
+			}
+		}()
 	}
 	select {
 	case <-won:
@@ -88,7 +103,7 @@ func addrs(list []string, port uint16, max int) []netip.AddrPort {
 	seen := map[netip.Addr]bool{}
 	for _, s := range list {
 		a, err := netip.ParseAddr(s)
-		if err != nil || !a.Is4() || seen[a] {
+		if err != nil || seen[a] {
 			continue
 		}
 		seen[a] = true

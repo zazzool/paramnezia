@@ -10,6 +10,7 @@ import net.paramnezia.core.fleet.FleetMember
 import net.paramnezia.core.fleet.FleetServer
 import net.paramnezia.core.fleet.FleetManifest
 import net.paramnezia.core.fleet.FleetPolicy
+import net.paramnezia.core.fleet.tunnelFor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -23,6 +24,18 @@ class FleetTest {
         id, "Server $id", host, 41000, WgKey.generatePrivate().publicKey().toBase64(), WgKey.generatePreshared().toBase64(),
         mapOf("Jc" to "5", "Jmin" to "10", "Jmax" to "50", "H1" to "1"),
     )
+
+    @Test
+    fun ipv6EndpointAndTunnelAddressAreIndependent() {
+        val (admin, empty) = FleetAdmin.create("Family", ed)
+        val (member, key) = admin.newDevice(empty, "phone")
+        val v6 = server("a", "2001:db8::42")
+        val outerOnly = v6.tunnelFor(member, key)
+        assertEquals("[2001:db8::42]:41000", outerOnly.peers.single().endpoint)
+        assertEquals(listOf("10.8.1.2/32"), outerOnly.iface.addresses.map { it.toString() })
+        val dual = v6.copy(ipv6Tunnel = true).tunnelFor(member, key)
+        assertEquals(listOf("10.8.1.2/32", "fd42:706e:1::a08:102/128"), dual.iface.addresses.map { it.toString() })
+    }
 
     @Test
     fun ed25519SignVerify() {

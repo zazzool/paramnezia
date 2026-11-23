@@ -109,7 +109,7 @@ func (t *tunnel) up(ctx context.Context, s *upSpec) (err error) {
 	if cfg, ok := dnsfilter.ParseConfig(s.DNSConfig); ok {
 		// Russian names are resolved over this socket. The direct resolvers are routed outside the
 		// tunnel by the app, and the firewall lets this process through.
-		direct, _ := net.ListenUDP("udp4", nil)
+		direct, _ := net.ListenUDP("udp", nil)
 		if wrapped, err := dnsfilter.NewTun(native, cfg, direct); err == nil {
 			dev = wrapped
 			t.tun = wrapped
@@ -360,7 +360,8 @@ func (t *tunnel) watchDefaultInterface(ours winipcfg.LUID) {
 	update := func() {
 		mu.Lock()
 		defer mu.Unlock()
-		if i, err := defaultInterface(windows.AF_INET, ours); err == nil {
+		index4, err4 := defaultInterface(windows.AF_INET, ours)
+		if i := index4; err4 == nil {
 			setLocalDNS(i)
 			if i != last4 && binder.BindSocketToInterface4(i, false) == nil {
 				if last4 != ^uint32(0) {
@@ -369,8 +370,14 @@ func (t *tunnel) watchDefaultInterface(ours winipcfg.LUID) {
 				last4 = i
 			}
 		}
-		if i, err := defaultInterface(windows.AF_INET6, ours); err == nil && i != last6 {
-			if binder.BindSocketToInterface6(i, false) == nil {
+		if i, err := defaultInterface(windows.AF_INET6, ours); err == nil {
+			if err4 != nil {
+				setLocalDNS(i)
+			}
+			if i != last6 && binder.BindSocketToInterface6(i, false) == nil {
+				if last6 != ^uint32(0) {
+					t.netGen.Add(1)
+				}
 				last6 = i
 			}
 		}
@@ -412,9 +419,7 @@ func setLocalDNS(index uint32) {
 	}
 	var list []string
 	for _, a := range addrs {
-		if a.Is4() {
-			list = append(list, a.String())
-		}
+		list = append(list, a.String())
 	}
 	dnsfilter.SetLocalServers(list)
 }

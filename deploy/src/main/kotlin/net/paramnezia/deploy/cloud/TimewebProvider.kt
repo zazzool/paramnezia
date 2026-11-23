@@ -106,19 +106,19 @@ class TimewebProvider(token: String, transport: CloudHttp.Transport = CloudHttp.
         o ?: throw CloudException("bad_reply", "Timeweb не вернул данные сервера")
         val id = o.int("id")?.toString() ?: o.str("id") ?: throw CloudException("bad_reply", "Timeweb не вернул id сервера")
         val status = o.str("status").orEmpty()
-        var ip: String? = null
-        for (n in o["networks"].arr().mapNotNull { it.obj() }) if (n.str("type") == "public") {
-            for (a in n["ips"].arr().mapNotNull { it.obj() }) if (a.str("type") == "ipv4") {
-                if (ip == null || a.bool("is_main") == true) ip = a.str("ip")
-            }
-        }
+        val addresses = o["networks"].arr().mapNotNull { it.obj() }.filter { it.str("type") == "public" }
+            .flatMap { n -> n["ips"].arr().mapNotNull { it.obj() } }
+        fun address(type: String) = addresses.filter { it.str("type") == type }
+            .maxByOrNull { if (it.bool("is_main") == true) 1 else 0 }?.str("ip")
+        val ip = address("ipv4")
+        val ipv6 = address("ipv6")
         val state = when (status) {
             "on" -> CloudServer.State.READY
             "removed", "removing" -> CloudServer.State.GONE
             "blocked", "permanent_blocked", "no_paid" -> CloudServer.State.FAILED
             else -> CloudServer.State.PENDING
         }
-        return CloudServer(id, state, ip, status)
+        return CloudServer(id, state, ip, status, ipv6)
     }
 
     companion object {
